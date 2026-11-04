@@ -17,6 +17,18 @@ out-tsc
 # dependencies
 node_modules
 
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime economy database; keep the seed catalog in version control.
+data/*.sqlite3
+data/*.sqlite3-shm
+data/*.sqlite3-wal
+
 # IDEs and editors
 /.idea
 .project

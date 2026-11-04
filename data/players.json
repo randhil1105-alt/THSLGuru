@@ -1,0 +1,56 @@
+[
+  {
+    "name": "Dan",
+    "overall": 87,
+    "position": "C",
+    "country": "Italy",
+    "team": "Colorado Avalanche",
+    "rarity": "GOLD",
+    "value": 1100000,
+    "stats": {
+      "SHO": 83,
+      "DRI": 88,
+      "SAV": 85,
+      "PAS": 85,
+      "DEF": 92,
+      "ACT": 87
+    },
+    "image_path": "cards/dan.png"
+  },
+  {
+    "name": "Licha",
+    "overall": 93,
+    "position": "GK",
+    "country": "England",
+    "team": "Ottawa Senators",
+    "rarity": "TOTW",
+    "value": 2000000,
+    "stats": {
+      "SAV": 96,
+      "DIV": 93,
+      "PAS": 87,
+      "CLE": 88,
+      "SWE": 84,
+      "ACT": 94
+    },
+    "image_path": "cards/licha.webp"
+  },
+  {
+    "name": "Hala",
+    "overall": 93,
+    "position": "C",
+    "country": "Scotland",
+    "team": "Colorado Avalanche",
+    "rarity": "TOTW",
+    "value": 2000000,
+    "stats": {
+      "SHO": 92,
+      "DRI": 91,
+      "SAV": 90,
+      "PAS": 93,
+      "DEF": 95,
+      "ACT": 93
+    },
+    "image_path": "cards/hala.webp"
+  }
+]

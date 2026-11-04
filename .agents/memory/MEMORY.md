@@ -1,0 +1,1 @@
+- [Team rink lineup layout](team-rink-layout.md) — keep the rink unobstructed and place player cards below it so all ice markings remain visible.

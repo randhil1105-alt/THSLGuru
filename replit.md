@@ -1,45 +1,65 @@
-# [Project name]
+# THSL Guru — Discord Hockey Card Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+THSL Guru is a Discord slash-command hockey-card game backed by a persistent
+SQLite economy and a Python `discord.py` bot. This workspace also retains its
+existing pnpm API and component-preview artifacts.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `python main.py` — run the Discord bot; the **THSL Guru Bot** workflow uses
+  this command.
+- `python -m unittest discover -s tests -v` — run the offline bot test suite.
+- `pnpm run typecheck` — typecheck the existing pnpm workspace.
+- Required secret: `DISCORD_BOT_TOKEN`; never print it or put it in source.
+- Optional environment variables: `DISCORD_GUILD_ID` for development-guild
+  command sync and `BOT_DATABASE_PATH` for a custom SQLite file path.
+- Rotate any token included in the supplied archive before connecting to
+  Discord. Do not run the live bot until a replacement is stored in Secrets.
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Bot: Python 3.10+ and `discord.py` 2.x
+- Data: SQLite with additive schema creation and transactional economy updates
+- Lineup images: SVG rendered to PNG with ImageMagick
+- Existing workspace: pnpm, Node.js 24, TypeScript, Express, and React
 
-## Where things live
+## Where Things Live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `main.py`, `config.py`, `commands/` — bot startup and slash commands
+- `database.py`, `data/guru.sqlite3` — persistent economy and lineup records
+- `data/players.json` — catalog seed; inserts missing records without replacing
+  existing player data
+- `cards/` — original card artwork
+- `tests/` — offline command and database tests using temporary databases
+- `artifacts/`, `lib/` — existing API and component-preview workspace
 
-## Architecture decisions
+## Architecture Decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Keep the Discord bot and existing pnpm artifacts in the same project.
+- Preserve existing SQLite player, balance, inventory, and lineup records;
+  schema changes must be additive.
+- Use `BEGIN IMMEDIATE` for economy mutations and separate owned-card checks
+  across all five team positions.
+- Load command extensions once, then sync slash commands during startup.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
-
-## User preferences
-
-_Populate as you build — explicit user instructions worth remembering across sessions._
+Players collect and trade hockey cards, manage balances, open packs, and set a
+three-player starting lineup plus two substitutes. Administrators manage the
+catalog and player economies. `/team` renders assigned card artwork on a hockey
+rink image.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Image rendering requires the `magick` executable.
+- A Discord OAuth account connection does not replace the bot token needed for
+  the long-running gateway connection.
+- The bot workflow must not be started until `DISCORD_BOT_TOKEN` has been
+  rotated and stored in Replit Secrets.
+- Tests and command-sync tests are offline; they do not prove live Discord
+  access or permissions in a server.
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- `README.md` documents commands, setup, data behavior, and tests.
+- Use the `pnpm-workspace` skill for the existing TypeScript workspace.
