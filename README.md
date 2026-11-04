@@ -35,9 +35,9 @@ Administrator-only commands:
 - `/grantcoins` grants coins.
 - `/grantcard` grants one or more card copies.
 
-The initial catalog contains Dan as a GOLD card and Licha and Hala as TOTW
-cards. If a future catalog has no cards of a requested pack rarity, the pack
-command explains that none are available and does not charge.
+The initial catalog contains Dan and XavierCapone9 as GOLD cards and Licha and
+Hala as TOTW cards. If a future catalog has no cards of a requested pack rarity,
+the pack command explains that none are available and does not charge.
 
 ## Run locally or on Replit
 
@@ -123,8 +123,9 @@ workers before relying on it for the live economy.
 
 ## Card images
 
-The catalog uses `cards/dan.png`, `cards/licha.webp`, and `cards/hala.webp`.
-These are the supplied card images and are checked by the offline test suite.
+The catalog uses `cards/dan.png`, `cards/licha.webp`, `cards/hala.webp`, and
+`cards/xaviercapone9.png`. These are the supplied card images and are checked by
+the offline test suite.
 
 ## Tests
 

@@ -81,6 +81,27 @@ class DatabaseTests(unittest.TestCase):
         )
         self.assertEqual(dan.image_path, "cards/dan.png")
 
+    def test_xavier_seed_card_has_exact_data_and_is_gold_pack_eligible(self) -> None:
+        xavier = self.database.get_player("XavierCapone9")
+        self.assertIsNotNone(xavier)
+        assert xavier is not None
+        self.assertEqual(xavier.name, "XavierCapone9")
+        self.assertEqual(xavier.overall, 91)
+        self.assertEqual(xavier.position, "WI")
+        self.assertEqual(xavier.country, "England")
+        self.assertEqual(xavier.team, "Vegas Golden Knights")
+        self.assertEqual(xavier.rarity, "GOLD")
+        self.assertEqual(xavier.value, 3_140_000)
+        self.assertEqual(
+            xavier.stats,
+            {"SHO": 92, "DRI": 95, "SAV": 75, "PAS": 88, "DEF": 86, "ACT": 82},
+        )
+        self.assertEqual(xavier.image_path, "cards/xaviercapone9.png")
+        self.assertEqual(
+            {player.name for player in self.database.get_players(rarity="GOLD")},
+            {"Dan", "XavierCapone9"},
+        )
+
     def test_read_connection_closes_after_the_context(self) -> None:
         with self.database._read_connection() as connection:
             self.assertEqual(connection.execute("SELECT 1").fetchone()[0], 1)
@@ -161,7 +182,9 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(player.rarity, "GOLD")
         self.assertEqual(balance, 123)
         inventory = self.database.get_inventory("gold-user")
-        self.assertEqual([(row.player.name, row.quantity) for row in inventory], [("Dan", 1)])
+        self.assertEqual(len(inventory), 1)
+        self.assertEqual(inventory[0].player.name, player.name)
+        self.assertEqual(inventory[0].player.rarity, "GOLD")
 
     def test_totw_pack_only_awards_totw_and_charges_exactly_once(self) -> None:
         self.database.add_player(TOTW_PLAYER)
@@ -200,7 +223,10 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(replayed_balance, first_balance)
         self.assertEqual(self.database.get_balance("replay-user"), 100)
         inventory = self.database.get_inventory("replay-user")
-        self.assertEqual([(entry.player.name, entry.quantity) for entry in inventory], [("Dan", 1)])
+        self.assertEqual(
+            [(entry.player.name, entry.quantity) for entry in inventory],
+            [(first_player.name, 1)],
+        )
 
     def test_lineup_requires_owned_cards_and_rejects_duplicate_slots(self) -> None:
         user_id = "lineup-user"

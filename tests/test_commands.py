@@ -12,8 +12,10 @@ import discord
 from commands.admin import AdminCommands
 from commands.init import COMMAND_MODULES, load_command_modules
 from commands.common import resolve_card_image
+from commands.inventory import InventoryCommands
 from commands.lineup_image import OUTPUT_FILENAME, build_lineup_svg
 from commands.packs import PackCommands
+from commands.player import PlayerCommands
 from commands.team import TeamCommands
 from database import Database, GOLD_PACK_COST, LINEUP_POSITIONS, TOTW_PACK_COST
 from main import create_bot, load_player_seed
@@ -159,7 +161,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_all_seeded_card_images_resolve(self) -> None:
-        for name in ("Dan", "Licha", "Hala"):
+        for name in ("Dan", "Licha", "Hala", "XavierCapone9"):
             with self.subTest(name=name):
                 player = self.database.get_player(name)
                 self.assertIsNotNone(player)
@@ -171,6 +173,135 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.database.get_player("Licha").rarity, "TOTW")
         self.assertEqual(self.database.get_player("Hala").rarity, "TOTW")
+
+    async def test_xavier_card_is_lookup_grant_inventory_and_team_ready(self) -> None:
+        player = self.database.get_player("XavierCapone9")
+        self.assertIsNotNone(player)
+        assert player is not None
+        self.assertEqual(
+            (
+                player.name,
+                player.overall,
+                player.position,
+                player.country,
+                player.team,
+                player.rarity,
+                player.value,
+            ),
+            (
+                "XavierCapone9",
+                91,
+                "WI",
+                "England",
+                "Vegas Golden Knights",
+                "GOLD",
+                3_140_000,
+            ),
+        )
+        self.assertEqual(
+            player.stats,
+            {"SHO": 92, "DRI": 95, "SAV": 75, "PAS": 88, "DEF": 86, "ACT": 82},
+        )
+        image_path = resolve_card_image(player)
+        self.assertIsNotNone(image_path)
+        assert image_path is not None
+        self.assertEqual(image_path.name, "xaviercapone9.png")
+
+        player_cog = PlayerCommands(self.database)
+        for command_name in ("card", "player"):
+            response = FakeResponse()
+            interaction = SimpleNamespace(response=response)
+            command = getattr(PlayerCommands, command_name)
+            await command.callback(player_cog, interaction, "XavierCapone9")
+            message = response.messages[0]
+            embed = message["embed"]
+            self.assertEqual(embed.title, "XavierCapone9 · 91 OVR")
+            self.assertEqual(embed.image.url, "attachment://xaviercapone9.png")
+            details = {field.name: field.value for field in embed.fields}
+            self.assertEqual(details["Position"], "WI")
+            self.assertEqual(details["Country"], "England")
+            self.assertEqual(details["Team"], "Vegas Golden Knights")
+            self.assertEqual(details["Rarity"], "GOLD")
+            self.assertEqual(details["Value"], "3,140,000 coins")
+            self.assertIn("**SHO** 92", details["Stats"])
+            self.assertIn("**DRI** 95", details["Stats"])
+            self.assertIn("**SAV** 75", details["Stats"])
+            self.assertIn("**PAS** 88", details["Stats"])
+            self.assertIn("**DEF** 86", details["Stats"])
+            self.assertIn("**ACT** 82", details["Stats"])
+            card_file = message["file"]
+            self.assertTrue(card_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
+            card_file.close()
+
+        user_id = "xavier-card-command-user"
+        admin_response = FakeResponse()
+        member = SimpleNamespace(id=user_id, mention="<@xavier-card-command-user>")
+        await AdminCommands.grantcard.callback(
+            AdminCommands(self.database),
+            SimpleNamespace(response=admin_response),
+            member,
+            "XavierCapone9",
+            1,
+        )
+        self.assertIn("Granted **1× XavierCapone9**", admin_response.messages[0]["content"])
+
+        inventory_cog = InventoryCommands(self.database)
+        for command_name in ("inventory", "collection"):
+            response = FakeResponse()
+            interaction = SimpleNamespace(
+                user=SimpleNamespace(id=user_id),
+                response=response,
+            )
+            await getattr(InventoryCommands, command_name).callback(
+                inventory_cog,
+                interaction,
+            )
+            self.assertIn("XavierCapone9", response.messages[0]["embed"].description)
+            self.assertIn("×1", response.messages[0]["embed"].description)
+
+        team_cog = TeamCommands(self.database)
+        for position in ("LW", "RW"):
+            response = FakeResponse()
+            await TeamCommands.set_position.callback(
+                team_cog,
+                SimpleNamespace(
+                    user=SimpleNamespace(id=user_id),
+                    response=response,
+                ),
+                discord.app_commands.Choice(name=position, value=position),
+                "XavierCapone9",
+            )
+            self.assertIn("Assigned **XavierCapone9**", response.messages[0]["content"])
+            self.assertEqual(self.database.get_lineup(user_id)[position].name, "XavierCapone9")
+            if position == "LW":
+                await TeamCommands.set_position.callback(
+                    team_cog,
+                    SimpleNamespace(
+                        user=SimpleNamespace(id=user_id),
+                        response=FakeResponse(),
+                    ),
+                    discord.app_commands.Choice(name="LW", value="LW"),
+                    "CLEAR",
+                )
+
+        team_interaction = SimpleNamespace(
+            user=SimpleNamespace(id=user_id, display_name="Xavier Test"),
+            response=FakeResponse(),
+            followup=FakeFollowup(),
+        )
+        await TeamCommands.team.callback(team_cog, team_interaction)
+        team_message = team_interaction.followup.messages[0]
+        self.assertIn(
+            "XavierCapone9",
+            {field.name: field.value for field in team_message["embed"].fields}[
+                "RW · Right Wing"
+            ],
+        )
+        lineup_file = team_message["file"]
+        lineup_bytes = lineup_file.fp.read()
+        lineup_file.close()
+        self.assertTrue(lineup_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1810))
 
     async def test_lineup_rink_svg_uses_ice_and_hockey_markings(self) -> None:
         svg = build_lineup_svg({}, "Balanced", "Not rated yet")
@@ -206,7 +337,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(menu["ephemeral"])
         field_values = {field.name: field.value for field in menu["embed"].fields}
         self.assertIn("Dan", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("100.0%", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("XavierCapone9", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("50.0%", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Licha", field_values["TOTW · 20,000,000 coins"])
         self.assertIn("50.0%", field_values["TOTW · 20,000,000 coins"])
 
@@ -225,10 +357,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("opened a **GOLD pack**", purchase_response.messages[0]["content"])
         self.assertEqual(self.database.get_balance(user_id), 250)
-        self.assertEqual(
-            [(entry.player.name, entry.quantity) for entry in self.database.get_inventory(user_id)],
-            [("Dan", 1)],
-        )
+        purchased_inventory = self.database.get_inventory(user_id)
+        self.assertEqual(len(purchased_inventory), 1)
+        self.assertIn(purchased_inventory[0].player.name, {"Dan", "XavierCapone9"})
+        self.assertEqual(purchased_inventory[0].player.rarity, "GOLD")
         uploaded_file = purchase_response.messages[0]["file"]
         self.assertIsNotNone(uploaded_file)
 

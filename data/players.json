@@ -52,5 +52,23 @@
       "ACT": 93
     },
     "image_path": "cards/hala.webp"
+  },
+  {
+    "name": "XavierCapone9",
+    "overall": 91,
+    "position": "WI",
+    "country": "England",
+    "team": "Vegas Golden Knights",
+    "rarity": "GOLD",
+    "value": 3140000,
+    "stats": {
+      "SHO": 92,
+      "DRI": 95,
+      "SAV": 75,
+      "PAS": 88,
+      "DEF": 86,
+      "ACT": 82
+    },
+    "image_path": "cards/xaviercapone9.png"
   }
 ]
