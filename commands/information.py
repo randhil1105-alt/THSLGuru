@@ -18,15 +18,14 @@ class InformationCommands(discord_commands.Cog):
         embed.add_field(
             name="Cards",
             value=(
-                "`/player name` · Look up a player\n"
                 "`/card player` · Choose a card and view its details\n"
-                "`/players` and `/cards` · Browse the full catalog\n"
+                "`/cards` · Browse the full catalog\n"
                 "`/inventory` · View cards you own\n"
                 "`/collection` · Browse the catalog\n"
                 "`/minigame` · Play a private-answer guessing game\n"
-                "`/team` · View the lineup image and six slots\n"
-                "`/set position player` · Assign or clear any of six slots\n"
-                "`/formation formation` · Save a tactical style"
+                "`/team` · View three starters, two substitutes, and team value\n"
+                "`/set position player` · Assign an owned card to a compatible slot\n"
+                "`/formation formation` · Choose Balanced, Offensive, or Defensive"
             ),
             inline=False,
         )

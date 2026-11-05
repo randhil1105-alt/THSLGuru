@@ -39,12 +39,6 @@ class InventoryCommands(discord_commands.Cog):
         embed = inventory_embed("Card Catalog", entries, collection=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="players", description="Browse all player cards in the catalog.")
-    async def players(self, interaction: discord.Interaction) -> None:
-        entries = self.database.get_collection(interaction.user.id)
-        embed = inventory_embed("Player Catalog", entries, collection=True)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
     @app_commands.command(name="sell", description="Sell owned copies of a player card.")
     @app_commands.describe(
         player="Player card to sell",

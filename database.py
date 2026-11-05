@@ -16,11 +16,37 @@ GOLD_PACK_COST = 5_000_000
 TOTW_PACK_COST = 20_000_000
 SQLITE_INT_MAX = (1 << 63) - 1
 SUPPORTED_STATS = ("SHO", "DRI", "SAV", "PAS", "DEF", "ACT", "DIV", "CLE", "SWE")
-STARTING_LINEUP_POSITIONS = ("LW", "C", "RW", "GK")
+FORMATION_STARTERS = {
+    "Balanced": ("WING1", "CM1", "GK"),
+    "Offensive": ("WING1", "WING2", "GK"),
+    "Defensive": ("CM1", "CM2", "GK"),
+}
+STARTING_LINEUP_POSITIONS = tuple(
+    dict.fromkeys(
+        position
+        for formation_positions in FORMATION_STARTERS.values()
+        for position in formation_positions
+    )
+)
 SUBSTITUTE_POSITIONS = ("SUB1", "SUB2")
 LINEUP_POSITIONS = STARTING_LINEUP_POSITIONS + SUBSTITUTE_POSITIONS
-TEAM_FORMATIONS = ("Balanced", "Attack", "Defensive")
+TEAM_FORMATIONS = tuple(FORMATION_STARTERS)
 DEFAULT_FORMATION = "Balanced"
+
+POSITION_ROLE_BY_SLOT = {
+    "WING1": "WING",
+    "WING2": "WING",
+    "CM1": "CM",
+    "CM2": "CM",
+    "GK": "GK",
+}
+
+LEGACY_SLOT_MAP = {
+    "LW": "WING1",
+    "RW": "WING2",
+    "C": "CM1",
+    "GK": "GK",
+}
 
 
 class EconomyError(Exception):
@@ -92,9 +118,52 @@ class Player:
 
 
 @dataclass(frozen=True)
+class FormationChange:
+    formation: str
+    moved: tuple[tuple[str, str, Player], ...] = ()
+    unassigned: tuple[tuple[str, Player], ...] = ()
+
+
+@dataclass(frozen=True)
 class InventoryEntry:
     player: Player
     quantity: int
+
+
+def card_position_role(position: str) -> str | None:
+    """Normalize catalog position labels to the strict lineup role groups."""
+    normalized = " ".join(
+        str(position).strip().upper().replace("_", " ").replace("-", " ").split()
+    )
+    if normalized in {"GK", "G", "GOALIE", "GOALTENDER", "GOALKEEPER"}:
+        return "GK"
+    if normalized in {
+        "CM",
+        "C",
+        "CENTER",
+        "CENTRE",
+        "CENTER MID",
+        "CENTRE MID",
+        "CENTRAL MID",
+        "CENTRAL MIDFIELDER",
+        "MIDFIELDER",
+        "MID",
+    }:
+        return "CM"
+    if normalized in {
+        "W",
+        "WI",
+        "WING",
+        "WINGER",
+        "LW",
+        "RW",
+        "LEFT WING",
+        "RIGHT WING",
+        "LEFT WINGER",
+        "RIGHT WINGER",
+    }:
+        return "WING"
+    return None
 
 
 def format_card_type(rarity: str) -> str:
@@ -269,6 +338,32 @@ class Database:
                         CHECK (formation IN ('Balanced', 'Attack', 'Defensive'))
                 );
 
+                CREATE TABLE IF NOT EXISTS team_starters (
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    position TEXT NOT NULL CHECK (
+                        position IN ('WING1', 'WING2', 'CM1', 'CM2', 'GK')
+                    ),
+                    player_id INTEGER NOT NULL REFERENCES players(id),
+                    PRIMARY KEY (user_id, position),
+                    UNIQUE (user_id, player_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS team_settings_v2 (
+                    user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+                    formation TEXT NOT NULL
+                        CHECK (formation IN ('Balanced', 'Offensive', 'Defensive'))
+                );
+
+                CREATE TABLE IF NOT EXISTS team_data_migrations (
+                    version TEXT PRIMARY KEY
+                );
+
+                CREATE TABLE IF NOT EXISTS team_migration_notices (
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    notice TEXT NOT NULL,
+                    PRIMARY KEY (user_id, notice)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_players_rarity_name
                     ON players(rarity, name);
                 CREATE INDEX IF NOT EXISTS idx_users_balance
@@ -284,6 +379,144 @@ class Database:
             except PlayerAlreadyExists:
                 # Existing administrator edits are the source of truth after first seed.
                 continue
+        self._migrate_legacy_team_data()
+
+    def _migrate_legacy_team_data(self) -> None:
+        """Copy compatible legacy lineup data without changing legacy records."""
+        migration_version = "formation-lineup-v2"
+        with self._transaction() as connection:
+            migrated = connection.execute(
+                "SELECT 1 FROM team_data_migrations WHERE version = ?",
+                (migration_version,),
+            ).fetchone()
+            if migrated:
+                return
+
+            user_rows = connection.execute(
+                """
+                SELECT user_id FROM team_settings
+                UNION SELECT user_id FROM lineup_slots
+                UNION SELECT user_id FROM center_slots
+                UNION SELECT user_id FROM substitute_slots
+                """
+            ).fetchall()
+            for user_row in user_rows:
+                user_id = str(user_row["user_id"])
+                old_settings = connection.execute(
+                    "SELECT formation FROM team_settings WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()
+                old_formation = (
+                    str(old_settings["formation"]) if old_settings else DEFAULT_FORMATION
+                )
+                formation = {
+                    "Attack": "Offensive",
+                    "Balanced": "Balanced",
+                    "Defensive": "Defensive",
+                }.get(old_formation, DEFAULT_FORMATION)
+                active_positions = FORMATION_STARTERS[formation]
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO team_settings_v2(user_id, formation)
+                    VALUES (?, ?)
+                    """,
+                    (user_id, formation),
+                )
+
+                legacy_rows = connection.execute(
+                    """
+                    SELECT legacy.position AS legacy_position, players.*
+                    FROM (
+                        SELECT user_id, position, player_id
+                        FROM lineup_slots WHERE user_id = ?
+                        UNION ALL
+                        SELECT user_id, position, player_id
+                        FROM center_slots WHERE user_id = ?
+                    ) AS legacy
+                    JOIN players ON players.id = legacy.player_id
+                    ORDER BY CASE legacy.position
+                        WHEN 'LW' THEN 0
+                        WHEN 'C' THEN 1
+                        WHEN 'RW' THEN 2
+                        WHEN 'GK' THEN 3
+                        ELSE 4
+                    END
+                    """,
+                    (user_id, user_id),
+                ).fetchall()
+
+                assignments: dict[str, sqlite3.Row] = {}
+                overflow: list[tuple[str, sqlite3.Row, str]] = []
+                notices: list[str] = []
+                for row in legacy_rows:
+                    legacy_position = str(row["legacy_position"])
+                    mapped_position = LEGACY_SLOT_MAP.get(legacy_position)
+                    role = card_position_role(str(row["position"]))
+                    player_label = format_card_label(
+                        str(row["name"]),
+                        int(row["overall"]),
+                        str(row["rarity"]),
+                    )
+                    if mapped_position is None or role != POSITION_ROLE_BY_SLOT.get(
+                        mapped_position
+                    ):
+                        notices.append(
+                            f"{legacy_position}: {player_label} has an incompatible "
+                            f"card position ({row['position']}) and was left unassigned."
+                        )
+                    elif mapped_position in active_positions and mapped_position not in assignments:
+                        assignments[mapped_position] = row
+                    else:
+                        overflow.append((legacy_position, row, role))
+
+                for legacy_position, row, role in overflow:
+                    available_position = next(
+                        (
+                            position
+                            for position in active_positions
+                            if position not in assignments
+                            and POSITION_ROLE_BY_SLOT[position] == role
+                        ),
+                        None,
+                    )
+                    player_label = format_card_label(
+                        str(row["name"]),
+                        int(row["overall"]),
+                        str(row["rarity"]),
+                    )
+                    if available_position is None:
+                        notices.append(
+                            f"{legacy_position}: {player_label} was not assigned because "
+                            f"{formation} has no additional {role} starter slot."
+                        )
+                    else:
+                        assignments[available_position] = row
+                        notices.append(
+                            f"{legacy_position}: {player_label} was moved to "
+                            f"{available_position} to fit {formation}."
+                        )
+
+                for position, row in assignments.items():
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO team_starters(user_id, position, player_id)
+                        VALUES (?, ?, ?)
+                        """,
+                        (user_id, position, int(row["id"])),
+                    )
+                for notice in notices:
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO team_migration_notices(user_id, notice)
+                        VALUES (?, ?)
+                        """,
+                        (user_id, notice),
+                    )
+
+            connection.execute(
+                "INSERT INTO team_data_migrations(version) VALUES (?)",
+                (migration_version,),
+            )
 
     @staticmethod
     def _validate_user_id(user_id: str | int) -> str:
@@ -621,6 +854,11 @@ class Database:
     @staticmethod
     def _validate_lineup_position(position: str) -> str:
         normalized = str(position).strip().upper()
+        normalized = {
+            "LW": "WING1",
+            "RW": "WING2",
+            "C": "CM1",
+        }.get(normalized, normalized)
         if normalized not in LINEUP_POSITIONS:
             raise InvalidLineupPosition(
                 f"Position must be one of: {', '.join(LINEUP_POSITIONS)}."
@@ -628,68 +866,127 @@ class Database:
         return normalized
 
     def get_lineup(self, user_id: str | int) -> dict[str, Player]:
+        """Return only the active three starters and the two substitute slots."""
+        normalized_id = self._validate_user_id(user_id)
+        active_positions = FORMATION_STARTERS[self.get_formation(normalized_id)]
+        placeholders = ", ".join("?" for _ in active_positions)
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT team_starters.position AS lineup_position, players.*
+                FROM team_starters
+                JOIN players ON players.id = team_starters.player_id
+                JOIN inventory
+                    ON inventory.user_id = team_starters.user_id
+                    AND inventory.player_id = team_starters.player_id
+                WHERE team_starters.user_id = ?
+                    AND team_starters.position IN ({placeholders})
+                    AND inventory.quantity > 0
+                UNION ALL
+                SELECT substitute_slots.position AS lineup_position, players.*
+                FROM substitute_slots
+                JOIN players ON players.id = substitute_slots.player_id
+                JOIN inventory
+                    ON inventory.user_id = substitute_slots.user_id
+                    AND inventory.player_id = substitute_slots.player_id
+                WHERE substitute_slots.user_id = ?
+                    AND inventory.quantity > 0
+                """,
+                (normalized_id, *active_positions, normalized_id),
+            ).fetchall()
+        result: dict[str, Player] = {}
+        for row in rows:
+            position = str(row["lineup_position"])
+            player = self._player_from_row(row)
+            if position in SUBSTITUTE_POSITIONS or (
+                position in active_positions
+                and card_position_role(player.position)
+                == POSITION_ROLE_BY_SLOT.get(position)
+            ):
+                result[position] = player
+        return result
+
+    def get_lineup_migration_notices(self, user_id: str | int) -> list[str]:
         normalized_id = self._validate_user_id(user_id)
         with self._read_connection() as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM (
-                    SELECT lineup.position AS lineup_position, players.*
-                    FROM lineup_slots AS lineup
-                    JOIN players ON players.id = lineup.player_id
-                    WHERE lineup.user_id = ?
-                    UNION ALL
-                    SELECT center.position AS lineup_position, players.*
-                    FROM center_slots AS center
-                    JOIN players ON players.id = center.player_id
-                    WHERE center.user_id = ?
-                    UNION ALL
-                    SELECT substitutes.position AS lineup_position, players.*
-                    FROM substitute_slots AS substitutes
-                    JOIN players ON players.id = substitutes.player_id
-                    WHERE substitutes.user_id = ?
-                ) AS team_lineup
-                ORDER BY CASE team_lineup.lineup_position
-                    WHEN 'LW' THEN 0
-                    WHEN 'C' THEN 1
-                    WHEN 'RW' THEN 2
-                    WHEN 'GK' THEN 3
-                    WHEN 'SUB1' THEN 4
-                    WHEN 'SUB2' THEN 5
-                END
+                SELECT notice FROM team_migration_notices
+                WHERE user_id = ? ORDER BY notice
                 """,
-                (normalized_id, normalized_id, normalized_id),
+                (normalized_id,),
             ).fetchall()
-        return {
-            str(row["lineup_position"]): self._player_from_row(row)
-            for row in rows
-        }
+        return [str(row["notice"]) for row in rows]
 
     def set_lineup_position(
         self,
         user_id: str | int,
         position: str,
-        player_name: str,
+        player_name: str | int,
     ) -> Player:
         normalized_id = self._validate_user_id(user_id)
         normalized_position = self._validate_lineup_position(position)
-        normalized_name = str(player_name).strip()
-        if not normalized_name:
+        lookup = str(player_name).strip()
+        if not lookup:
             raise PlayerNotFound(player_name)
 
         with self._transaction() as connection:
-            player = connection.execute(
-                "SELECT * FROM players WHERE name = ? COLLATE NOCASE",
-                (normalized_name,),
+            self._ensure_user(connection, normalized_id)
+            formation_row = connection.execute(
+                "SELECT formation FROM team_settings_v2 WHERE user_id = ?",
+                (normalized_id,),
             ).fetchone()
+            formation = (
+                str(formation_row["formation"])
+                if formation_row
+                else DEFAULT_FORMATION
+            )
+            if (
+                normalized_position in STARTING_LINEUP_POSITIONS
+                and normalized_position
+                not in FORMATION_STARTERS[formation]
+            ):
+                raise InvalidLineupPosition(
+                    f"{normalized_position} is not a starter slot in the "
+                    f"{formation} formation. Active positions: "
+                    f"{', '.join(FORMATION_STARTERS[formation])}."
+                )
+
+            if lookup.isdecimal():
+                player = connection.execute(
+                    "SELECT * FROM players WHERE id = ?",
+                    (int(lookup),),
+                ).fetchone()
+            else:
+                player = connection.execute(
+                    "SELECT * FROM players WHERE name = ? COLLATE NOCASE",
+                    (lookup,),
+                ).fetchone()
             if not player:
-                raise PlayerNotFound(normalized_name)
+                raise PlayerNotFound(lookup)
+
+            player_id = int(player["id"])
+            if normalized_position in STARTING_LINEUP_POSITIONS:
+                expected_role = POSITION_ROLE_BY_SLOT[normalized_position]
+                actual_role = card_position_role(str(player["position"]))
+                if actual_role != expected_role:
+                    role_label = {
+                        "WING": "Wing",
+                        "CM": "CM",
+                        "GK": "GK",
+                    }[expected_role]
+                    raise InvalidLineupPosition(
+                        f"Only {role_label} cards can occupy {normalized_position}. "
+                        f"**{format_card_label(player['name'], player['overall'], player['rarity'])}** "
+                        f"has position **{player['position']}**."
+                    )
 
             owned = connection.execute(
                 """
                 SELECT quantity FROM inventory
                 WHERE user_id = ? AND player_id = ?
                 """,
-                (normalized_id, int(player["id"])),
+                (normalized_id, player_id),
             ).fetchone()
             if not owned or int(owned["quantity"]) < 1:
                 raise CardNotOwned(
@@ -698,37 +995,27 @@ class Database:
 
             existing_slot = connection.execute(
                 """
-                SELECT position FROM lineup_slots
+                SELECT position FROM team_starters
                 WHERE user_id = ? AND player_id = ?
                 UNION ALL
-                    SELECT position FROM center_slots
-                    WHERE user_id = ? AND player_id = ?
-                    UNION ALL
                 SELECT position FROM substitute_slots
                 WHERE user_id = ? AND player_id = ?
                 LIMIT 1
                 """,
-                (
-                    normalized_id,
-                    int(player["id"]),
-                    normalized_id,
-                    int(player["id"]),
-                    normalized_id,
-                    int(player["id"]),
-                ),
+                (normalized_id, player_id, normalized_id, player_id),
             ).fetchone()
             if existing_slot and str(existing_slot["position"]) != normalized_position:
                 raise DuplicateLineupPlayer(
-                    f"**{format_card_label(player['name'], player['overall'], player['rarity'])}** is already assigned to "
-                    f"{existing_slot['position']}. Clear that slot first."
+                    f"**{format_card_label(player['name'], player['overall'], player['rarity'])}** "
+                    f"is already assigned to {existing_slot['position']}. "
+                    "Clear that slot first."
                 )
 
-            if normalized_position == "C":
-                target_table = "center_slots"
-            elif normalized_position in STARTING_LINEUP_POSITIONS:
-                target_table = "lineup_slots"
-            else:
-                target_table = "substitute_slots"
+            target_table = (
+                "substitute_slots"
+                if normalized_position in SUBSTITUTE_POSITIONS
+                else "team_starters"
+            )
             connection.execute(
                 f"""
                 INSERT INTO {target_table}(user_id, position, player_id)
@@ -736,7 +1023,11 @@ class Database:
                 ON CONFLICT(user_id, position)
                 DO UPDATE SET player_id = excluded.player_id
                 """,
-                (normalized_id, normalized_position, int(player["id"])),
+                (normalized_id, normalized_position, player_id),
+            )
+            connection.execute(
+                "DELETE FROM team_migration_notices WHERE user_id = ?",
+                (normalized_id,),
             )
             return self._player_from_row(player)
 
@@ -747,29 +1038,37 @@ class Database:
     ) -> bool:
         normalized_id = self._validate_user_id(user_id)
         normalized_position = self._validate_lineup_position(position)
-        if normalized_position == "C":
-            target_table = "center_slots"
-        elif normalized_position in STARTING_LINEUP_POSITIONS:
-            target_table = "lineup_slots"
-        else:
-            target_table = "substitute_slots"
+        target_table = (
+            "substitute_slots"
+            if normalized_position in SUBSTITUTE_POSITIONS
+            else "team_starters"
+        )
         with self._transaction() as connection:
             result = connection.execute(
                 f"DELETE FROM {target_table} WHERE user_id = ? AND position = ?",
                 (normalized_id, normalized_position),
             )
+            if result.rowcount:
+                connection.execute(
+                    "DELETE FROM team_migration_notices WHERE user_id = ?",
+                    (normalized_id,),
+                )
             return result.rowcount > 0
 
     def get_formation(self, user_id: str | int) -> str:
         normalized_id = self._validate_user_id(user_id)
         with self._read_connection() as connection:
             row = connection.execute(
-                "SELECT formation FROM team_settings WHERE user_id = ?",
+                "SELECT formation FROM team_settings_v2 WHERE user_id = ?",
                 (normalized_id,),
             ).fetchone()
         return str(row["formation"]) if row else DEFAULT_FORMATION
 
-    def set_formation(self, user_id: str | int, formation: str) -> str:
+    def set_formation_with_report(
+        self,
+        user_id: str | int,
+        formation: str,
+    ) -> FormationChange:
         normalized_id = self._validate_user_id(user_id)
         choices = {value.casefold(): value for value in TEAM_FORMATIONS}
         normalized_formation = choices.get(str(formation).strip().casefold())
@@ -777,18 +1076,100 @@ class Database:
             raise InvalidFormation(
                 f"Formation must be one of: {', '.join(TEAM_FORMATIONS)}."
             )
+
+        new_positions = FORMATION_STARTERS[normalized_formation]
         with self._transaction() as connection:
             self._ensure_user(connection, normalized_id)
+            current_row = connection.execute(
+                "SELECT formation FROM team_settings_v2 WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            current_formation = (
+                str(current_row["formation"]) if current_row else DEFAULT_FORMATION
+            )
+            rows = connection.execute(
+                """
+                SELECT team_starters.position, players.*
+                FROM team_starters
+                JOIN players ON players.id = team_starters.player_id
+                WHERE team_starters.user_id = ?
+                """,
+                (normalized_id,),
+            ).fetchall()
+            assigned = {
+                str(row["position"]): self._player_from_row(row)
+                for row in rows
+            }
+            retained: dict[str, Player] = {}
+            used_player_ids: set[int] = set()
+
+            for position in new_positions:
+                player = assigned.get(position)
+                if (
+                    player is not None
+                    and card_position_role(player.position)
+                    == POSITION_ROLE_BY_SLOT[position]
+                ):
+                    retained[position] = player
+                    used_player_ids.add(player.id)
+
+            moved: list[tuple[str, str, Player]] = []
+            unassigned: list[tuple[str, Player]] = []
+            for old_position in STARTING_LINEUP_POSITIONS:
+                player = assigned.get(old_position)
+                if player is None or player.id in used_player_ids:
+                    continue
+                role = card_position_role(player.position)
+                destination = next(
+                    (
+                        candidate
+                        for candidate in new_positions
+                        if candidate not in retained
+                        and POSITION_ROLE_BY_SLOT[candidate] == role
+                    ),
+                    None,
+                )
+                if destination is None:
+                    unassigned.append((old_position, player))
+                else:
+                    retained[destination] = player
+                    used_player_ids.add(player.id)
+                    moved.append((old_position, destination, player))
+
+            connection.execute(
+                "DELETE FROM team_starters WHERE user_id = ?",
+                (normalized_id,),
+            )
+            for position, player in retained.items():
+                connection.execute(
+                    """
+                    INSERT INTO team_starters(user_id, position, player_id)
+                    VALUES (?, ?, ?)
+                    """,
+                    (normalized_id, position, player.id),
+                )
             connection.execute(
                 """
-                INSERT INTO team_settings(user_id, formation)
+                INSERT INTO team_settings_v2(user_id, formation)
                 VALUES (?, ?)
                 ON CONFLICT(user_id)
                 DO UPDATE SET formation = excluded.formation
                 """,
                 (normalized_id, normalized_formation),
             )
-        return normalized_formation
+            connection.execute(
+                "DELETE FROM team_migration_notices WHERE user_id = ?",
+                (normalized_id,),
+            )
+        return FormationChange(
+            formation=normalized_formation,
+            moved=tuple(moved),
+            unassigned=tuple(unassigned),
+        )
+
+    def set_formation(self, user_id: str | int, formation: str) -> str:
+        """Compatibility wrapper returning the selected formation name."""
+        return self.set_formation_with_report(user_id, formation).formation
 
     def open_pack(
         self,

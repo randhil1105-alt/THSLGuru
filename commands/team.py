@@ -11,9 +11,8 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from database import (
-    DEFAULT_FORMATION,
-    LINEUP_POSITIONS,
-    STARTING_LINEUP_POSITIONS,
+    FORMATION_STARTERS,
+    SUBSTITUTE_POSITIONS,
     TEAM_FORMATIONS,
     CardNotOwned,
     Database,
@@ -23,6 +22,7 @@ from database import (
     PlayerNotFound,
     player_card_label,
 )
+from commands.common import format_coins
 from commands.lineup_image import (
     OUTPUT_FILENAME,
     LineupImageError,
@@ -30,18 +30,19 @@ from commands.lineup_image import (
 )
 
 POSITION_LABELS = {
-    "LW": "Left Wing",
-    "C": "Center",
-    "RW": "Right Wing",
+    "WING1": "Wing 1",
+    "WING2": "Wing 2",
+    "CM1": "CM 1",
+    "CM2": "CM 2",
     "GK": "Goalie",
     "SUB1": "Substitute 1",
     "SUB2": "Substitute 2",
 }
 
 FORMATION_STYLES = {
-    "Balanced": "Balanced tactical style with equal emphasis on offense and defense.",
-    "Attack": "Offense-first style that emphasizes pressure from LW, C, and RW.",
-    "Defensive": "Defense-first style that prioritizes protecting the goal.",
+    "Balanced": "1 Wing · 1 CM · 1 GK",
+    "Offensive": "2 Wings · 1 GK",
+    "Defensive": "2 CMs · 1 GK",
 }
 
 
@@ -57,58 +58,78 @@ class TeamCommands(discord_commands.Cog):
         user_id = interaction.user.id
         lineup = self.database.get_lineup(user_id)
         formation = self.database.get_formation(user_id)
+        active_positions = FORMATION_STARTERS[formation]
+        team_positions = active_positions + SUBSTITUTE_POSITIONS
         embed = discord.Embed(
-            title=f"{interaction.user.display_name}'s THSL Starting Lineup",
+            title=f"{interaction.user.display_name}'s THSL STARTING LINEUP",
             color=discord.Color.blurple(),
         )
 
         starters = [
             lineup[position]
-            for position in STARTING_LINEUP_POSITIONS
+            for position in active_positions
             if position in lineup
         ]
         if starters:
             average = math.floor(
                 sum(player.overall for player in starters) / len(starters) + 0.5
             )
-            if len(starters) == len(STARTING_LINEUP_POSITIONS):
+            if len(starters) == len(active_positions):
                 overall_text = f"**{average} OVR**"
             else:
                 overall_text = (
                     f"**{average} OVR average** · {len(starters)}/"
-                    f"{len(STARTING_LINEUP_POSITIONS)} starters filled"
+                    f"{len(active_positions)} starters filled"
                 )
         else:
-            overall_text = "Not rated yet · no starting cards assigned"
+            overall_text = "Not rated yet · 0/3 starters filled"
 
         embed.add_field(name="Starting lineup OVR", value=overall_text, inline=False)
+        total_value = sum(player.value for player in lineup.values())
+        value_text = format_coins(total_value)
+        embed.add_field(
+            name="Team value",
+            value=f"**{value_text}** · 3 starters and up to 2 substitutes",
+            inline=False,
+        )
         embed.add_field(
             name="Formation",
-            value=f"**{formation}**\n{FORMATION_STYLES[formation]}",
+            value=(
+                f"**{formation}** · {FORMATION_STYLES[formation]}\n"
+                "Each formation has exactly three starting slots."
+            ),
             inline=False,
         )
 
-        for position in LINEUP_POSITIONS:
+        for position in team_positions:
             player = lineup.get(position)
             if player is None:
                 value = "Empty"
             else:
                 value = (
-                    f"**{player_card_label(player)}**"
+                    f"**{player.name} — {player.overall} OVR "
+                    f"({player.rarity.upper()})**"
                     f"\nCard position: {player.position}"
+                    f"\nValue: {format_coins(player.value)}"
                 )
             embed.add_field(
                 name=f"{position} · {POSITION_LABELS[position]}",
                 value=value,
-                inline=position in STARTING_LINEUP_POSITIONS,
+                inline=position in active_positions,
             )
 
-        if len(lineup) < len(LINEUP_POSITIONS):
-            embed.description = (
+        description_parts: list[str] = []
+        if len(lineup) < len(team_positions):
+            description_parts.append(
                 "Fill the starting slots and substitutes with cards you own using "
-                "`/set position:<LW|C|RW|GK|SUB1|SUB2> player:<card name>`. "
-                "Use `player:CLEAR` to empty a slot."
+                "`/set position:<active slot> player:<owned card>`. "
+                "Use `player:CLEAR` to empty a slot. The team value sums the "
+                "listed values of all assigned starters and substitutes."
             )
+        notices = self.database.get_lineup_migration_notices(user_id)
+        if notices:
+            description_parts.append("Saved lineup adjustments:\n" + "\n".join(notices))
+        embed.description = "\n\n".join(description_parts) or None
         await interaction.response.defer(thinking=True)
         try:
             image = await asyncio.to_thread(
@@ -116,6 +137,7 @@ class TeamCommands(discord_commands.Cog):
                 lineup,
                 formation,
                 overall_text,
+                value_text,
             )
         except LineupImageError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
@@ -132,13 +154,14 @@ class TeamCommands(discord_commands.Cog):
     )
     @app_commands.describe(
         position="The lineup position to update",
-        player="An owned card name, or CLEAR to empty the position",
+        player="Choose an owned card version, or CLEAR to empty the position",
     )
     @app_commands.choices(
         position=[
-            app_commands.Choice(name="LW · Left Wing", value="LW"),
-            app_commands.Choice(name="C · Center", value="C"),
-            app_commands.Choice(name="RW · Right Wing", value="RW"),
+            app_commands.Choice(name="Wing 1", value="WING1"),
+            app_commands.Choice(name="Wing 2", value="WING2"),
+            app_commands.Choice(name="CM 1", value="CM1"),
+            app_commands.Choice(name="CM 2", value="CM2"),
             app_commands.Choice(name="GK · Goalie", value="GK"),
             app_commands.Choice(name="SUB1 · Substitute 1", value="SUB1"),
             app_commands.Choice(name="SUB2 · Substitute 2", value="SUB2"),
@@ -177,10 +200,40 @@ class TeamCommands(discord_commands.Cog):
             return
 
         await interaction.response.send_message(
-            f"Assigned **{player_card_label(assigned)}** to **{position.value}** "
+            f"Assigned **{assigned.name} — {assigned.overall} OVR "
+            f"({assigned.rarity.upper()})** to **{position.value}** "
             f"({POSITION_LABELS[position.value]}).",
             ephemeral=True,
         )
+
+    @set_position.autocomplete("player")
+    async def set_player_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        query = current.strip().casefold()
+        choices: list[app_commands.Choice[str]] = []
+        if not query or "clear".startswith(query) or query in "clear":
+            choices.append(
+                app_commands.Choice(name="CLEAR · Empty this slot", value="CLEAR")
+            )
+        for entry in self.database.get_inventory(interaction.user.id):
+            player = entry.player
+            label = (
+                f"{player.name} — {player.overall} OVR "
+                f"({player.rarity.upper()})"
+            )
+            if entry.quantity > 1:
+                label += f" ×{entry.quantity}"
+            if query and query not in label.casefold():
+                continue
+            choices.append(
+                app_commands.Choice(name=label[:100], value=str(player.id))
+            )
+            if len(choices) == 25:
+                break
+        return choices
 
     @app_commands.command(
         name="formation",
@@ -198,7 +251,7 @@ class TeamCommands(discord_commands.Cog):
         formation: app_commands.Choice[str],
     ) -> None:
         try:
-            selected = self.database.set_formation(
+            change = self.database.set_formation_with_report(
                 interaction.user.id,
                 formation.value,
             )
@@ -206,11 +259,31 @@ class TeamCommands(discord_commands.Cog):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
 
-        await interaction.response.send_message(
-            f"Saved **{selected}** formation. Your lineup positions remain "
-            f"{', '.join(LINEUP_POSITIONS)}.\n{FORMATION_STYLES[selected]}",
-            ephemeral=True,
+        active_positions = FORMATION_STARTERS[change.formation]
+        message = (
+            f"Saved **{change.formation}**: "
+            f"{' · '.join(POSITION_LABELS[position] for position in active_positions)}."
         )
+        if change.moved:
+            moved = ", ".join(
+                f"{player_card_label(player)} moved from {old} to {new}"
+                for old, new, player in change.moved
+            )
+            message += f"\nCompatible cards kept in matching roles: {moved}."
+        if change.unassigned:
+            unassigned = ", ".join(
+                f"{position} — {player_card_label(player)}"
+                for position, player in change.unassigned
+            )
+            message += (
+                f"\nLeft empty because this formation has no compatible starter "
+                f"slot: {unassigned}. Those cards remain in your inventory and "
+                "were not moved to another role."
+            )
+        notices = self.database.get_lineup_migration_notices(interaction.user.id)
+        if notices:
+            message += "\nSaved lineup adjustments: " + " ".join(notices)
+        await interaction.response.send_message(message, ephemeral=True)
 
 
 async def setup(bot: discord_commands.Bot) -> None:
