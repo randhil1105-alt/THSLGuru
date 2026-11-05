@@ -124,5 +124,23 @@
       "ACT": 84
     },
     "image_path": "cards/dryboomrun.png"
+  },
+  {
+    "name": "Needy",
+    "overall": 85,
+    "position": "C",
+    "country": "Mexico",
+    "team": "Vegas Golden Knights",
+    "rarity": "GOLD",
+    "value": 700000,
+    "stats": {
+      "SHO": 85,
+      "DRI": 84,
+      "SAV": 85,
+      "PAS": 84,
+      "DEF": 86,
+      "ACT": 86
+    },
+    "image_path": "cards/needy.png"
   }
 ]

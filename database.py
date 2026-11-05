@@ -111,7 +111,12 @@ def format_card_type(rarity: str) -> str:
 
 def format_card_label(name: str, overall: int, rarity: str) -> str:
     """Format a card as rating, catalog name, and its stored card type."""
-    return f"{overall} {name} ({format_card_type(rarity)})"
+    display_name = str(name).strip()
+    card_type = format_card_type(rarity)
+    disambiguator = f" ({card_type} {overall})"
+    if display_name.casefold().endswith(disambiguator.casefold()):
+        display_name = display_name[: -len(disambiguator)]
+    return f"{overall} {display_name} ({card_type})"
 
 
 def player_card_label(player: Player) -> str:

@@ -215,6 +215,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 response.messages[0]["embed"].description,
             )
             self.assertIn(
+                "**85 Needy (Gold)**",
+                response.messages[0]["embed"].description,
+            )
+            self.assertIn(
                 "**87 Dan (Gold)**",
                 response.messages[0]["embed"].description,
             )
@@ -291,6 +295,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "XavierCapone9",
             "Gamer",
             "Dryboomrun",
+            "Needy",
         ):
             with self.subTest(name=name):
                 player = self.database.get_player(name)
@@ -310,9 +315,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(card=player.name):
                 label = player_card_label(player)
                 self.assertTrue(player.rarity)
+                display_name = {
+                    "Hala (Gold 90)": "Hala",
+                }.get(player.name, player.name)
                 self.assertEqual(
                     label,
-                    f"{player.overall} {player.name} ({format_card_type(player.rarity)})",
+                    f"{player.overall} {display_name} "
+                    f"({format_card_type(player.rarity)})",
                 )
                 detail_embed = player_embed(player)
                 self.assertEqual(detail_embed.title, label)
@@ -484,6 +493,125 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         team_image = team_message["file"]
         self.assertTrue(team_image.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         team_image.close()
+
+    async def test_needy_card_is_displayed_in_all_requested_flows(self) -> None:
+        card = self.database.get_player("Needy")
+        self.assertIsNotNone(card)
+        assert card is not None
+        self.assertEqual(
+            (
+                card.overall,
+                card.rarity,
+                card.position,
+                card.country,
+                card.team,
+                card.value,
+                card.stats,
+                card.image_path,
+            ),
+            (
+                85,
+                "GOLD",
+                "C",
+                "Mexico",
+                "Vegas Golden Knights",
+                700_000,
+                {"SHO": 85, "DRI": 84, "SAV": 85, "PAS": 84, "DEF": 86, "ACT": 86},
+                "cards/needy.png",
+            ),
+        )
+        label = "85 Needy (Gold)"
+        image_path = resolve_card_image(card)
+        self.assertIsNotNone(image_path)
+        assert image_path is not None
+        self.assertEqual(image_path, Path("cards/needy.png").resolve())
+        self.assertTrue(image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertIn(card, self.database.get_players(rarity="GOLD"))
+
+        for command_name in ("player", "card"):
+            response = FakeResponse()
+            await getattr(PlayerCommands, command_name).callback(
+                PlayerCommands(self.database),
+                SimpleNamespace(response=response),
+                "Needy",
+            )
+            message = response.messages[0]
+            self.assertEqual(message["embed"].title, label)
+            self.assertEqual(message["embed"].image.url, "attachment://needy.png")
+            details = {field.name: field.value for field in message["embed"].fields}
+            self.assertEqual(details["Position"], "C")
+            self.assertEqual(details["Country"], "Mexico")
+            self.assertEqual(details["Team"], "Vegas Golden Knights")
+            self.assertEqual(details["Card Type"], "Gold")
+            self.assertEqual(details["Value"], "700,000 coins")
+            for stat, value in {
+                "SHO": 85,
+                "DRI": 84,
+                "SAV": 85,
+                "PAS": 84,
+                "DEF": 86,
+                "ACT": 86,
+            }.items():
+                self.assertIn(f"**{stat}** {value}", details["Stats"])
+            message["file"].close()
+
+        user_id = "needy-card-flow-user"
+        grant_response = FakeResponse()
+        await AdminCommands.grantcard.callback(
+            AdminCommands(self.database),
+            SimpleNamespace(response=grant_response),
+            SimpleNamespace(id=user_id, mention="<@needy-card-flow-user>"),
+            "Needy",
+            1,
+        )
+        self.assertIn(label, grant_response.messages[0]["content"])
+
+        inventory_cog = InventoryCommands(self.database)
+        for command_name in ("inventory", "collection", "players", "cards"):
+            response = FakeResponse()
+            await getattr(InventoryCommands, command_name).callback(
+                inventory_cog,
+                SimpleNamespace(user=SimpleNamespace(id=user_id), response=response),
+            )
+            self.assertIn(f"**{label}**", response.messages[0]["embed"].description)
+
+        pack_response = FakeResponse()
+        await PackCommands.packs.callback(
+            PackCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=user_id),
+                response=pack_response,
+            ),
+        )
+        gold_field = {
+            field.name: field.value
+            for field in pack_response.messages[0]["embed"].fields
+        }["GOLD · 5,000,000 coins"]
+        self.assertIn(label, gold_field)
+        self.assertIn("16.7%", gold_field)
+
+        set_response = FakeResponse()
+        team_cog = TeamCommands(self.database)
+        await TeamCommands.set_position.callback(
+            team_cog,
+            SimpleNamespace(user=SimpleNamespace(id=user_id), response=set_response),
+            discord.app_commands.Choice(name="RW", value="RW"),
+            "Needy",
+        )
+        self.assertIn(label, set_response.messages[0]["content"])
+
+        team_interaction = SimpleNamespace(
+            user=SimpleNamespace(id=user_id, display_name="Needy"),
+            response=FakeResponse(),
+            followup=FakeFollowup(),
+        )
+        await TeamCommands.team.callback(team_cog, team_interaction)
+        team_message = team_interaction.followup.messages[0]
+        fields = {field.name: field.value for field in team_message["embed"].fields}
+        self.assertIn(label, fields["RW · Right Wing"])
+        team_file = team_message["file"]
+        self.assertTrue(team_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
+        team_file.close()
 
     async def test_sell_card_displays_rating_name_and_stored_type(self) -> None:
         user_id = "dryboomrun-seller"
@@ -664,7 +792,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             message = response.messages[0]
             self.assertEqual(
                 message["embed"].title,
-                "90 Hala (Gold 90) (Gold)",
+                "90 Hala (Gold)",
             )
             self.assertEqual(message["embed"].image.url, "attachment://hala.png")
             details = {field.name: field.value for field in message["embed"].fields}
@@ -698,7 +826,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 SimpleNamespace(user=SimpleNamespace(id=user_id), response=response),
             )
             self.assertIn(
-                "**90 Hala (Gold 90) (Gold)**",
+                "**90 Hala (Gold)**",
                 response.messages[0]["embed"].description,
             )
             if command_name == "inventory":
@@ -735,7 +863,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         self.assertIn(
-            "90 Hala (Gold 90) (Gold)",
+            "90 Hala (Gold)",
             {field.name: field.value for field in team_message["embed"].fields}[
                 "RW · Right Wing"
             ],
@@ -920,16 +1048,17 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Dan", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("XavierCapone9", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Gamer", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("Hala (Gold 90)", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("90 Hala (Gold)", field_values["GOLD · 5,000,000 coins"])
         for label in (
             "87 Dan (Gold)",
             "91 XavierCapone9 (Gold)",
             "89 Gamer (Gold)",
-            "90 Hala (Gold 90) (Gold)",
+            "90 Hala (Gold)",
             "87 Dryboomrun (Gold)",
+            "85 Needy (Gold)",
         ):
             self.assertIn(label, field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("20.0%", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("16.7%", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("93 Licha (TOTW)", field_values["TOTW · 20,000,000 coins"])
         self.assertIn("93 Hala (TOTW)", field_values["TOTW · 20,000,000 coins"])
         self.assertIn("50.0%", field_values["TOTW · 20,000,000 coins"])
@@ -954,7 +1083,14 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(purchased_inventory), 1)
         self.assertIn(
             purchased_inventory[0].player.name,
-            {"Dan", "XavierCapone9", "Gamer", "Hala (Gold 90)", "Dryboomrun"},
+            {
+                "Dan",
+                "XavierCapone9",
+                "Gamer",
+                "Hala (Gold 90)",
+                "Dryboomrun",
+                "Needy",
+            },
         )
         self.assertEqual(purchased_inventory[0].player.rarity, "GOLD")
         self.assertEqual(
@@ -983,8 +1119,15 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             (
                 "GOLD",
                 GOLD_PACK_COST,
-                {"Dan", "XavierCapone9", "Gamer", "Hala (Gold 90)", "Dryboomrun"},
-                "20.0%",
+                {
+                    "Dan",
+                    "XavierCapone9",
+                    "Gamer",
+                    "90 Hala (Gold)",
+                    "Dryboomrun",
+                    "Needy",
+                },
+                "16.7%",
             ),
             ("TOTW", TOTW_PACK_COST, {"Licha", "Hala"}, "50.0%"),
         )

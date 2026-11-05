@@ -1,1 +1,2 @@
 - [Team rink lineup layout](team-rink-layout.md) — keep the rink unobstructed and place player cards below it so all ice markings remain visible.
+- [Card catalog pricing](card-catalog-pricing.md) — use an explicit value or documented pricing rule for new cards; ask rather than guess.

@@ -105,6 +105,7 @@ class DatabaseTests(unittest.TestCase):
                 "Gamer",
                 "Hala (Gold 90)",
                 "Dryboomrun",
+                "Needy",
             },
         )
 
@@ -165,6 +166,23 @@ class DatabaseTests(unittest.TestCase):
             {"SHO": 86, "DRI": 85, "SAV": 78, "PAS": 88, "DEF": 89, "ACT": 84},
         )
         self.assertEqual(card.image_path, "cards/dryboomrun.png")
+        self.assertIn(card, self.database.get_players(rarity="GOLD"))
+
+    def test_needy_seed_card_has_exact_data_and_gold_pack_eligibility(self) -> None:
+        card = self.database.get_player("Needy")
+        self.assertIsNotNone(card)
+        assert card is not None
+        self.assertEqual(card.overall, 85)
+        self.assertEqual(card.position, "C")
+        self.assertEqual(card.country, "Mexico")
+        self.assertEqual(card.team, "Vegas Golden Knights")
+        self.assertEqual(card.rarity, "GOLD")
+        self.assertEqual(card.value, 700_000)
+        self.assertEqual(
+            card.stats,
+            {"SHO": 85, "DRI": 84, "SAV": 85, "PAS": 84, "DEF": 86, "ACT": 86},
+        )
+        self.assertEqual(card.image_path, "cards/needy.png")
         self.assertIn(card, self.database.get_players(rarity="GOLD"))
 
     def test_read_connection_closes_after_the_context(self) -> None:
