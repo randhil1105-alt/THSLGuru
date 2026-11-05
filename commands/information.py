@@ -34,9 +34,8 @@ class InformationCommands(discord_commands.Cog):
                 "`/claim` · Claim 5,000 coins every 24 hours\n"
                 "`/balance` · Check your balance\n"
                 "`/leaderboard` · See top balances\n"
+                "`/pack pack_type` · Choose GOLD or TOTW, then confirm purchase\n"
                 "`/packs` · View pack contents, odds, prices, and buy buttons\n"
-                "`/goldpack` · Confirm a 5,000,000-coin GOLD purchase\n"
-                "`/totwpack` · Confirm a 20,000,000-coin TOTW purchase\n"
                 "`/sell player quantity` · Sell cards at listed value"
             ),
             inline=False,

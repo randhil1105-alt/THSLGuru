@@ -70,5 +70,23 @@
       "ACT": 82
     },
     "image_path": "cards/xaviercapone9.png"
+  },
+  {
+    "name": "Gamer",
+    "overall": 89,
+    "position": "WI",
+    "country": "USA",
+    "team": "Dallas Stars",
+    "rarity": "GOLD",
+    "value": 2000000,
+    "stats": {
+      "SHO": 93,
+      "DRI": 88,
+      "SAV": 78,
+      "PAS": 86,
+      "DEF": 80,
+      "ACT": 76
+    },
+    "image_path": "cards/gamer.png"
   }
 ]

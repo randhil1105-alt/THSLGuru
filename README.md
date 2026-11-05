@@ -15,9 +15,8 @@ persistent SQLite database.
 | `/leaderboard` | Show the ten largest balances |
 | `/inventory` | Show cards you own |
 | `/collection` | Browse all cards and ownership |
+| `/pack pack_type` | Choose a GOLD or TOTW pack, then confirm purchase |
 | `/packs` | View pack contents, equal odds, prices, and purchase buttons |
-| `/goldpack` | Confirm a 5,000,000-coin purchase for one GOLD card |
-| `/totwpack` | Confirm a 20,000,000-coin purchase for one TOTW card |
 | `/sell player quantity` | Sell owned copies at the card's listed value |
 | `/team` | View your rink lineup image, substitutes, formation, and rating |
 | `/set position player` | Assign an owned card to a starter or substitute slot |
@@ -35,9 +34,9 @@ Administrator-only commands:
 - `/grantcoins` grants coins.
 - `/grantcard` grants one or more card copies.
 
-The initial catalog contains Dan and XavierCapone9 as GOLD cards and Licha and
-Hala as TOTW cards. If a future catalog has no cards of a requested pack rarity,
-the pack command explains that none are available and does not charge.
+The initial catalog contains Dan, XavierCapone9, and Gamer as GOLD cards and
+Licha and Hala as TOTW cards. If a future catalog has no cards of a requested
+pack rarity, the pack command explains that none are available and does not charge.
 
 ## Run locally or on Replit
 
@@ -100,9 +99,9 @@ and displayed, but this bot does not currently simulate matches or modify
 player ratings based on it. Missing or unreadable card images display a
 placeholder instead of preventing the lineup image from being sent.
 
-`/packs` lists available packs, their eligible cards and equal per-card odds.
-Clicking a buy button makes one purchase; the menu is single-use. `/goldpack`
-and `/totwpack` remain available and use the same confirmation flow.
+`/pack pack_type` opens a confirmation menu for the selected GOLD or TOTW pack.
+`/packs` lists both pack types, their eligible cards, equal per-card odds, and
+purchase buttons. Clicking a buy button makes one purchase; each menu is single-use.
 
 ## GameUnit Plus deployment
 
@@ -124,8 +123,8 @@ workers before relying on it for the live economy.
 ## Card images
 
 The catalog uses `cards/dan.png`, `cards/licha.webp`, `cards/hala.webp`, and
-`cards/xaviercapone9.png`. These are the supplied card images and are checked by
-the offline test suite.
+`cards/xaviercapone9.png`, and `cards/gamer.png`. These are the supplied card
+images and are checked by the offline test suite.
 
 ## Tests
 

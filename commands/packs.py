@@ -234,18 +234,22 @@ class PackCommands(discord_commands.Cog):
         await self._send_pack_menu(interaction)
 
     @app_commands.command(
-        name="goldpack",
-        description="Open a GOLD pack after confirming its purchase.",
+        name="pack",
+        description="Choose and purchase a card pack.",
     )
-    async def goldpack(self, interaction: discord.Interaction) -> None:
-        await self._send_pack_menu(interaction, only_rarity="GOLD")
-
-    @app_commands.command(
-        name="totwpack",
-        description="Open a TOTW pack after confirming its purchase.",
+    @app_commands.describe(pack_type="Choose a GOLD or TOTW pack")
+    @app_commands.choices(
+        pack_type=[
+            app_commands.Choice(name="GOLD Pack", value="GOLD"),
+            app_commands.Choice(name="TOTW Pack", value="TOTW"),
+        ]
     )
-    async def totwpack(self, interaction: discord.Interaction) -> None:
-        await self._send_pack_menu(interaction, only_rarity="TOTW")
+    async def pack(
+        self,
+        interaction: discord.Interaction,
+        pack_type: app_commands.Choice[str],
+    ) -> None:
+        await self._send_pack_menu(interaction, only_rarity=pack_type.value)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

@@ -99,8 +99,25 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(xavier.image_path, "cards/xaviercapone9.png")
         self.assertEqual(
             {player.name for player in self.database.get_players(rarity="GOLD")},
-            {"Dan", "XavierCapone9"},
+            {"Dan", "XavierCapone9", "Gamer"},
         )
+
+    def test_gamer_seed_card_has_exact_data_and_gold_rarity(self) -> None:
+        gamer = self.database.get_player("Gamer")
+        self.assertIsNotNone(gamer)
+        assert gamer is not None
+        self.assertEqual(gamer.name, "Gamer")
+        self.assertEqual(gamer.overall, 89)
+        self.assertEqual(gamer.position, "WI")
+        self.assertEqual(gamer.country, "USA")
+        self.assertEqual(gamer.team, "Dallas Stars")
+        self.assertEqual(gamer.rarity, "GOLD")
+        self.assertEqual(gamer.value, 2_000_000)
+        self.assertEqual(
+            gamer.stats,
+            {"SHO": 93, "DRI": 88, "SAV": 78, "PAS": 86, "DEF": 80, "ACT": 76},
+        )
+        self.assertEqual(gamer.image_path, "cards/gamer.png")
 
     def test_read_connection_closes_after_the_context(self) -> None:
         with self.database._read_connection() as connection:
