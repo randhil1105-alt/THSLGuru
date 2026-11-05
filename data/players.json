@@ -160,5 +160,59 @@
       "ACT": 82
     },
     "image_path": "cards/fadi.png"
+  },
+  {
+    "name": "Mason",
+    "overall": 84,
+    "position": "WI",
+    "country": "England",
+    "team": "Dallas Stars",
+    "rarity": "GOLD",
+    "value": 400000,
+    "stats": {
+      "SHO": 85,
+      "DRI": 85,
+      "SAV": 79,
+      "PAS": 84,
+      "DEF": 83,
+      "ACT": 83
+    },
+    "image_path": "cards/mason.png"
+  },
+  {
+    "name": "Demox",
+    "overall": 84,
+    "position": "WI",
+    "country": "Turkey",
+    "team": "Ottawa Senators",
+    "rarity": "GOLD",
+    "value": 400000,
+    "stats": {
+      "SHO": 87,
+      "DRI": 86,
+      "SAV": 84,
+      "PAS": 86,
+      "DEF": 85,
+      "ACT": 85
+    },
+    "image_path": "cards/demox.png"
+  },
+  {
+    "name": "Cheddar",
+    "overall": 84,
+    "position": "WI",
+    "country": "Scotland",
+    "team": "Vegas Golden Knights",
+    "rarity": "GOLD",
+    "value": 400000,
+    "stats": {
+      "SHO": 87,
+      "DRI": 80,
+      "SAV": 78,
+      "PAS": 83,
+      "DEF": 85,
+      "ACT": 80
+    },
+    "image_path": "cards/cheddar.png"
   }
 ]

@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, Sequence
 
-CLAIM_REWARD = 5_000
 CLAIM_COOLDOWN_SECONDS = 24 * 60 * 60
 GOLD_PACK_COST = 5_000_000
 TOTW_PACK_COST = 20_000_000
@@ -493,12 +492,24 @@ class Database:
             ).fetchall()
         return [(str(row["user_id"]), int(row["balance"])) for row in rows]
 
-    def claim_daily(self, user_id: str | int, now: int | None = None) -> tuple[int, int]:
-        """Atomically award the daily claim; return (new balance, next claim time)."""
+    def claim_gold_card(
+        self,
+        user_id: str | int,
+        now: int | None = None,
+        rng: Any | None = None,
+    ) -> tuple[Player, int]:
+        """Atomically award a weighted GOLD card and enforce the daily cooldown."""
         normalized_id = self._validate_user_id(user_id)
         current_time = int(time.time() if now is None else now)
+        chooser = rng if rng is not None else random.SystemRandom()
         with self._transaction() as connection:
             self._ensure_user(connection, normalized_id)
+            candidates = connection.execute(
+                "SELECT * FROM players WHERE rarity = 'GOLD' ORDER BY id"
+            ).fetchall()
+            if not candidates:
+                raise NoEligibleCards("GOLD")
+
             row = connection.execute(
                 "SELECT balance, last_claim_at FROM users WHERE user_id = ?",
                 (normalized_id,),
@@ -508,14 +519,37 @@ class Database:
                 next_claim_at = int(last_claim) + CLAIM_COOLDOWN_SECONDS
                 if current_time < next_claim_at:
                     raise CooldownActive(next_claim_at - current_time)
-            balance = int(row["balance"])
-            if balance + CLAIM_REWARD > SQLITE_INT_MAX:
-                raise InvalidAmount("That claim would exceed the supported balance.")
+
+            weights = [
+                card_rating_weight(int(candidate["overall"]))
+                for candidate in candidates
+            ]
+            selected = chooser.choices(candidates, weights=weights, k=1)[0]
+            player_id = int(selected["id"])
+            owned = connection.execute(
+                "SELECT quantity FROM inventory WHERE user_id = ? AND player_id = ?",
+                (normalized_id, player_id),
+            ).fetchone()
+            if owned and int(owned["quantity"]) >= SQLITE_INT_MAX:
+                raise InvalidAmount("That inventory quantity is too large.")
+
             connection.execute(
-                "UPDATE users SET balance = balance + ?, last_claim_at = ? WHERE user_id = ?",
-                (CLAIM_REWARD, current_time, normalized_id),
+                "UPDATE users SET last_claim_at = ? WHERE user_id = ?",
+                (current_time, normalized_id),
             )
-            return balance + CLAIM_REWARD, current_time + CLAIM_COOLDOWN_SECONDS
+            connection.execute(
+                """
+                INSERT INTO inventory(user_id, player_id, quantity)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, player_id)
+                DO UPDATE SET quantity = inventory.quantity + 1
+                """,
+                (normalized_id, player_id),
+            )
+            return (
+                self._player_from_row(selected),
+                current_time + CLAIM_COOLDOWN_SECONDS,
+            )
 
     def add_inventory(
         self, user_id: str | int, player_name: str, quantity: int = 1

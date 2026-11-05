@@ -32,7 +32,7 @@ class InformationCommands(discord_commands.Cog):
         embed.add_field(
             name="Coins and packs",
             value=(
-                "`/claim` · Claim 5,000 coins every 24 hours\n"
+                "`/claim` · Claim a GOLD player card every 24 hours\n"
                 "`/balance` · Check your balance\n"
                 "`/leaderboard` · See top balances\n"
                 "`/pack pack_type` · Choose GOLD or TOTW, then confirm purchase\n"

@@ -1,4 +1,4 @@
-"""Currency balance, daily claim, and leaderboard slash commands."""
+"""Currency balance, daily card claim, and leaderboard slash commands."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.common import format_coins
+from commands.common import format_coins, player_card_label, send_player_card
 from database import (
-    CLAIM_REWARD,
     CooldownActive,
     Database,
     InvalidAmount,
+    NoEligibleCards,
 )
 
 
@@ -28,13 +28,22 @@ class EconomyCommands(discord_commands.Cog):
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    @app_commands.command(name="claim", description="Claim 5,000 coins once every 24 hours.")
+    @app_commands.command(
+        name="claim",
+        description="Claim one GOLD player card once every 24 hours.",
+    )
     async def claim(self, interaction: discord.Interaction) -> None:
         try:
-            balance, next_claim_at = self.database.claim_daily(interaction.user.id)
+            player, next_claim_at = self.database.claim_gold_card(interaction.user.id)
         except CooldownActive as exc:
             await interaction.response.send_message(
                 f"You can claim again in {format_remaining(exc.remaining_seconds)}.",
+                ephemeral=True,
+            )
+            return
+        except NoEligibleCards:
+            await interaction.response.send_message(
+                "No GOLD card rewards are currently available.",
                 ephemeral=True,
             )
             return
@@ -42,11 +51,14 @@ class EconomyCommands(discord_commands.Cog):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
 
-        await interaction.response.send_message(
-            f"You claimed {format_coins(CLAIM_REWARD)}. "
-            f"Your balance is now {format_coins(balance)}. "
-            f"Next claim: <t:{next_claim_at}:R>.",
+        await send_player_card(
+            interaction,
+            player,
             ephemeral=True,
+            content=(
+                f"Your claim reward: **{player_card_label(player)}**. "
+                f"Next claim: <t:{next_claim_at}:R>."
+            ),
         )
 
     @app_commands.command(name="balance", description="Check your coin balance.")

@@ -12,7 +12,7 @@ persistent SQLite database.
 | `/card player` | Choose a catalog card using autocomplete and view its full image |
 | `/players` | Browse the full player catalog |
 | `/cards` | Browse the full player card catalog |
-| `/claim` | Claim 5,000 coins once every 24 hours |
+| `/claim` | Claim a weighted GOLD player card once every 24 hours |
 | `/balance` | Check your balance |
 | `/leaderboard` | Show the ten largest balances |
 | `/inventory` | Show cards you own |
@@ -134,9 +134,10 @@ workers before relying on it for the live economy.
 ## Card images
 
 The catalog uses `cards/dan.png`, `cards/licha.webp`, `cards/hala.webp`,
-`cards/hala.png`, `cards/xaviercapone9.png`, `cards/gamer.png`, and
-`cards/dryboomrun.png`, `cards/needy.png`, and `cards/fadi.png`. These are
-the supplied card images and are checked by the offline test suite.
+`cards/hala.png`, `cards/xaviercapone9.png`, `cards/gamer.png`,
+`cards/dryboomrun.png`, `cards/needy.png`, `cards/fadi.png`, `cards/mason.png`,
+`cards/demox.png`, and `cards/cheddar.png`. These are the supplied card images
+and are checked by the offline test suite.
 
 ## Tests
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Barrier
 
 from database import (
-    CLAIM_REWARD,
+    CLAIM_COOLDOWN_SECONDS,
     DEFAULT_FORMATION,
     GOLD_PACK_COST,
     LINEUP_POSITIONS,
@@ -109,6 +109,9 @@ class DatabaseTests(unittest.TestCase):
                 "Dryboomrun",
                 "Needy",
                 "Fadi",
+                "Mason",
+                "Demox",
+                "Cheddar",
             },
         )
 
@@ -153,6 +156,55 @@ class DatabaseTests(unittest.TestCase):
         )
         self.assertEqual(card.image_path, "cards/fadi.png")
         self.assertIn(card, self.database.get_players(rarity="GOLD"))
+
+    def test_mason_demox_and_cheddar_seed_cards_have_exact_gold_data(self) -> None:
+        expected = {
+            "Mason": (
+                84, "WI", "England", "Dallas Stars",
+                {"SHO": 85, "DRI": 85, "SAV": 79, "PAS": 84, "DEF": 83, "ACT": 83},
+                "cards/mason.png",
+            ),
+            "Demox": (
+                84, "WI", "Turkey", "Ottawa Senators",
+                {"SHO": 87, "DRI": 86, "SAV": 84, "PAS": 86, "DEF": 85, "ACT": 85},
+                "cards/demox.png",
+            ),
+            "Cheddar": (
+                84, "WI", "Scotland", "Vegas Golden Knights",
+                {"SHO": 87, "DRI": 80, "SAV": 78, "PAS": 83, "DEF": 85, "ACT": 80},
+                "cards/cheddar.png",
+            ),
+        }
+        gold_cards = self.database.get_players(rarity="GOLD")
+        for name, details in expected.items():
+            with self.subTest(card=name):
+                card = self.database.get_player(name)
+                self.assertIsNotNone(card)
+                assert card is not None
+                overall, position, country, team, stats, image_path = details
+                self.assertEqual(
+                    (
+                        card.overall,
+                        card.position,
+                        card.country,
+                        card.team,
+                        card.rarity,
+                        card.value,
+                        card.stats,
+                        card.image_path,
+                    ),
+                    (
+                        overall,
+                        position,
+                        country,
+                        team,
+                        "GOLD",
+                        400_000,
+                        stats,
+                        image_path,
+                    ),
+                )
+                self.assertIn(card, gold_cards)
 
     def test_gamer_seed_card_has_exact_data_and_gold_rarity(self) -> None:
         gamer = self.database.get_player("Gamer")
@@ -260,30 +312,133 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaises(InvalidAmount):
             self.database.set_balance("test-user", -1)
 
-    def test_inventory_and_claim_cooldown_persist_after_reopen(self) -> None:
+    def test_inventory_and_card_claim_cooldown_persist_after_reopen(self) -> None:
         claim_time = 3_000_000
         self.database.add_inventory("persistent-user", "Dan", 2)
-        self.database.claim_daily("persistent-user", now=claim_time)
+        claimed_card, _ = self.database.claim_gold_card(
+            "persistent-user",
+            now=claim_time,
+            rng=random.Random(1),
+        )
 
         reloaded = Database(self.database.path)
         reloaded.initialize(load_player_seed())
         inventory = reloaded.get_inventory("persistent-user")
-        self.assertEqual([(entry.player.name, entry.quantity) for entry in inventory], [("Dan", 2)])
-        with self.assertRaises(CooldownActive):
-            reloaded.claim_daily("persistent-user", now=claim_time + 60)
-
-    def test_claim_awards_once_and_enforces_24_hour_cooldown(self) -> None:
-        balance, next_claim = self.database.claim_daily("test-user", now=1_000_000)
-        self.assertEqual(balance, CLAIM_REWARD)
-        self.assertEqual(next_claim, 1_000_000 + 24 * 60 * 60)
-        with self.assertRaises(CooldownActive) as raised:
-            self.database.claim_daily("test-user", now=1_000_001)
-        self.assertEqual(raised.exception.remaining_seconds, 24 * 60 * 60 - 1)
-        balance, _ = self.database.claim_daily(
-            "test-user",
-            now=1_000_000 + 24 * 60 * 60,
+        inventory_by_name = {entry.player.name: entry.quantity for entry in inventory}
+        self.assertEqual(sum(inventory_by_name.values()), 3)
+        self.assertEqual(
+            inventory_by_name.get("Dan", 0),
+            2 + (1 if claimed_card.name == "Dan" else 0),
         )
-        self.assertEqual(balance, CLAIM_REWARD * 2)
+        self.assertEqual(reloaded.get_balance("persistent-user"), 0)
+        with self.assertRaises(CooldownActive):
+            reloaded.claim_gold_card(
+                "persistent-user",
+                now=claim_time + 60,
+                rng=random.Random(2),
+            )
+
+    def test_claim_awards_weighted_gold_without_coins_and_enforces_cooldown(self) -> None:
+        initial_balance = 123_456
+        self.database.set_balance("test-user", initial_balance)
+        player, next_claim = self.database.claim_gold_card(
+            "test-user",
+            now=1_000_000,
+            rng=random.Random(3),
+        )
+        self.assertEqual(player.rarity, "GOLD")
+        self.assertEqual(next_claim, 1_000_000 + CLAIM_COOLDOWN_SECONDS)
+        self.assertEqual(self.database.get_balance("test-user"), initial_balance)
+        self.assertEqual(
+            [(entry.player.name, entry.quantity) for entry in self.database.get_inventory("test-user")],
+            [(player.name, 1)],
+        )
+        with self.assertRaises(CooldownActive) as raised:
+            self.database.claim_gold_card(
+                "test-user",
+                now=1_000_001,
+                rng=random.Random(4),
+            )
+        self.assertEqual(
+            raised.exception.remaining_seconds,
+            CLAIM_COOLDOWN_SECONDS - 1,
+        )
+        next_player, _ = self.database.claim_gold_card(
+            "test-user",
+            now=1_000_000 + CLAIM_COOLDOWN_SECONDS,
+            rng=random.Random(5),
+        )
+        self.assertEqual(next_player.rarity, "GOLD")
+        self.assertEqual(self.database.get_balance("test-user"), initial_balance)
+        self.assertEqual(
+            sum(entry.quantity for entry in self.database.get_inventory("test-user")),
+            2,
+        )
+
+    def test_claim_uses_gold_rating_weights_and_never_selects_totw(self) -> None:
+        class WeightedChooser:
+            def __init__(self) -> None:
+                self.population = []
+                self.weights = []
+
+            def choices(self, population, *, weights, k):
+                self.population = list(population)
+                self.weights = list(weights)
+                return [population[weights.index(max(weights))]]
+
+        chooser = WeightedChooser()
+        player, _ = self.database.claim_gold_card(
+            "weighted-claim-user",
+            now=4_000_000,
+            rng=chooser,
+        )
+        gold_cards = self.database.get_players(rarity="GOLD")
+        self.assertTrue(
+            all(str(card["rarity"]) == "GOLD" for card in chooser.population)
+        )
+        self.assertEqual(
+            chooser.weights,
+            [card_rating_weight(int(card["overall"])) for card in chooser.population],
+        )
+        self.assertEqual(player.overall, 84)
+        self.assertGreater(card_rating_weight(player.overall), card_rating_weight(85))
+        self.assertEqual(self.database.get_balance("weighted-claim-user"), 0)
+        self.assertIn(player, [entry.player for entry in self.database.get_inventory("weighted-claim-user")])
+        self.assertEqual(
+            {int(card["id"]) for card in chooser.population},
+            {card.id for card in gold_cards},
+        )
+
+    def test_claim_with_no_gold_cards_does_not_award_or_set_cooldown(self) -> None:
+        self.database.set_balance("empty-gold-claim-user", 64_321)
+        with self.database._transaction() as connection:
+            connection.execute("DELETE FROM players WHERE rarity = 'GOLD'")
+
+        with self.assertRaises(NoEligibleCards):
+            self.database.claim_gold_card("empty-gold-claim-user", now=5_000_000)
+
+        self.assertEqual(self.database.get_balance("empty-gold-claim-user"), 64_321)
+        self.assertEqual(self.database.get_inventory("empty-gold-claim-user"), [])
+        self.database.add_player(
+            {
+                "name": "Temporary Gold",
+                "overall": 84,
+                "position": "WI",
+                "country": "Canada",
+                "team": "Test Team",
+                "rarity": "GOLD",
+                "value": 1,
+                "stats": {},
+                "image_path": None,
+            }
+        )
+        claimed_card, _ = self.database.claim_gold_card(
+            "empty-gold-claim-user",
+            now=5_000_001,
+            rng=random.Random(7),
+        )
+        self.assertEqual(claimed_card.name, "Temporary Gold")
+        self.assertEqual(self.database.get_balance("empty-gold-claim-user"), 64_321)
 
     def test_concurrent_claims_cannot_duplicate_a_reward(self) -> None:
         start = Barrier(3)
@@ -291,7 +446,11 @@ class DatabaseTests(unittest.TestCase):
         def attempt_claim() -> str:
             start.wait()
             try:
-                self.database.claim_daily("race-user", now=2_000_000)
+                self.database.claim_gold_card(
+                    "race-user",
+                    now=2_000_000,
+                    rng=random.Random(6),
+                )
                 return "claimed"
             except CooldownActive:
                 return "cooldown"
@@ -301,7 +460,11 @@ class DatabaseTests(unittest.TestCase):
             start.wait()
             outcomes = [job.result(timeout=20) for job in jobs]
         self.assertCountEqual(outcomes, ["claimed", "cooldown"])
-        self.assertEqual(self.database.get_balance("race-user"), CLAIM_REWARD)
+        self.assertEqual(self.database.get_balance("race-user"), 0)
+        self.assertEqual(
+            sum(entry.quantity for entry in self.database.get_inventory("race-user")),
+            1,
+        )
 
     def test_inventory_additions_accumulate_card_copies(self) -> None:
         self.assertEqual(self.database.add_inventory("test-user", "Dan", 2), 2)
