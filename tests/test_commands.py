@@ -1471,6 +1471,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "Dryboomrun",
                 "Needy",
                 "Fadi",
+                "Mason",
+                "Demox",
+                "Cheddar",
             },
         )
         self.assertEqual(purchased_inventory[0].player.rarity, "GOLD")
