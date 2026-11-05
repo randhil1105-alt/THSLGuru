@@ -99,7 +99,13 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(xavier.image_path, "cards/xaviercapone9.png")
         self.assertEqual(
             {player.name for player in self.database.get_players(rarity="GOLD")},
-            {"Dan", "XavierCapone9", "Gamer", "Hala (Gold 90)"},
+            {
+                "Dan",
+                "XavierCapone9",
+                "Gamer",
+                "Hala (Gold 90)",
+                "Dryboomrun",
+            },
         )
 
     def test_hala_gold_seed_preserves_the_original_totw_card(self) -> None:
@@ -143,6 +149,23 @@ class DatabaseTests(unittest.TestCase):
             {"SHO": 93, "DRI": 88, "SAV": 78, "PAS": 86, "DEF": 80, "ACT": 76},
         )
         self.assertEqual(gamer.image_path, "cards/gamer.png")
+
+    def test_dryboomrun_seed_card_has_exact_data_and_gold_pack_eligibility(self) -> None:
+        card = self.database.get_player("Dryboomrun")
+        self.assertIsNotNone(card)
+        assert card is not None
+        self.assertEqual(card.overall, 87)
+        self.assertEqual(card.position, "C")
+        self.assertEqual(card.country, "Guatemala")
+        self.assertEqual(card.team, "Dallas Stars")
+        self.assertEqual(card.rarity, "GOLD")
+        self.assertEqual(card.value, 1_100_000)
+        self.assertEqual(
+            card.stats,
+            {"SHO": 86, "DRI": 85, "SAV": 78, "PAS": 88, "DEF": 89, "ACT": 84},
+        )
+        self.assertEqual(card.image_path, "cards/dryboomrun.png")
+        self.assertIn(card, self.database.get_players(rarity="GOLD"))
 
     def test_read_connection_closes_after_the_context(self) -> None:
         with self.database._read_connection() as connection:

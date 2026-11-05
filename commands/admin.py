@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.common import format_coins
+from commands.common import format_coins, player_card_label
 from database import (
     Database,
     EconomyError,
@@ -85,11 +85,20 @@ class AdminCommands(discord_commands.Cog):
                     "image_path": image_path,
                 }
             )
-        except (InvalidPlayer, PlayerAlreadyExists) as exc:
+        except PlayerAlreadyExists:
+            existing = self.database.get_player(name)
+            message = (
+                f"**{player_card_label(existing)}** is already in the catalog."
+                if existing is not None
+                else f"Player **{name}** is already in the catalog."
+            )
+            await interaction.response.send_message(message, ephemeral=True)
+            return
+        except InvalidPlayer as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
         await interaction.response.send_message(
-            f"Added **{player.name}** ({player.rarity}, {player.overall} OVR).",
+            f"Added **{player_card_label(player)}** to the catalog.",
             ephemeral=True,
         )
 
@@ -152,8 +161,11 @@ class AdminCommands(discord_commands.Cog):
         except (PlayerNotFound, EconomyError) as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
+        card = self.database.get_player(player)
+        if card is None:
+            raise RuntimeError("Granted card was not found in the player catalog.")
         await interaction.response.send_message(
-            f"Granted **{quantity}× {player}** to {member.mention}. "
+            f"Granted **{quantity}× {player_card_label(card)}** to {member.mention}. "
             f"They now own {total} copy/copies.",
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),

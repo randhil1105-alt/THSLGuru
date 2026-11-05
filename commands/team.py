@@ -21,6 +21,7 @@ from database import (
     InvalidFormation,
     InvalidLineupPosition,
     PlayerNotFound,
+    player_card_label,
 )
 from commands.lineup_image import (
     OUTPUT_FILENAME,
@@ -92,7 +93,7 @@ class TeamCommands(discord_commands.Cog):
                 value = "Empty"
             else:
                 value = (
-                    f"**{player.name}** · {player.overall} OVR · {player.rarity}"
+                    f"**{player_card_label(player)}**"
                     f"\nCard position: {player.position}"
                 )
             embed.add_field(
@@ -174,7 +175,7 @@ class TeamCommands(discord_commands.Cog):
             return
 
         await interaction.response.send_message(
-            f"Assigned **{assigned.name}** to **{position.value}** "
+            f"Assigned **{player_card_label(assigned)}** to **{position.value}** "
             f"({POSITION_LABELS[position.value]}).",
             ephemeral=True,
         )

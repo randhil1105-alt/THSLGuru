@@ -98,6 +98,26 @@ class InventoryEntry:
     quantity: int
 
 
+def format_card_type(rarity: str) -> str:
+    """Present the stored type in a readable, consistent form."""
+    raw_type = str(rarity).strip()
+    normalized = raw_type.upper()
+    if normalized == "GOLD":
+        return "Gold"
+    if normalized == "TOTW":
+        return "TOTW"
+    return raw_type.title()
+
+
+def format_card_label(name: str, overall: int, rarity: str) -> str:
+    """Format a card as rating, catalog name, and its stored card type."""
+    return f"{overall} {name} ({format_card_type(rarity)})"
+
+
+def player_card_label(player: Player) -> str:
+    return format_card_label(player.name, player.overall, player.rarity)
+
+
 class Database:
     """A small connection-per-operation SQLite repository.
 
@@ -591,7 +611,7 @@ class Database:
             ).fetchone()
             if not owned or int(owned["quantity"]) < 1:
                 raise CardNotOwned(
-                    f"You must own **{player['name']}** before adding it to your team."
+                    f"You must own **{format_card_label(player['name'], player['overall'], player['rarity'])}** before adding it to your team."
                 )
 
             existing_slot = connection.execute(
@@ -612,7 +632,7 @@ class Database:
             ).fetchone()
             if existing_slot and str(existing_slot["position"]) != normalized_position:
                 raise DuplicateLineupPlayer(
-                    f"**{player['name']}** is already assigned to "
+                    f"**{format_card_label(player['name'], player['overall'], player['rarity'])}** is already assigned to "
                     f"{existing_slot['position']}. Clear that slot first."
                 )
 
@@ -821,7 +841,8 @@ class Database:
             owned_quantity = int(owned["quantity"]) if owned else 0
             if owned_quantity < quantity:
                 raise InsufficientCards(
-                    f"You own {owned_quantity} copy/copies of {player['name']}."
+                    f"You own {owned_quantity} copy/copies of "
+                    f"{format_card_label(player['name'], player['overall'], player['rarity'])}."
                 )
 
             proceeds = int(player["value"]) * quantity

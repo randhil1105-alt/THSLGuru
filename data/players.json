@@ -106,5 +106,23 @@
       "ACT": 76
     },
     "image_path": "cards/gamer.png"
+  },
+  {
+    "name": "Dryboomrun",
+    "overall": 87,
+    "position": "C",
+    "country": "Guatemala",
+    "team": "Dallas Stars",
+    "rarity": "GOLD",
+    "value": 1100000,
+    "stats": {
+      "SHO": 86,
+      "DRI": 85,
+      "SAV": 78,
+      "PAS": 88,
+      "DEF": 89,
+      "ACT": 84
+    },
+    "image_path": "cards/dryboomrun.png"
   }
 ]

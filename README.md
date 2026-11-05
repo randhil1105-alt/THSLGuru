@@ -37,8 +37,10 @@ Administrator-only commands:
 - `/grantcoins` grants coins.
 - `/grantcard` grants one or more card copies.
 
-The initial catalog contains Dan, XavierCapone9, Gamer, and Hala (Gold 90) as
-GOLD cards, plus Licha and the original Hala card as TOTW. If a future catalog
+The initial catalog contains Dan, XavierCapone9, Gamer, Hala (Gold 90), and
+Dryboomrun as GOLD cards, plus Licha and the original Hala card as TOTW. Card
+names display as `<overall> <player> (<card type>)` throughout player-facing
+lists and details. If a future catalog
 has no cards of a requested pack rarity, the pack command explains that none are
 available and does not charge.
 
@@ -127,7 +129,8 @@ workers before relying on it for the live economy.
 ## Card images
 
 The catalog uses `cards/dan.png`, `cards/licha.webp`, `cards/hala.webp`,
-`cards/hala.png`, `cards/xaviercapone9.png`, and `cards/gamer.png`. These are
+`cards/hala.png`, `cards/xaviercapone9.png`, `cards/gamer.png`, and
+`cards/dryboomrun.png`. These are
 the supplied card images and are checked by the offline test suite.
 
 ## Tests

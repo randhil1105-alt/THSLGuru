@@ -6,7 +6,12 @@ from pathlib import Path
 
 import discord
 
-from database import InventoryEntry, Player
+from database import (
+    InventoryEntry,
+    Player,
+    format_card_type,
+    player_card_label,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CARDS_DIR = (PROJECT_ROOT / "cards").resolve()
@@ -23,13 +28,17 @@ def format_coins(amount: int) -> str:
 
 def player_embed(player: Player) -> discord.Embed:
     embed = discord.Embed(
-        title=f"{player.name} · {player.overall} OVR",
+        title=player_card_label(player),
         color=RARITY_COLORS.get(player.rarity, discord.Color.blurple()),
     )
     embed.add_field(name="Position", value=player.position, inline=True)
     embed.add_field(name="Country", value=player.country, inline=True)
     embed.add_field(name="Team", value=player.team, inline=True)
-    embed.add_field(name="Rarity", value=player.rarity, inline=True)
+    embed.add_field(
+        name="Card Type",
+        value=format_card_type(player.rarity),
+        inline=True,
+    )
     embed.add_field(name="Value", value=format_coins(player.value), inline=True)
     if player.stats:
         stats = " · ".join(
@@ -101,13 +110,11 @@ def inventory_embed(
         if collection:
             ownership = f"Owned ×{entry.quantity}" if entry.quantity else "Not owned"
             lines.append(
-                f"**{entry.player.name}** · {entry.player.overall} OVR "
-                f"· {entry.player.rarity} · {ownership}"
+                f"**{player_card_label(entry.player)}** · {ownership}"
             )
         else:
             lines.append(
-                f"**{entry.player.name}** · {entry.player.overall} OVR "
-                f"· {entry.player.rarity} ×{entry.quantity}"
+                f"**{player_card_label(entry.player)}** ×{entry.quantity}"
             )
 
     description = "\n".join(lines)

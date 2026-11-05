@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.common import format_coins, inventory_embed
+from commands.common import format_coins, inventory_embed, player_card_label
 from database import (
     Database,
     EconomyError,
@@ -57,8 +57,12 @@ class InventoryCommands(discord_commands.Cog):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
 
+        card = self.database.get_player(player)
+        if card is None:
+            raise RuntimeError("Sold card was not found in the player catalog.")
         await interaction.response.send_message(
-            f"Sold **{quantity}× {player}** for {format_coins(proceeds)}. "
+            f"Sold **{quantity}× {player_card_label(card)}** "
+            f"for {format_coins(proceeds)}. "
             f"Your balance is now {format_coins(balance)}.",
             ephemeral=True,
         )

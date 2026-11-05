@@ -10,7 +10,7 @@ from functools import lru_cache
 from xml.sax.saxutils import escape
 
 from database import Player
-from commands.common import resolve_card_image
+from commands.common import player_card_label, resolve_card_image
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ def _slot_markup(layout: SlotLayout, player: Player | None) -> str:
             "</g>"
         )
 
-    label = escape(f"{player.name} · {player.overall} OVR")
+    label = escape(player_card_label(player))
     markup = (
         common
         + f'<text x="{x + width // 2}" y="{y + 72}" class="player-label" '

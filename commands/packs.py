@@ -9,7 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.common import format_coins, send_player_card
+from commands.common import format_coins, player_card_label, send_player_card
 from database import (
     GOLD_PACK_COST,
     TOTW_PACK_COST,
@@ -195,7 +195,7 @@ class PackCommands(discord_commands.Cog):
             else:
                 chance = 100 / len(cards)
                 listed_cards = [
-                    f"• **{card.name}** ({card.overall} OVR) — {chance:.1f}%"
+                    f"• **{player_card_label(card)}** — {chance:.1f}%"
                     for card in cards[:10]
                 ]
                 if len(cards) > 10:
