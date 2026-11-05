@@ -20,6 +20,7 @@ class InformationCommands(discord_commands.Cog):
             value=(
                 "`/player name` · Look up a player\n"
                 "`/card name` · Show the full card\n"
+                "`/players` and `/cards` · Browse the full catalog\n"
                 "`/inventory` · View cards you own\n"
                 "`/collection` · Browse the catalog\n"
                 "`/team` · View the lineup image and substitutes\n"

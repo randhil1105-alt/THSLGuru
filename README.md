@@ -10,6 +10,8 @@ persistent SQLite database.
 | --- | --- |
 | `/player name` | Look up a player's card |
 | `/card name` | Show the full card and image when available |
+| `/players` | Browse the full player catalog |
+| `/cards` | Browse the full player card catalog |
 | `/claim` | Claim 5,000 coins once every 24 hours |
 | `/balance` | Check your balance |
 | `/leaderboard` | Show the ten largest balances |

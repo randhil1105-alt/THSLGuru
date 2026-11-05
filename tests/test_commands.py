@@ -37,6 +37,8 @@ from main import create_bot, load_player_seed
 EXPECTED_COMMANDS = {
     "player",
     "card",
+    "players",
+    "cards",
     "claim",
     "balance",
     "leaderboard",
@@ -196,6 +198,26 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`/packs`", help_text)
         self.assertNotIn("/goldpack", help_text)
         self.assertNotIn("/totwpack", help_text)
+
+    async def test_catalog_alias_commands_display_card_types(self) -> None:
+        for command_name in ("players", "cards"):
+            response = FakeResponse()
+            await getattr(InventoryCommands, command_name).callback(
+                InventoryCommands(self.database),
+                SimpleNamespace(
+                    user=SimpleNamespace(id="catalog-alias-user"),
+                    response=response,
+                ),
+            )
+            self.assertTrue(response.messages[0]["ephemeral"])
+            self.assertIn(
+                "**87 Dryboomrun (Gold)**",
+                response.messages[0]["embed"].description,
+            )
+            self.assertIn(
+                "**87 Dan (Gold)**",
+                response.messages[0]["embed"].description,
+            )
 
     async def test_balance_and_inventory_responses_are_public(self) -> None:
         user_id = "public-response-user"
