@@ -1,4 +1,4 @@
-"""Public, server-scoped hockey player guessing game."""
+"""Public, individual hockey-player guessing games."""
 
 from __future__ import annotations
 
@@ -6,8 +6,7 @@ import asyncio
 import io
 import logging
 import random
-from dataclasses import dataclass
-from typing import Any
+import re
 
 import discord
 from discord import app_commands
@@ -19,200 +18,185 @@ from commands.common import (
     player_embed,
     resolve_card_image,
 )
-from config import DEFAULT_MINIGAME_REWARD
 from database import Database, Player
 
 LOGGER = logging.getLogger("thsl_guru.minigame")
 
+MINIGAME_REWARD = 500_000
 MINIGAME_DURATION_SECONDS = 60
 
 
-@dataclass
-class ActiveGame:
-    guild_id: int
-    channel_id: int
-    channel: discord.abc.Messageable
-    player: Player
-    timeout_task: asyncio.Task[None] | None = None
+def _normalize_answer(value: str) -> str:
+    """Compare names case-insensitively and collapse extra whitespace."""
+    return re.sub(r"\s+", " ", value).strip().casefold()
 
 
-class MinigameCommands(discord_commands.Cog):
+class IndividualMinigameView(discord.ui.View):
+    """One player's independent, owner-only answer session."""
+
     def __init__(
         self,
         database: Database,
         *,
-        reward: int = DEFAULT_MINIGAME_REWARD,
+        owner_id: int,
+        player: Player,
+        channel: discord.abc.Messageable,
         duration_seconds: float = MINIGAME_DURATION_SECONDS,
     ) -> None:
-        if reward <= 0:
-            raise ValueError("The minigame reward must be a positive integer.")
-        if duration_seconds <= 0:
-            raise ValueError("The minigame duration must be positive.")
+        super().__init__(timeout=duration_seconds)
         self.database = database
-        self.reward = int(reward)
+        self.owner_id = int(owner_id)
+        self.player = player
+        self.channel = channel
         self.duration_seconds = float(duration_seconds)
-        self.active_games: dict[int, ActiveGame] = {}
+        self.message: discord.Message | None = None
+        self.finished = False
+        self._deadline_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
 
-    @app_commands.command(
-        name="minigame",
-        description="Guess the hockey player from three public clues.",
-    )
-    async def minigame(self, interaction: discord.Interaction) -> None:
-        guild = interaction.guild
-        channel = interaction.channel
-        if guild is None or channel is None:
-            await interaction.response.send_message(
-                "The minigame can only be played in a server channel.",
-                ephemeral=False,
-            )
-            return
-
-        async with self._lock:
-            existing = self.active_games.get(guild.id)
-            if existing is not None:
-                await interaction.response.send_message(
-                    f"A game is already active in <#{existing.channel_id}>.",
-                    ephemeral=False,
-                )
-                return
-
-            players = self.database.get_players()
-            if not players:
-                await interaction.response.send_message(
-                    "There are no player cards in the catalog, so a game cannot start.",
-                    ephemeral=False,
-                )
-                return
-
-            game = ActiveGame(
-                guild_id=guild.id,
-                channel_id=channel.id,
-                channel=channel,
-                player=random.choice(players),
-            )
-            embed = discord.Embed(
-                title="🏒 GUESS WHO?",
-                description=(
-                    "Who is this player?\n"
-                    "Everyone can guess in this channel. First correct guess wins. "
-                    f"You have {int(self.duration_seconds)} seconds."
-                ),
-                color=discord.Color.blurple(),
-            )
-            embed.add_field(name="🌍 Country / Nationality", value=game.player.country)
-            embed.add_field(
-                name="⭐ Overall rating (OVR)",
-                value=f"{game.player.overall} OVR",
-            )
-            embed.add_field(name="🏒 Position", value=game.player.position)
-
-            self.active_games[guild.id] = game
-            try:
-                await interaction.response.send_message(
-                    embed=embed,
-                    ephemeral=False,
-                )
-            except Exception:
-                self.active_games.pop(guild.id, None)
-                raise
-
-            game.timeout_task = asyncio.create_task(self._expire_game(game))
-
-    @discord_commands.Cog.listener()
-    async def on_message(self, message: discord.Message) -> None:
-        guild = getattr(message, "guild", None)
-        author = getattr(message, "author", None)
-        if (
-            guild is None
-            or author is None
-            or getattr(author, "bot", False)
-            or not getattr(message, "content", "").strip()
-        ):
-            return
-
-        async with self._lock:
-            game = self.active_games.get(guild.id)
-            if (
-                game is None
-                or getattr(message.channel, "id", None) != game.channel_id
-            ):
-                return
-
-            guess = message.content.strip()
-            if guess.casefold() != game.player.name.strip().casefold():
-                result = "incorrect"
-                balance = None
-            else:
-                try:
-                    balance = self.database.add_coins(author.id, self.reward)
-                except Exception:
-                    LOGGER.exception("Could not save a minigame reward.")
-                    result = "reward_error"
-                else:
-                    result = "winner"
-                    self.active_games.pop(game.guild_id, None)
-                    if game.timeout_task is not None:
-                        game.timeout_task.cancel()
-
-        if result == "incorrect":
-            await game.channel.send(
-                f"{author.mention}, that guess was incorrect.",
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-            return
-        if result == "reward_error":
-            await game.channel.send(
-                "That was the correct answer, but the coin reward could not be "
-                "saved. The game is still active; please try again.",
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-            return
-
-        await self._reveal(
-            game,
-            winner=author,
-            balance=balance,
+        self.answer_button = discord.ui.Button(
+            label="Answer",
+            style=discord.ButtonStyle.primary,
         )
+        self.answer_button.callback = self._answer_clicked
+        self.add_item(self.answer_button)
 
-    async def _expire_game(self, game: ActiveGame) -> None:
+    def start_deadline(self) -> None:
+        if self._deadline_task is None:
+            self._deadline_task = asyncio.create_task(self._expire_after_deadline())
+
+    def cancel_deadline(self) -> None:
+        task = self._deadline_task
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    async def _expire_after_deadline(self) -> None:
         try:
             await asyncio.sleep(self.duration_seconds)
         except asyncio.CancelledError:
             return
+        await self.on_timeout()
+
+    async def _answer_clicked(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the member who started this game can answer it.",
+                ephemeral=True,
+            )
+            return
+        if self.finished:
+            await interaction.response.send_message(
+                "This game has ended.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(GuessAnswerModal(self))
+
+    async def submit_answer(
+        self,
+        interaction: discord.Interaction,
+        answer: str,
+    ) -> None:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the member who started this game can answer it.",
+                ephemeral=True,
+            )
+            return
 
         async with self._lock:
-            if self.active_games.get(game.guild_id) is not game:
+            if self.finished:
+                result = "finished"
+                balance = None
+            elif _normalize_answer(answer) != _normalize_answer(self.player.name):
+                result = "incorrect"
+                balance = None
+            else:
+                try:
+                    balance = self.database.add_coins(
+                        self.owner_id,
+                        MINIGAME_REWARD,
+                    )
+                except Exception:
+                    LOGGER.exception("Could not save a minigame reward.")
+                    result = "reward_error"
+                    balance = None
+                else:
+                    self.finished = True
+                    self.answer_button.disabled = True
+                    self.stop()
+                    self.cancel_deadline()
+                    result = "correct"
+
+        if result == "finished":
+            await interaction.response.send_message(
+                "This game has already ended.",
+                ephemeral=True,
+            )
+            return
+        if result == "incorrect":
+            await interaction.response.send_message(
+                "That answer is incorrect. You can try again while the game is active.",
+                ephemeral=True,
+            )
+            return
+        if result == "reward_error":
+            await interaction.response.send_message(
+                "That answer is correct, but the reward could not be saved. "
+                "Please try again.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            f"Correct! You won **{format_coins(MINIGAME_REWARD)}**.",
+            ephemeral=True,
+        )
+        await self._disable_prompt_button()
+        await self._send_reveal(
+            winner=interaction.user,
+            balance=balance,
+        )
+
+    async def on_timeout(self) -> None:
+        async with self._lock:
+            if self.finished:
                 return
-            self.active_games.pop(game.guild_id, None)
+            self.finished = True
+            self.answer_button.disabled = True
+            self.stop()
+            self.cancel_deadline()
 
-        await self._reveal(game)
+        await self._disable_prompt_button()
+        await self._send_reveal()
 
-    async def _reveal(
+    async def _disable_prompt_button(self) -> None:
+        if self.message is None:
+            return
+        try:
+            await self.message.edit(view=self)
+        except discord.HTTPException:
+            LOGGER.debug("Could not update the finished minigame prompt.")
+
+    async def _send_reveal(
         self,
-        game: ActiveGame,
         *,
-        winner: Any | None = None,
+        winner: discord.User | discord.Member | None = None,
         balance: int | None = None,
     ) -> None:
-        embed = player_embed(game.player)
-        embed.title = f"🏒 The player was {player_card_label(game.player)}"
+        embed = player_embed(self.player)
+        embed.title = f"🏒 The player was {player_card_label(self.player)}"
         if winner is None:
-            embed.description = "Time is up. Nobody guessed correctly."
+            embed.description = "Time is up. Your game has ended without a reward."
         else:
-            username = getattr(
-                winner,
-                "name",
-                getattr(winner, "display_name", "player"),
-            )
-            mention = getattr(winner, "mention", f"<@{winner.id}>")
+            mention = winner.mention
             embed.description = (
-                f"{mention} (`{username}`) guessed correctly and wins "
-                f"**{format_coins(self.reward)}**. "
+                f"{mention} (`{winner.name}`) guessed correctly and wins "
+                f"**{format_coins(MINIGAME_REWARD)}**. "
                 f"New balance: **{format_coins(int(balance or 0))}**."
             )
 
-        image_path = resolve_card_image(game.player)
+        image_path = resolve_card_image(self.player)
         upload: discord.File | None = None
         if image_path is not None:
             upload = discord.File(
@@ -227,23 +211,103 @@ class MinigameCommands(discord_commands.Cog):
                 inline=False,
             )
 
-        await game.channel.send(
+        await self.channel.send(
             embed=embed,
             file=upload,
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    def cog_unload(self) -> None:
-        for game in self.active_games.values():
-            if game.timeout_task is not None:
-                game.timeout_task.cancel()
-        self.active_games.clear()
+
+class GuessAnswerModal(discord.ui.Modal, title="Answer"):
+    def __init__(self, game: IndividualMinigameView) -> None:
+        super().__init__(timeout=120)
+        self.game = game
+        self.player_name = discord.ui.TextInput(
+            label="Player name",
+            placeholder="Enter the player's name",
+            max_length=100,
+        )
+        self.add_item(self.player_name)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.game.submit_answer(
+            interaction,
+            self.player_name.value,
+        )
+
+
+class MinigameCommands(discord_commands.Cog):
+    def __init__(
+        self,
+        database: Database,
+        *,
+        duration_seconds: float = MINIGAME_DURATION_SECONDS,
+    ) -> None:
+        if duration_seconds <= 0:
+            raise ValueError("The minigame duration must be positive.")
+        self.database = database
+        self.duration_seconds = float(duration_seconds)
+
+    @app_commands.command(
+        name="minigame",
+        description="Guess a hockey player from three clues.",
+    )
+    async def minigame(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or interaction.channel is None:
+            await interaction.response.send_message(
+                "The minigame can only be played in a server channel.",
+                ephemeral=False,
+            )
+            return
+
+        players = self.database.get_players()
+        if not players:
+            await interaction.response.send_message(
+                "There are no player cards in the catalog, so a game cannot start.",
+                ephemeral=False,
+            )
+            return
+
+        player = random.choice(players)
+        view = IndividualMinigameView(
+            self.database,
+            owner_id=interaction.user.id,
+            player=player,
+            channel=interaction.channel,
+            duration_seconds=self.duration_seconds,
+        )
+        embed = discord.Embed(
+            title="🏒 GUESS WHO?",
+            description=(
+                "Guess the player using the clues below. "
+                "Only you can answer this game. "
+                f"You have {int(self.duration_seconds)} seconds."
+            ),
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(
+            name="🌍 Nationality",
+            value=player.country,
+        )
+        embed.add_field(
+            name="⭐ Rating",
+            value=f"{player.overall} OVR",
+        )
+        embed.add_field(
+            name="🏒 Position",
+            value=player.position,
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
+            ephemeral=False,
+        )
+        try:
+            view.message = await interaction.original_response()
+        finally:
+            view.start_deadline()
 
 
 async def setup(bot: discord_commands.Bot) -> None:
-    await bot.add_cog(
-        MinigameCommands(
-            bot.database,
-            reward=getattr(bot, "minigame_reward", DEFAULT_MINIGAME_REWARD),
-        )
-    )
+    await bot.add_cog(MinigameCommands(bot.database))
