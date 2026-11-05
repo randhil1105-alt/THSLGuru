@@ -11,7 +11,12 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from commands.init import load_command_modules
-from config import PROJECT_ROOT, Settings, load_settings
+from config import (
+    DEFAULT_MINIGAME_REWARD,
+    PROJECT_ROOT,
+    Settings,
+    load_settings,
+)
 from database import Database
 
 LOGGER = logging.getLogger("thsl_guru")
@@ -40,6 +45,7 @@ class GuruBot(discord_commands.Bot):
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
+        intents.message_content = True
         super().__init__(
             command_prefix="!",
             intents=intents,
@@ -47,6 +53,7 @@ class GuruBot(discord_commands.Bot):
         )
         self.database = database
         self.development_guild_id = development_guild_id
+        self.minigame_reward = DEFAULT_MINIGAME_REWARD
 
     async def setup_hook(self) -> None:
         await load_command_modules(self)
@@ -86,9 +93,11 @@ class GuruBot(discord_commands.Bot):
 def create_bot(
     database: Database,
     development_guild_id: int | None = None,
+    minigame_reward: int = DEFAULT_MINIGAME_REWARD,
 ) -> GuruBot:
     """Construct a bot without connecting, for command-loading tests."""
     bot = GuruBot(database, development_guild_id)
+    bot.minigame_reward = minigame_reward
 
     @bot.tree.error
     async def handle_app_command_error(
@@ -99,7 +108,7 @@ def create_bot(
             getattr(interaction, "command", None),
             "name",
             None,
-        ) in {"packs", "pack", "inventory", "balance"}
+        ) in {"packs", "pack", "inventory", "balance", "minigame"}
         if isinstance(error, app_commands.MissingPermissions):
             message = "You need administrator permission to use that command."
             if interaction.response.is_done():
@@ -143,7 +152,11 @@ def main() -> None:
         settings: Settings = load_settings()
         database = Database(settings.database_path)
         database.initialize(load_player_seed())
-        bot = create_bot(database, settings.development_guild_id)
+        bot = create_bot(
+            database,
+            settings.development_guild_id,
+            settings.minigame_reward,
+        )
     except (RuntimeError, OSError) as exc:
         LOGGER.error("%s", exc)
         raise SystemExit(2) from exc

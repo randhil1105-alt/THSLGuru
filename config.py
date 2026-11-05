@@ -8,6 +8,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / "data" / "guru.sqlite3"
+DEFAULT_MINIGAME_REWARD = 500_000
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class Settings:
     token: str
     database_path: Path
     development_guild_id: int | None = None
+    minigame_reward: int = DEFAULT_MINIGAME_REWARD
 
 
 def load_settings() -> Settings:
@@ -42,8 +44,19 @@ def load_settings() -> Settings:
         if database_value
         else DEFAULT_DATABASE_PATH
     )
+    reward_value = os.environ.get("MINIGAME_REWARD", "").strip()
+    minigame_reward = DEFAULT_MINIGAME_REWARD
+    if reward_value:
+        try:
+            minigame_reward = int(reward_value)
+        except ValueError as exc:
+            raise RuntimeError("MINIGAME_REWARD must be a positive integer.") from exc
+        if minigame_reward <= 0:
+            raise RuntimeError("MINIGAME_REWARD must be a positive integer.")
+
     return Settings(
         token=token,
         database_path=database_path,
         development_guild_id=guild_id,
+        minigame_reward=minigame_reward,
     )

@@ -13,6 +13,7 @@ persistent SQLite database.
 | `/players` | Browse the full player catalog |
 | `/cards` | Browse the full player card catalog |
 | `/claim` | Claim a weighted GOLD player card once every 24 hours |
+| `/minigame` | Guess a player's country, rating, and position for coins |
 | `/balance` | Check your balance |
 | `/leaderboard` | Show the ten largest balances |
 | `/inventory` | Show cards you own |
@@ -57,6 +58,8 @@ available and does not charge.
    included with the supplied brief should be revoked and replaced before use.
 5. Invite the bot using the `bot` and `applications.commands` OAuth2 scopes.
    Allow it to view channels, send messages, embed links, and attach files.
+    Enable the privileged **Message Content Intent** in the bot's Developer
+    Portal settings so `/minigame` can read public guesses.
 6. Start it with `python main.py`.
 
 On Replit, add `DISCORD_BOT_TOKEN` under **Tools → Secrets**, then start the
@@ -64,6 +67,11 @@ On Replit, add `DISCORD_BOT_TOKEN` under **Tools → Secrets**, then start the
 commands on startup. To sync immediately to a development server, set the
 non-secret `DISCORD_GUILD_ID` environment variable to that server's ID. Remove
 it to use global command sync.
+
+The public `/minigame` command runs one game per server at a time. The first
+correct guess in the game channel wins the configurable `MINIGAME_REWARD`
+(default: 500,000 coins); each game lasts 60 seconds. Do not use the command
+until Message Content Intent is enabled in the Discord Developer Portal.
 
 ## SQLite persistence
 

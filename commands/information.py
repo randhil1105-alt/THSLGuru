@@ -23,6 +23,7 @@ class InformationCommands(discord_commands.Cog):
                 "`/players` and `/cards` · Browse the full catalog\n"
                 "`/inventory` · View cards you own\n"
                 "`/collection` · Browse the catalog\n"
+                "`/minigame` · Guess the hockey player in the public channel\n"
                 "`/team` · View the lineup image and six slots\n"
                 "`/set position player` · Assign or clear any of six slots\n"
                 "`/formation formation` · Save a tactical style"

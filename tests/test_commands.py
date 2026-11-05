@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import struct
 import unittest
@@ -20,6 +21,7 @@ from commands.common import (
 )
 from commands.inventory import InventoryCommands
 from commands.lineup_image import OUTPUT_FILENAME, build_lineup_svg
+from commands.minigame import MINIGAME_DURATION_SECONDS, MinigameCommands
 from commands.packs import PackBuyButton, PackCommands
 from commands.player import PlayerCommands
 from commands.team import TeamCommands
@@ -32,6 +34,7 @@ from database import (
     TOTW_PACK_COST,
     format_card_type,
 )
+from config import DEFAULT_MINIGAME_REWARD, load_settings
 from main import create_bot, load_player_seed
 
 EXPECTED_COMMANDS = {
@@ -56,6 +59,7 @@ EXPECTED_COMMANDS = {
     "setbalance",
     "grantcoins",
     "grantcard",
+    "minigame",
 }
 
 
@@ -129,6 +133,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             {command.name for command in self.bot.tree.get_commands()},
             EXPECTED_COMMANDS,
         )
+        self.assertTrue(self.bot.intents.message_content)
 
     async def test_setup_hook_syncs_to_configured_development_guild(self) -> None:
         guild = discord.Object(id=123456789012345678)
@@ -327,7 +332,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_public_command_error_handler_keeps_responses_public(self) -> None:
         with patch("main.LOGGER.error"):
-            for command_name in ("packs", "pack", "inventory", "balance"):
+            for command_name in ("packs", "pack", "inventory", "balance", "minigame"):
                 response = SimpleNamespace(
                     is_done=lambda: False,
                     send_message=AsyncMock(),
@@ -1889,6 +1894,293 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(totw_button.disabled)
         self.assertEqual(empty_catalog.get_balance(user_id), starting_balance)
         self.assertEqual(empty_catalog.get_inventory(user_id), [])
+
+
+class FakeGameChannel:
+    def __init__(self, channel_id: int) -> None:
+        self.id = channel_id
+        self.messages: list[dict[str, object]] = []
+
+    async def send(self, content: str | None = None, **kwargs: object) -> None:
+        self.messages.append({"content": content, **kwargs})
+
+
+class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.database = Database(Path(self.temp_dir.name) / "minigame.sqlite3")
+        self.database.initialize(load_player_seed())
+        self.reward = DEFAULT_MINIGAME_REWARD
+        self.cog = MinigameCommands(self.database, reward=self.reward)
+
+    async def asyncTearDown(self) -> None:
+        games = list(self.cog.active_games.values())
+        self.cog.cog_unload()
+        tasks = [
+            game.timeout_task
+            for game in games
+            if game.timeout_task is not None
+        ]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.temp_dir.cleanup()
+
+    def make_interaction(
+        self,
+        *,
+        guild_id: int = 123,
+        channel: FakeGameChannel | None = None,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            guild=SimpleNamespace(id=guild_id),
+            channel=channel or FakeGameChannel(guild_id * 10),
+            response=FakeResponse(),
+        )
+
+    def make_message(
+        self,
+        content: str,
+        *,
+        user_id: int,
+        username: str,
+        guild_id: int,
+        channel: FakeGameChannel,
+        bot: bool = False,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            content=content,
+            guild=SimpleNamespace(id=guild_id),
+            channel=channel,
+            author=SimpleNamespace(
+                id=user_id,
+                name=username,
+                display_name=username,
+                mention=f"<@{user_id}>",
+                bot=bot,
+            ),
+        )
+
+    async def start_game(
+        self,
+        *,
+        guild_id: int = 123,
+        selected: object | None = None,
+        channel: FakeGameChannel | None = None,
+    ) -> tuple[SimpleNamespace, FakeGameChannel, object]:
+        player = selected or self.database.get_players()[0]
+        game_channel = channel or FakeGameChannel(guild_id * 10)
+        interaction = self.make_interaction(
+            guild_id=guild_id,
+            channel=game_channel,
+        )
+        with patch("commands.minigame.random.choice", return_value=player):
+            await MinigameCommands.minigame.callback(self.cog, interaction)
+        return interaction, game_channel, player
+
+    async def test_start_is_public_and_shows_only_three_clues(self) -> None:
+        interaction, _, player = await self.start_game()
+        response = interaction.response.messages[0]
+        self.assertFalse(response["ephemeral"])
+        embed = response["embed"]
+        self.assertEqual(embed.title, "🏒 GUESS WHO?")
+        self.assertEqual(
+            [field.name for field in embed.fields],
+            [
+                "🌍 Country / Nationality",
+                "⭐ Overall rating (OVR)",
+                "🏒 Position",
+            ],
+        )
+        self.assertEqual(embed.fields[0].value, player.country)
+        self.assertEqual(embed.fields[1].value, f"{player.overall} OVR")
+        self.assertEqual(embed.fields[2].value, player.position)
+        self.assertIn("60 seconds", embed.description)
+        self.assertNotIn(player.name.casefold(), embed.description.casefold())
+        self.assertIsNone(embed.image.url)
+        self.assertNotIn("file", response)
+
+    async def test_incorrect_guess_is_public_and_keeps_game_active(self) -> None:
+        _, channel, player = await self.start_game()
+        wrong = "definitely not " + player.name
+        await self.cog.on_message(
+            self.make_message(
+                wrong,
+                user_id=1001,
+                username="GuessingPlayer",
+                guild_id=123,
+                channel=channel,
+            )
+        )
+        self.assertEqual(len(channel.messages), 1)
+        self.assertIn("incorrect", channel.messages[0]["content"])
+        self.assertNotIn("ephemeral", channel.messages[0])
+        self.assertIn(123, self.cog.active_games)
+        self.assertEqual(self.database.get_balance(1001), 0)
+
+    async def test_first_correct_guess_gets_persistent_reward_and_card_image(self) -> None:
+        _, channel, player = await self.start_game()
+        await self.cog.on_message(
+            self.make_message(
+                f"  {player.name.swapcase()}  ",
+                user_id=1002,
+                username="FirstWinner",
+                guild_id=123,
+                channel=channel,
+            )
+        )
+        self.assertNotIn(123, self.cog.active_games)
+        self.assertEqual(
+            Database(self.database.path).get_balance(1002),
+            self.reward,
+        )
+        self.assertEqual(len(channel.messages), 1)
+        reveal = channel.messages[0]
+        self.assertIn("FirstWinner", reveal["embed"].description)
+        self.assertIn("500,000 coins", reveal["embed"].description)
+        self.assertIn(player.name, reveal["embed"].title)
+        self.assertIn("attachment://", reveal["embed"].image.url)
+        upload = reveal["file"]
+        self.assertEqual(upload.filename, Path(player.image_path).name)
+        self.assertTrue(upload.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
+        upload.close()
+
+    async def test_simultaneous_players_only_pay_the_first_correct_guess(self) -> None:
+        _, channel, player = await self.start_game()
+        guesses = [
+            self.make_message(
+                player.name,
+                user_id=user_id,
+                username=username,
+                guild_id=123,
+                channel=channel,
+            )
+            for user_id, username in ((1010, "Alice"), (1011, "Bob"))
+        ]
+        await asyncio.gather(*(self.cog.on_message(guess) for guess in guesses))
+        balances = [
+            self.database.get_balance(user_id)
+            for user_id in (1010, 1011)
+        ]
+        self.assertEqual(sorted(balances), [0, self.reward])
+        self.assertEqual(len(channel.messages), 1)
+        self.assertNotIn(123, self.cog.active_games)
+
+        await self.cog.on_message(guesses[0])
+        self.assertEqual(sum(self.database.get_balance(uid) for uid in (1010, 1011)), self.reward)
+        self.assertEqual(len(channel.messages), 1)
+
+    async def test_only_one_game_runs_per_server(self) -> None:
+        _, first_channel, first_player = await self.start_game(guild_id=200)
+        second_channel = FakeGameChannel(2002)
+        second = self.make_interaction(guild_id=200, channel=second_channel)
+        await MinigameCommands.minigame.callback(self.cog, second)
+        self.assertEqual(len(self.cog.active_games), 1)
+        self.assertEqual(
+            self.cog.active_games[200].player.name,
+            first_player.name,
+        )
+        self.assertIn("already active", second.response.messages[0]["content"])
+        self.assertFalse(second.response.messages[0]["ephemeral"])
+        self.assertEqual(first_channel.messages, [])
+
+    async def test_different_servers_can_play_simultaneously(self) -> None:
+        players = self.database.get_players()
+        _, first_channel, first_player = await self.start_game(
+            guild_id=301,
+            selected=players[0],
+        )
+        _, second_channel, second_player = await self.start_game(
+            guild_id=302,
+            selected=players[1],
+        )
+        self.assertEqual(set(self.cog.active_games), {301, 302})
+        for guild_id, channel, player, user_id, name in (
+            (301, first_channel, first_player, 1030, "North"),
+            (302, second_channel, second_player, 1031, "South"),
+        ):
+            await self.cog.on_message(
+                self.make_message(
+                    player.name,
+                    user_id=user_id,
+                    username=name,
+                    guild_id=guild_id,
+                    channel=channel,
+                )
+            )
+        self.assertEqual(self.database.get_balance(1030), self.reward)
+        self.assertEqual(self.database.get_balance(1031), self.reward)
+        self.assertEqual(len(first_channel.messages), 1)
+        self.assertEqual(len(second_channel.messages), 1)
+
+    async def test_timeout_reveals_answer_and_original_card_image(self) -> None:
+        self.assertEqual(MINIGAME_DURATION_SECONDS, 60)
+        self.cog.duration_seconds = 0.01
+        _, channel, player = await self.start_game(guild_id=401)
+        game = self.cog.active_games[401]
+        assert game.timeout_task is not None
+        await asyncio.wait_for(game.timeout_task, timeout=1)
+        self.assertNotIn(401, self.cog.active_games)
+        self.assertEqual(len(channel.messages), 1)
+        reveal = channel.messages[0]
+        self.assertIn("Time is up", reveal["embed"].description)
+        self.assertIn(player.name, reveal["embed"].title)
+        self.assertIn("attachment://", reveal["embed"].image.url)
+        upload = reveal["file"]
+        self.assertEqual(upload.filename, Path(player.image_path).name)
+        upload.close()
+
+    async def test_bots_and_other_channels_cannot_guess(self) -> None:
+        _, channel, player = await self.start_game(guild_id=501)
+        other_channel = FakeGameChannel(5011)
+        await self.cog.on_message(
+            self.make_message(
+                player.name,
+                user_id=1040,
+                username="BotPlayer",
+                guild_id=501,
+                channel=channel,
+                bot=True,
+            )
+        )
+        await self.cog.on_message(
+            self.make_message(
+                player.name,
+                user_id=1041,
+                username="OtherChannelPlayer",
+                guild_id=501,
+                channel=other_channel,
+            )
+        )
+        self.assertEqual(channel.messages, [])
+        self.assertEqual(other_channel.messages, [])
+        self.assertEqual(self.database.get_balance(1040), 0)
+        self.assertEqual(self.database.get_balance(1041), 0)
+        self.assertIn(501, self.cog.active_games)
+
+    async def test_empty_catalog_is_handled_without_starting_a_game(self) -> None:
+        empty_database = Database(Path(self.temp_dir.name) / "empty.sqlite3")
+        empty_database.initialize()
+        empty_cog = MinigameCommands(empty_database)
+        interaction = self.make_interaction(guild_id=601)
+        await MinigameCommands.minigame.callback(empty_cog, interaction)
+        response = interaction.response.messages[0]
+        self.assertFalse(response["ephemeral"])
+        self.assertIn("no player cards", response["content"])
+        self.assertEqual(empty_cog.active_games, {})
+        empty_cog.cog_unload()
+
+    def test_reward_amount_is_configurable(self) -> None:
+        self.assertEqual(DEFAULT_MINIGAME_REWARD, 500_000)
+        with patch.dict(
+            "os.environ",
+            {
+                "DISCORD_BOT_TOKEN": "unit-test-token",
+                "MINIGAME_REWARD": "725000",
+            },
+            clear=True,
+        ):
+            settings = load_settings()
+        self.assertEqual(settings.minigame_reward, 725_000)
 
 
 if __name__ == "__main__":
