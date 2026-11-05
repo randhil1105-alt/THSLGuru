@@ -17,7 +17,7 @@ GOLD_PACK_COST = 5_000_000
 TOTW_PACK_COST = 20_000_000
 SQLITE_INT_MAX = (1 << 63) - 1
 SUPPORTED_STATS = ("SHO", "DRI", "SAV", "PAS", "DEF", "ACT", "DIV", "CLE", "SWE")
-STARTING_LINEUP_POSITIONS = ("LW", "RW", "GK")
+STARTING_LINEUP_POSITIONS = ("LW", "C", "RW", "GK")
 SUBSTITUTE_POSITIONS = ("SUB1", "SUB2")
 LINEUP_POSITIONS = STARTING_LINEUP_POSITIONS + SUBSTITUTE_POSITIONS
 TEAM_FORMATIONS = ("Balanced", "Attack", "Defensive")
@@ -123,6 +123,35 @@ def player_card_label(player: Player) -> str:
     return format_card_label(player.name, player.overall, player.rarity)
 
 
+def card_rating_band(overall: int) -> tuple[str, float]:
+    """Return the displayed tier and weight for a card's overall rating."""
+    rating = int(overall)
+    if rating <= 84:
+        return "Common", 4.0
+    if rating <= 89:
+        return "Uncommon", 2.0
+    if rating <= 94:
+        return "Rare", 1.0
+    return "Very rare", 0.25
+
+
+def card_rating_weight(overall: int) -> float:
+    """Return the per-card weight for its overall-rating band."""
+    return card_rating_band(overall)[1]
+
+
+def calculate_pack_odds(players: Sequence[Player]) -> dict[int, float]:
+    """Calculate normalized per-card odds for one rarity-filtered pack pool."""
+    weights = [card_rating_weight(player.overall) for player in players]
+    total_weight = sum(weights)
+    if total_weight <= 0:
+        return {}
+    return {
+        player.id: weight / total_weight * 100
+        for player, weight in zip(players, weights)
+    }
+
+
 class Database:
     """A small connection-per-operation SQLite repository.
 
@@ -214,6 +243,14 @@ class Database:
                 CREATE TABLE IF NOT EXISTS lineup_slots (
                     user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
                     position TEXT NOT NULL CHECK (position IN ('LW', 'RW', 'GK')),
+                    player_id INTEGER NOT NULL REFERENCES players(id),
+                    PRIMARY KEY (user_id, position),
+                    UNIQUE (user_id, player_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS center_slots (
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    position TEXT NOT NULL CHECK (position = 'C'),
                     player_id INTEGER NOT NULL REFERENCES players(id),
                     PRIMARY KEY (user_id, position),
                     UNIQUE (user_id, player_id)
@@ -567,6 +604,11 @@ class Database:
                     JOIN players ON players.id = lineup.player_id
                     WHERE lineup.user_id = ?
                     UNION ALL
+                    SELECT center.position AS lineup_position, players.*
+                    FROM center_slots AS center
+                    JOIN players ON players.id = center.player_id
+                    WHERE center.user_id = ?
+                    UNION ALL
                     SELECT substitutes.position AS lineup_position, players.*
                     FROM substitute_slots AS substitutes
                     JOIN players ON players.id = substitutes.player_id
@@ -574,13 +616,14 @@ class Database:
                 ) AS team_lineup
                 ORDER BY CASE team_lineup.lineup_position
                     WHEN 'LW' THEN 0
-                    WHEN 'RW' THEN 1
-                    WHEN 'GK' THEN 2
-                    WHEN 'SUB1' THEN 3
-                    WHEN 'SUB2' THEN 4
+                    WHEN 'C' THEN 1
+                    WHEN 'RW' THEN 2
+                    WHEN 'GK' THEN 3
+                    WHEN 'SUB1' THEN 4
+                    WHEN 'SUB2' THEN 5
                 END
                 """,
-                (normalized_id, normalized_id),
+                (normalized_id, normalized_id, normalized_id),
             ).fetchall()
         return {
             str(row["lineup_position"]): self._player_from_row(row)
@@ -624,11 +667,16 @@ class Database:
                 SELECT position FROM lineup_slots
                 WHERE user_id = ? AND player_id = ?
                 UNION ALL
+                    SELECT position FROM center_slots
+                    WHERE user_id = ? AND player_id = ?
+                    UNION ALL
                 SELECT position FROM substitute_slots
                 WHERE user_id = ? AND player_id = ?
                 LIMIT 1
                 """,
                 (
+                    normalized_id,
+                    int(player["id"]),
                     normalized_id,
                     int(player["id"]),
                     normalized_id,
@@ -641,11 +689,12 @@ class Database:
                     f"{existing_slot['position']}. Clear that slot first."
                 )
 
-            target_table = (
-                "lineup_slots"
-                if normalized_position in STARTING_LINEUP_POSITIONS
-                else "substitute_slots"
-            )
+            if normalized_position == "C":
+                target_table = "center_slots"
+            elif normalized_position in STARTING_LINEUP_POSITIONS:
+                target_table = "lineup_slots"
+            else:
+                target_table = "substitute_slots"
             connection.execute(
                 f"""
                 INSERT INTO {target_table}(user_id, position, player_id)
@@ -664,11 +713,12 @@ class Database:
     ) -> bool:
         normalized_id = self._validate_user_id(user_id)
         normalized_position = self._validate_lineup_position(position)
-        target_table = (
-            "lineup_slots"
-            if normalized_position in STARTING_LINEUP_POSITIONS
-            else "substitute_slots"
-        )
+        if normalized_position == "C":
+            target_table = "center_slots"
+        elif normalized_position in STARTING_LINEUP_POSITIONS:
+            target_table = "lineup_slots"
+        else:
+            target_table = "substitute_slots"
         with self._transaction() as connection:
             result = connection.execute(
                 f"DELETE FROM {target_table} WHERE user_id = ? AND position = ?",
@@ -782,7 +832,11 @@ class Database:
                     f"Need {cost:,} coins; balance is {balance:,}."
                 )
 
-            selected = chooser.choice(candidates)
+            weights = [
+                card_rating_weight(int(candidate["overall"]))
+                for candidate in candidates
+            ]
+            selected = chooser.choices(candidates, weights=weights, k=1)[0]
             owned = connection.execute(
                 "SELECT quantity FROM inventory WHERE user_id = ? AND player_id = ?",
                 (normalized_id, int(selected["id"])),

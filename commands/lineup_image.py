@@ -31,9 +31,10 @@ class SlotLayout:
 
 
 SLOT_LAYOUTS = (
-    SlotLayout("LW", "WING 1 · LW", 90, 920, 440, 360, "#59d4a1"),
-    SlotLayout("RW", "WING 2 · RW", 1070, 920, 440, 360, "#59d4a1"),
-    SlotLayout("GK", "GOALIE · GK", 580, 920, 440, 360, "#80d9ff"),
+    SlotLayout("LW", "WING 1 · LW", 50, 920, 350, 360, "#59d4a1"),
+    SlotLayout("C", "CENTER · C", 430, 920, 350, 360, "#59d4a1"),
+    SlotLayout("RW", "WING 2 · RW", 810, 920, 350, 360, "#59d4a1"),
+    SlotLayout("GK", "GOALIE · GK", 1190, 920, 350, 360, "#80d9ff"),
     SlotLayout("SUB1", "SUB 1", 325, 1375, 430, 360, "#c7d6e3"),
     SlotLayout("SUB2", "SUB 2", 845, 1375, 430, 360, "#c7d6e3"),
 )
@@ -173,9 +174,9 @@ def build_lineup_svg(
       <rect width="100%" height="100%" fill="url(#background)"/>
       <text x="66" y="69" class="title">THSL STARTING LINEUP</text>
       <text x="68" y="111" class="subtitle">{subtitle}</text>
-      <rect x="1280" y="33" width="260" height="54" rx="27"
+      <rect x="1100" y="33" width="440" height="54" rx="27"
         fill="#183b4a" stroke="#7ed4f5" stroke-width="2"/>
-      <text x="1410" y="68" class="badge" text-anchor="middle">2 Wings + 1 GK</text>
+      <text x="1320" y="68" class="badge" text-anchor="middle">2 Wings + 1 Center + 1 GK</text>
 
       <rect x="58" y="145" width="1484" height="670" rx="90"
         fill="#f8fbfc" stroke="#eef3f6" stroke-width="8"/>
@@ -223,7 +224,7 @@ def build_lineup_svg(
 
       <text x="800" y="865" class="section" text-anchor="middle">STARTING LINEUP</text>
       <text x="800" y="895" class="subtitle" text-anchor="middle">
-        The three starters determine the lineup rating
+        All four starters determine the lineup rating
       </text>
 
       {slot_markup}

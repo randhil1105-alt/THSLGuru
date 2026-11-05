@@ -26,6 +26,8 @@ from database import (
     InvalidLineupPosition,
     InvalidAmount,
     NoEligibleCards,
+    calculate_pack_odds,
+    card_rating_weight,
 )
 from main import load_player_seed
 
@@ -106,6 +108,7 @@ class DatabaseTests(unittest.TestCase):
                 "Hala (Gold 90)",
                 "Dryboomrun",
                 "Needy",
+                "Fadi",
             },
         )
 
@@ -130,9 +133,26 @@ class DatabaseTests(unittest.TestCase):
         assert existing_hala is not None
         self.assertEqual(
             (existing_hala.overall, existing_hala.rarity, existing_hala.value),
-            (93, "TOTW", 2_000_000),
+            (93, "TOTW", 12_000_000),
         )
         self.assertEqual(existing_hala.image_path, "cards/hala.webp")
+
+    def test_fadi_seed_card_has_exact_data_and_gold_pack_eligibility(self) -> None:
+        card = self.database.get_player("Fadi")
+        self.assertIsNotNone(card)
+        assert card is not None
+        self.assertEqual(card.overall, 86)
+        self.assertEqual(card.position, "C")
+        self.assertEqual(card.country, "Algeria")
+        self.assertEqual(card.team, "New York Rangers")
+        self.assertEqual(card.rarity, "GOLD")
+        self.assertEqual(card.value, 780_000)
+        self.assertEqual(
+            card.stats,
+            {"SHO": 88, "DRI": 86, "SAV": 72, "PAS": 85, "DEF": 85, "ACT": 82},
+        )
+        self.assertEqual(card.image_path, "cards/fadi.png")
+        self.assertIn(card, self.database.get_players(rarity="GOLD"))
 
     def test_gamer_seed_card_has_exact_data_and_gold_rarity(self) -> None:
         gamer = self.database.get_player("Gamer")
@@ -150,6 +170,45 @@ class DatabaseTests(unittest.TestCase):
             {"SHO": 93, "DRI": 88, "SAV": 78, "PAS": 86, "DEF": 80, "ACT": 76},
         )
         self.assertEqual(gamer.image_path, "cards/gamer.png")
+
+    def test_weighted_pack_odds_favor_lower_ratings_and_recalculate(self) -> None:
+        gold_cards = self.database.get_players(rarity="GOLD")
+        odds_before = calculate_pack_odds(gold_cards)
+        self.assertTrue(all(odds > 0 for odds in odds_before.values()))
+        self.assertAlmostEqual(sum(odds_before.values()), 100.0)
+        by_name = {card.name: odds_before[card.id] for card in gold_cards}
+        self.assertGreater(by_name["Fadi"], by_name["Hala (Gold 90)"])
+        self.assertEqual(by_name["Dan"], by_name["Dryboomrun"])
+
+        totw_cards = self.database.get_players(rarity="TOTW")
+        totw_odds = calculate_pack_odds(totw_cards)
+        self.assertEqual(len(totw_cards), 2)
+        self.assertEqual(set(totw_odds.values()), {50.0})
+
+        self.database.add_player(
+            {
+                "name": "Test Very Rare",
+                "overall": 96,
+                "position": "C",
+                "country": "Canada",
+                "team": "Test Team",
+                "rarity": "GOLD",
+                "value": 1,
+                "stats": {},
+                "image_path": None,
+            }
+        )
+        updated_cards = self.database.get_players(rarity="GOLD")
+        odds_after = calculate_pack_odds(updated_cards)
+        self.assertGreater(odds_after[self.database.get_player("Test Very Rare").id], 0)
+        self.assertLess(
+            odds_after[self.database.get_player("Needy").id],
+            odds_before[self.database.get_player("Needy").id],
+        )
+        self.assertGreater(card_rating_weight(84), card_rating_weight(85))
+        self.assertGreater(card_rating_weight(85), card_rating_weight(90))
+        self.assertGreater(card_rating_weight(90), card_rating_weight(95))
+        self.assertGreater(card_rating_weight(95), 0)
 
     def test_dryboomrun_seed_card_has_exact_data_and_gold_pack_eligibility(self) -> None:
         card = self.database.get_player("Dryboomrun")
@@ -313,11 +372,11 @@ class DatabaseTests(unittest.TestCase):
 
     def test_lineup_requires_owned_cards_and_rejects_duplicate_slots(self) -> None:
         user_id = "lineup-user"
-        self.assertEqual(STARTING_LINEUP_POSITIONS, ("LW", "RW", "GK"))
+        self.assertEqual(STARTING_LINEUP_POSITIONS, ("LW", "C", "RW", "GK"))
         self.assertEqual(SUBSTITUTE_POSITIONS, ("SUB1", "SUB2"))
         self.assertEqual(
             LINEUP_POSITIONS,
-            ("LW", "RW", "GK", "SUB1", "SUB2"),
+            ("LW", "C", "RW", "GK", "SUB1", "SUB2"),
         )
         self.database.add_player(TOTW_PLAYER)
         self.database.add_player(SILVER_PLAYER)
@@ -326,6 +385,7 @@ class DatabaseTests(unittest.TestCase):
 
         for player_name in (
             "Dan",
+            "Fadi",
             "Hala",
             "Licha",
             "Test Week Star",
@@ -335,6 +395,7 @@ class DatabaseTests(unittest.TestCase):
 
         for position, player_name in (
             ("LW", "Dan"),
+            ("C", "Fadi"),
             ("RW", "Hala"),
             ("GK", "Licha"),
             ("SUB1", "Test Week Star"),
@@ -347,11 +408,12 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaises(DuplicateLineupPlayer):
             self.database.set_lineup_position(user_id, "RW", "Test Week Star")
         with self.assertRaises(InvalidLineupPosition):
-            self.database.set_lineup_position(user_id, "C", "Hala")
+            self.database.set_lineup_position(user_id, "CENTER", "Hala")
 
         lineup = self.database.get_lineup(user_id)
         self.assertEqual(set(lineup), set(LINEUP_POSITIONS))
         self.assertEqual(lineup["LW"].name, "Dan")
+        self.assertEqual(lineup["C"].name, "Fadi")
         self.assertEqual(lineup["RW"].name, "Hala")
         self.assertEqual(lineup["GK"].name, "Licha")
         self.assertEqual(lineup["SUB1"].name, "Test Week Star")
@@ -364,13 +426,14 @@ class DatabaseTests(unittest.TestCase):
         user_id = "persistent-team-user"
         self.assertEqual(TEAM_FORMATIONS, ("Balanced", "Attack", "Defensive"))
         self.assertEqual(self.database.get_formation(user_id), DEFAULT_FORMATION)
-        for name in ("Dan", "Hala", "Licha"):
+        for name in ("Dan", "Fadi", "Hala", "Licha"):
             self.database.add_inventory(user_id, name)
         self.database.add_player(TOTW_PLAYER)
         self.database.add_player(SILVER_PLAYER)
         self.database.add_inventory(user_id, "Test Week Star")
         self.database.add_inventory(user_id, "Test Silver")
         self.database.set_lineup_position(user_id, "LW", "Dan")
+        self.database.set_lineup_position(user_id, "C", "Fadi")
         self.database.set_lineup_position(user_id, "RW", "Hala")
         self.database.set_lineup_position(user_id, "GK", "Licha")
         self.database.set_lineup_position(user_id, "SUB1", "Test Week Star")
@@ -387,6 +450,7 @@ class DatabaseTests(unittest.TestCase):
             {position: player.name for position, player in lineup.items()},
             {
                 "LW": "Dan",
+                "C": "Fadi",
                 "RW": "Hala",
                 "GK": "Licha",
                 "SUB1": "Test Week Star",
@@ -419,6 +483,20 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(proceeds, 1_100_000)
         self.assertEqual(balance, 1_100_000)
         self.assertEqual(self.database.get_inventory("seller")[0].quantity, 1)
+
+    def test_each_totw_card_sells_for_twelve_million(self) -> None:
+        for card_name in ("Licha", "Hala"):
+            with self.subTest(card=card_name):
+                user_id = f"totw-seller-{card_name.casefold()}"
+                card = self.database.get_player(card_name)
+                self.assertIsNotNone(card)
+                assert card is not None
+                self.assertEqual(card.rarity, "TOTW")
+                self.assertEqual(card.value, 12_000_000)
+                self.database.add_inventory(user_id, card_name)
+                proceeds, balance = self.database.sell_card(user_id, card_name)
+                self.assertEqual(proceeds, 12_000_000)
+                self.assertEqual(balance, 12_000_000)
 
 
 if __name__ == "__main__":

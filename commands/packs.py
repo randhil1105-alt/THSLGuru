@@ -17,6 +17,8 @@ from database import (
     InsufficientFunds,
     NoEligibleCards,
     Player,
+    calculate_pack_odds,
+    card_rating_band,
 )
 
 LOGGER = logging.getLogger("thsl_guru.packs")
@@ -183,7 +185,10 @@ class PackCommands(discord_commands.Cog):
             title="Available Card Packs" if only_rarity is None else f"{only_rarity} Pack",
             description=(
                 f"Your balance: **{format_coins(self.database.get_balance(interaction.user.id))}**\n"
-                "Choose a pack button to purchase. Each menu can be used once."
+                "Choose a pack button to purchase. Each menu can be used once.\n"
+                "Per-card weights by OVR: 75–84 Common ×4; 85–89 Uncommon ×2; "
+                "90–94 Rare ×1; 95+ Very rare ×0.25. Ratings below 75 also use "
+                "the Common weight."
             ),
             color=discord.Color.gold() if only_rarity == "GOLD" else discord.Color.dark_purple(),
         )
@@ -193,16 +198,16 @@ class PackCommands(discord_commands.Cog):
             if not cards:
                 contents = "No eligible cards are currently in the catalog."
             else:
-                chance = 100 / len(cards)
+                odds = calculate_pack_odds(cards)
                 listed_cards = [
-                    f"• **{player_card_label(card)}** — {chance:.1f}%"
-                    for card in cards[:10]
-                ]
-                if len(cards) > 10:
-                    listed_cards.append(
-                        f"• {len(cards) - 10} more eligible card(s), same individual odds"
+                    (
+                        f"• **{player_card_label(card)}** — {odds[card.id]:.2f}% "
+                        f"({card_rating_band(card.overall)[0]}, "
+                        f"weight {card_rating_band(card.overall)[1]:g})"
                     )
-                contents = "Contents and equal odds:\n" + "\n".join(listed_cards)
+                    for card in cards
+                ]
+                contents = "Eligible cards and weighted odds:\n" + "\n".join(listed_cards)
 
             embed.add_field(
                 name=f"{rarity} · {format_coins(cost)}",

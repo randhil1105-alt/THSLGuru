@@ -19,12 +19,12 @@ class InformationCommands(discord_commands.Cog):
             name="Cards",
             value=(
                 "`/player name` · Look up a player\n"
-                "`/card name` · Show the full card\n"
+                "`/card player` · Choose a card and view its details\n"
                 "`/players` and `/cards` · Browse the full catalog\n"
                 "`/inventory` · View cards you own\n"
                 "`/collection` · Browse the catalog\n"
-                "`/team` · View the lineup image and substitutes\n"
-                "`/set position player` · Assign or clear any of five slots\n"
+                "`/team` · View the lineup image and six slots\n"
+                "`/set position player` · Assign or clear any of six slots\n"
                 "`/formation formation` · Save a tactical style"
             ),
             inline=False,

@@ -31,6 +31,7 @@ from commands.lineup_image import (
 
 POSITION_LABELS = {
     "LW": "Left Wing",
+    "C": "Center",
     "RW": "Right Wing",
     "GK": "Goalie",
     "SUB1": "Substitute 1",
@@ -39,7 +40,7 @@ POSITION_LABELS = {
 
 FORMATION_STYLES = {
     "Balanced": "Balanced tactical style with equal emphasis on offense and defense.",
-    "Attack": "Offense-first style that emphasizes forward pressure from LW and RW.",
+    "Attack": "Offense-first style that emphasizes pressure from LW, C, and RW.",
     "Defensive": "Defense-first style that prioritizes protecting the goal.",
 }
 
@@ -105,7 +106,7 @@ class TeamCommands(discord_commands.Cog):
         if len(lineup) < len(LINEUP_POSITIONS):
             embed.description = (
                 "Fill the starting slots and substitutes with cards you own using "
-                "`/set position:<LW|RW|GK|SUB1|SUB2> player:<card name>`. "
+                "`/set position:<LW|C|RW|GK|SUB1|SUB2> player:<card name>`. "
                 "Use `player:CLEAR` to empty a slot."
             )
         await interaction.response.defer(thinking=True)
@@ -136,6 +137,7 @@ class TeamCommands(discord_commands.Cog):
     @app_commands.choices(
         position=[
             app_commands.Choice(name="LW · Left Wing", value="LW"),
+            app_commands.Choice(name="C · Center", value="C"),
             app_commands.Choice(name="RW · Right Wing", value="RW"),
             app_commands.Choice(name="GK · Goalie", value="GK"),
             app_commands.Choice(name="SUB1 · Substitute 1", value="SUB1"),

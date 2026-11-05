@@ -24,7 +24,7 @@
     "country": "England",
     "team": "Ottawa Senators",
     "rarity": "TOTW",
-    "value": 2000000,
+    "value": 12000000,
     "stats": {
       "SAV": 96,
       "DIV": 93,
@@ -42,7 +42,7 @@
     "country": "Scotland",
     "team": "Colorado Avalanche",
     "rarity": "TOTW",
-    "value": 2000000,
+    "value": 12000000,
     "stats": {
       "SHO": 92,
       "DRI": 91,
@@ -142,5 +142,23 @@
       "ACT": 86
     },
     "image_path": "cards/needy.png"
+  },
+  {
+    "name": "Fadi",
+    "overall": 86,
+    "position": "C",
+    "country": "Algeria",
+    "team": "New York Rangers",
+    "rarity": "GOLD",
+    "value": 780000,
+    "stats": {
+      "SHO": 88,
+      "DRI": 86,
+      "SAV": 72,
+      "PAS": 85,
+      "DEF": 85,
+      "ACT": 82
+    },
+    "image_path": "cards/fadi.png"
   }
 ]

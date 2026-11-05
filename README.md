@@ -9,7 +9,7 @@ persistent SQLite database.
 | Command | Purpose |
 | --- | --- |
 | `/player name` | Look up a player's card |
-| `/card name` | Show the full card and image when available |
+| `/card player` | Choose a catalog card using autocomplete and view its full image |
 | `/players` | Browse the full player catalog |
 | `/cards` | Browse the full player card catalog |
 | `/claim` | Claim 5,000 coins once every 24 hours |
@@ -18,7 +18,7 @@ persistent SQLite database.
 | `/inventory` | Show cards you own |
 | `/collection` | Browse all cards and ownership |
 | `/pack pack_type` | Choose a GOLD or TOTW pack, then confirm purchase |
-| `/packs` | View pack contents, equal odds, prices, and purchase buttons |
+| `/packs` | View weighted card odds, rating bands, prices, and purchase buttons |
 | `/sell player quantity` | Sell owned copies at the card's listed value |
 | `/team` | View your rink lineup image, substitutes, formation, and rating |
 | `/set position player` | Assign an owned card to a starter or substitute slot |
@@ -40,7 +40,7 @@ Administrator-only commands:
 - `/grantcard` grants one or more card copies.
 
 The initial catalog contains Dan, XavierCapone9, Gamer, Hala (Gold 90),
-Dryboomrun, and Needy as GOLD cards, plus Licha and the original Hala card as TOTW. Card
+Dryboomrun, Needy, and Fadi as GOLD cards, plus Licha and the original Hala card as TOTW. Card
 names display as `<overall> <player> (<card type>)` throughout player-facing
 lists and details. If a future catalog
 has no cards of a requested pack rarity, the pack command explains that none are
@@ -78,20 +78,20 @@ rarities. Pack selection queries only the requested rarity and awards one card.
 Purchase interactions are recorded idempotently so a retried confirmation
 cannot charge twice. Lineups, formations, and pack receipts use additive
 `CREATE TABLE IF NOT EXISTS` migrations; existing player, balance, inventory,
-and starting-lineup rows are not reset. Substitute assignments are stored in an
-additional table so the existing starter table does not need to be rebuilt.
+and starting-lineup rows are not reset. Center and substitute assignments use
+additional tables so the existing starter table does not need to be rebuilt.
 
 ## Lineups and formations
 
-Each team has three starting slots—`LW` (Left Wing), `RW` (Right Wing), and
-`GK` (Goalie)—plus two substitute slots, `SUB1` and `SUB2`. For example,
+Each team has four starting slots—`LW` (Left Wing), `C` (Center), `RW` (Right Wing),
+and `GK` (Goalie)—plus two substitute slots, `SUB1` and `SUB2`. For example,
 `/set position:LW player:Dan` assigns a starter and
 `/set position:SUB1 player:Dan` assigns a substitute. Use `player:CLEAR` to
 empty a slot. A card must be in the user's inventory and cannot be assigned to
-more than one of the five slots.
+more than one of the six slots.
 
 `/formation formation:Attack` saves the user's tactical style independently
-from the three player assignments:
+from the four starting player assignments:
 
 - **Balanced** — equal emphasis on offense and defense.
 - **Attack** — offense-first style, emphasizing the wing positions.
@@ -102,14 +102,17 @@ red center and goal markings, blue lines, face-off circles and dots, rounded
 boards, the original card images for assigned players, and outlined circles for
 empty positions. It sends that PNG as a Discord attachment and also includes
 the formation and starting-lineup rating in the embed. The rating uses only
-the three starters; substitutes do not affect it. The formation style is stored
+the four starters; substitutes do not affect it. The formation style is stored
 and displayed, but this bot does not currently simulate matches or modify
 player ratings based on it. Missing or unreadable card images display a
 placeholder instead of preventing the lineup image from being sent.
 
 `/pack pack_type` opens a confirmation menu for the selected GOLD or TOTW pack.
-`/packs` lists both pack types, their eligible cards, equal per-card odds, and
-purchase buttons. Clicking a buy button makes one purchase; each menu is single-use.
+`/packs` lists both pack types, eligible cards, rating-based weight bands, and
+each card's recalculated probability. Per-card weights are 4 for ratings up to
+84, 2 for 85–89, 1 for 90–94, and 0.25 for 95+. Each pack filters to its own
+rarity before weighted selection. Clicking a buy button makes one purchase;
+each menu is single-use.
 
 ## GameUnit Plus deployment
 
@@ -132,7 +135,7 @@ workers before relying on it for the live economy.
 
 The catalog uses `cards/dan.png`, `cards/licha.webp`, `cards/hala.webp`,
 `cards/hala.png`, `cards/xaviercapone9.png`, `cards/gamer.png`, and
-`cards/dryboomrun.png`, and `cards/needy.png`. These are
+`cards/dryboomrun.png`, `cards/needy.png`, and `cards/fadi.png`. These are
 the supplied card images and are checked by the offline test suite.
 
 ## Tests
