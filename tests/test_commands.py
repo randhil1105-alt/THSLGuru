@@ -10,11 +10,12 @@ from unittest.mock import AsyncMock, patch
 import discord
 
 from commands.admin import AdminCommands
+from commands.economy import EconomyCommands
 from commands.init import COMMAND_MODULES, load_command_modules
 from commands.common import resolve_card_image
 from commands.inventory import InventoryCommands
 from commands.lineup_image import OUTPUT_FILENAME, build_lineup_svg
-from commands.packs import PackCommands
+from commands.packs import PackBuyButton, PackCommands
 from commands.player import PlayerCommands
 from commands.team import TeamCommands
 from commands.information import InformationCommands
@@ -139,6 +140,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         }
         admin_only = {"addplayer", "setbalance", "grantcoins", "grantcard"}
         self.assertEqual(set(commands), EXPECTED_COMMANDS)
+        self.assertTrue({"packs", "pack", "inventory", "balance"} <= set(commands))
 
         for name, command in commands.items():
             with self.subTest(command=name):
@@ -183,8 +185,78 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("/goldpack", help_text)
         self.assertNotIn("/totwpack", help_text)
 
+    async def test_balance_and_inventory_responses_are_public(self) -> None:
+        user_id = "public-response-user"
+        self.database.set_balance(user_id, 12_345)
+        balance_response = FakeResponse()
+        await EconomyCommands.balance.callback(
+            EconomyCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=user_id),
+                response=balance_response,
+            ),
+        )
+        self.assertFalse(balance_response.messages[0]["ephemeral"])
+        self.assertIn("12,345 coins", balance_response.messages[0]["content"])
+
+        inventory_response = FakeResponse()
+        await InventoryCommands.inventory.callback(
+            InventoryCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=user_id),
+                response=inventory_response,
+            ),
+        )
+        self.assertFalse(inventory_response.messages[0]["ephemeral"])
+
+    async def test_public_command_error_handler_keeps_responses_public(self) -> None:
+        with patch("main.LOGGER.error"):
+            for command_name in ("packs", "pack", "inventory", "balance"):
+                response = SimpleNamespace(
+                    is_done=lambda: False,
+                    send_message=AsyncMock(),
+                )
+                interaction = SimpleNamespace(
+                    command=SimpleNamespace(name=command_name),
+                    response=response,
+                )
+                await self.bot.tree.on_error(interaction, RuntimeError("test"))
+                response.send_message.assert_awaited_once()
+                self.assertFalse(response.send_message.await_args.kwargs["ephemeral"])
+
+        followup = AsyncMock()
+        interaction = SimpleNamespace(
+            command=SimpleNamespace(name="pack"),
+            response=SimpleNamespace(is_done=lambda: True),
+            followup=SimpleNamespace(send=followup),
+        )
+        with patch("main.LOGGER.error"):
+            await self.bot.tree.on_error(interaction, RuntimeError("test"))
+        followup.assert_awaited_once()
+        self.assertFalse(followup.await_args.kwargs["ephemeral"])
+
+        admin_response = SimpleNamespace(
+            is_done=lambda: False,
+            send_message=AsyncMock(),
+        )
+        await self.bot.tree.on_error(
+            SimpleNamespace(
+                command=SimpleNamespace(name="grantcard"),
+                response=admin_response,
+            ),
+            discord.app_commands.MissingPermissions(["administrator"]),
+        )
+        self.assertTrue(admin_response.send_message.await_args.kwargs["ephemeral"])
+
     async def test_all_seeded_card_images_resolve(self) -> None:
-        for name in ("Dan", "Licha", "Hala", "XavierCapone9", "Gamer"):
+        for name in (
+            "Dan",
+            "Licha",
+            "Hala",
+            "Hala (Gold 90)",
+            "XavierCapone9",
+            "Gamer",
+        ):
             with self.subTest(name=name):
                 player = self.database.get_player(name)
                 self.assertIsNotNone(player)
@@ -196,6 +268,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.database.get_player("Licha").rarity, "TOTW")
         self.assertEqual(self.database.get_player("Hala").rarity, "TOTW")
+        self.assertEqual(self.database.get_player("Hala").overall, 93)
 
     async def test_gamer_card_is_catalogued_grantable_and_lineup_ready(self) -> None:
         player = self.database.get_player("Gamer")
@@ -291,6 +364,118 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         team_message = team_interaction.followup.messages[0]
         self.assertIn(
             "Gamer",
+            {field.name: field.value for field in team_message["embed"].fields}[
+                "RW · Right Wing"
+            ],
+        )
+        lineup_file = team_message["file"]
+        lineup_bytes = lineup_file.fp.read()
+        lineup_file.close()
+        self.assertTrue(lineup_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1810))
+
+    async def test_hala_gold_card_is_catalogued_grantable_and_lineup_ready(self) -> None:
+        player = self.database.get_player("Hala (Gold 90)")
+        self.assertIsNotNone(player)
+        assert player is not None
+        self.assertEqual(
+            (
+                player.overall,
+                player.position,
+                player.country,
+                player.team,
+                player.rarity,
+                player.value,
+                player.image_path,
+            ),
+            (90, "WI", "Scotland", "Colorado Avalanche", "GOLD", 3_000_000, "cards/hala.png"),
+        )
+        self.assertEqual(
+            player.stats,
+            {"SHO": 88, "DRI": 93, "SAV": 85, "PAS": 90, "DEF": 86, "ACT": 87},
+        )
+        image_path = resolve_card_image(player)
+        self.assertIsNotNone(image_path)
+        assert image_path is not None
+        self.assertEqual(image_path.name, "hala.png")
+        self.assertTrue(image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+
+        for command_name in ("card", "player"):
+            response = FakeResponse()
+            await getattr(PlayerCommands, command_name).callback(
+                PlayerCommands(self.database),
+                SimpleNamespace(response=response),
+                "Hala (Gold 90)",
+            )
+            message = response.messages[0]
+            self.assertEqual(message["embed"].title, "Hala (Gold 90) · 90 OVR")
+            self.assertEqual(message["embed"].image.url, "attachment://hala.png")
+            details = {field.name: field.value for field in message["embed"].fields}
+            self.assertEqual(details["Value"], "3,000,000 coins")
+            for stat, value in {
+                "SHO": 88,
+                "DRI": 93,
+                "SAV": 85,
+                "PAS": 90,
+                "DEF": 86,
+                "ACT": 87,
+            }.items():
+                self.assertIn(f"**{stat}** {value}", details["Stats"])
+            card_file = message["file"]
+            self.assertTrue(card_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
+            card_file.close()
+
+        user_id = "hala-gold-card-user"
+        await AdminCommands.grantcard.callback(
+            AdminCommands(self.database),
+            SimpleNamespace(response=FakeResponse()),
+            SimpleNamespace(id=user_id, mention="<@hala-gold-card-user>"),
+            "Hala (Gold 90)",
+            1,
+        )
+        inventory_cog = InventoryCommands(self.database)
+        for command_name in ("inventory", "collection"):
+            response = FakeResponse()
+            await getattr(InventoryCommands, command_name).callback(
+                inventory_cog,
+                SimpleNamespace(user=SimpleNamespace(id=user_id), response=response),
+            )
+            self.assertIn("Hala (Gold 90)", response.messages[0]["embed"].description)
+            if command_name == "inventory":
+                self.assertFalse(response.messages[0]["ephemeral"])
+
+        team_cog = TeamCommands(self.database)
+        for position in ("LW", "RW"):
+            await TeamCommands.set_position.callback(
+                team_cog,
+                SimpleNamespace(user=SimpleNamespace(id=user_id), response=FakeResponse()),
+                discord.app_commands.Choice(name=position, value=position),
+                "Hala (Gold 90)",
+            )
+            self.assertEqual(
+                self.database.get_lineup(user_id)[position].name,
+                "Hala (Gold 90)",
+            )
+            if position == "LW":
+                await TeamCommands.set_position.callback(
+                    team_cog,
+                    SimpleNamespace(
+                        user=SimpleNamespace(id=user_id),
+                        response=FakeResponse(),
+                    ),
+                    discord.app_commands.Choice(name="LW", value="LW"),
+                    "CLEAR",
+                )
+
+        team_interaction = SimpleNamespace(
+            user=SimpleNamespace(id=user_id, display_name="Hala"),
+            response=FakeResponse(),
+            followup=FakeFollowup(),
+        )
+        await TeamCommands.team.callback(team_cog, team_interaction)
+        team_message = team_interaction.followup.messages[0]
+        self.assertIn(
+            "Hala (Gold 90)",
             {field.name: field.value for field in team_message["embed"].fields}[
                 "RW · Right Wing"
             ],
@@ -461,12 +646,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
 
         menu = command_response.messages[0]
-        self.assertTrue(menu["ephemeral"])
+        self.assertFalse(menu["ephemeral"])
         field_values = {field.name: field.value for field in menu["embed"].fields}
         self.assertIn("Dan", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("XavierCapone9", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Gamer", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("33.3%", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("Hala (Gold 90)", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("25.0%", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Licha", field_values["TOTW · 20,000,000 coins"])
         self.assertIn("50.0%", field_values["TOTW · 20,000,000 coins"])
 
@@ -483,6 +669,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         await gold_button.callback(purchase_interaction)
 
+        self.assertFalse(purchase_response.messages[0]["ephemeral"])
         self.assertIn("opened a **GOLD pack**", purchase_response.messages[0]["content"])
         self.assertEqual(self.database.get_balance(user_id), 250)
         purchased_inventory = self.database.get_inventory(user_id)
@@ -503,6 +690,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             message=FakeMessage(),
         )
         await gold_button.callback(duplicate_interaction)
+        self.assertFalse(duplicate_response.messages[0]["ephemeral"])
         self.assertIn("already been used", duplicate_response.messages[0]["content"])
         self.assertEqual(self.database.get_balance(user_id), 250)
         self.assertEqual(self.database.get_inventory(user_id)[0].quantity, 1)
@@ -510,7 +698,12 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pack_command_selects_and_purchases_both_pack_types(self) -> None:
         pack_cases = (
-            ("GOLD", GOLD_PACK_COST, {"Dan", "XavierCapone9", "Gamer"}, "33.3%"),
+            (
+                "GOLD",
+                GOLD_PACK_COST,
+                {"Dan", "XavierCapone9", "Gamer", "Hala (Gold 90)"},
+                "25.0%",
+            ),
             ("TOTW", TOTW_PACK_COST, {"Licha", "Hala"}, "50.0%"),
         )
         for index, (rarity, cost, expected_names, odds) in enumerate(pack_cases):
@@ -528,6 +721,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 )
 
                 menu = command_response.messages[0]
+                self.assertFalse(menu["ephemeral"])
                 fields = {field.name: field.value for field in menu["embed"].fields}
                 pack_field = f"{rarity} · {cost:,} coins"
                 self.assertEqual(set(fields), {pack_field})
@@ -552,12 +746,66 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     f"opened a **{rarity} pack**",
                     purchase_response.messages[0]["content"],
                 )
+                self.assertFalse(purchase_response.messages[0]["ephemeral"])
                 self.assertEqual(self.database.get_balance(user_id), 321)
                 inventory = self.database.get_inventory(user_id)
                 self.assertEqual(len(inventory), 1)
                 self.assertEqual(inventory[0].player.rarity, rarity)
                 self.assertEqual(inventory[0].quantity, 1)
                 purchase_response.messages[0]["file"].close()
+
+    async def test_pack_error_paths_are_public(self) -> None:
+        detached_button = PackBuyButton("GOLD", GOLD_PACK_COST)
+        detached_response = FakeResponse()
+        await detached_button.callback(
+            SimpleNamespace(response=detached_response)
+        )
+        self.assertFalse(detached_response.messages[0]["ephemeral"])
+
+        menu_response = FakeResponse()
+        await PackCommands.packs.callback(
+            PackCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id="menu-owner"),
+                response=menu_response,
+            ),
+        )
+        view = menu_response.messages[0]["view"]
+        other_response = FakeResponse()
+        allowed = await view.interaction_check(
+            SimpleNamespace(
+                user=SimpleNamespace(id="different-user"),
+                response=other_response,
+            )
+        )
+        self.assertFalse(allowed)
+        self.assertFalse(other_response.messages[0]["ephemeral"])
+
+        empty_catalog = Database(Path(self.temp_dir.name) / "public-empty-pack.sqlite3")
+        empty_catalog.initialize()
+        no_card_response = FakeResponse()
+        await PackCommands(empty_catalog)._open(
+            SimpleNamespace(
+                user=SimpleNamespace(id="public-no-card-user"),
+                response=no_card_response,
+            ),
+            rarity="TOTW",
+            cost=TOTW_PACK_COST,
+            purchase_id=12001,
+        )
+        self.assertFalse(no_card_response.messages[0]["ephemeral"])
+
+        poor_response = FakeResponse()
+        await PackCommands(self.database)._open(
+            SimpleNamespace(
+                user=SimpleNamespace(id="public-poor-user"),
+                response=poor_response,
+            ),
+            rarity="GOLD",
+            cost=GOLD_PACK_COST,
+            purchase_id=12002,
+        )
+        self.assertFalse(poor_response.messages[0]["ephemeral"])
 
     async def test_set_formation_and_team_commands_work_together(self) -> None:
         user_id = "team-command-user"
@@ -797,6 +1045,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             discord.app_commands.Choice(name="TOTW Pack", value="TOTW"),
         )
 
+        self.assertFalse(response.messages[0]["ephemeral"])
         embed = response.messages[0]["embed"]
         self.assertIn("No eligible cards", embed.fields[0].value)
         totw_button = response.messages[0]["view"].children[0]

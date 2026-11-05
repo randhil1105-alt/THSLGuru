@@ -95,12 +95,23 @@ def create_bot(
         interaction: discord.Interaction,
         error: app_commands.AppCommandError,
     ) -> None:
+        public_response = getattr(
+            getattr(interaction, "command", None),
+            "name",
+            None,
+        ) in {"packs", "pack", "inventory", "balance"}
         if isinstance(error, app_commands.MissingPermissions):
             message = "You need administrator permission to use that command."
             if interaction.response.is_done():
-                await interaction.followup.send(message, ephemeral=True)
+                await interaction.followup.send(
+                    message,
+                    ephemeral=not public_response,
+                )
             else:
-                await interaction.response.send_message(message, ephemeral=True)
+                await interaction.response.send_message(
+                    message,
+                    ephemeral=not public_response,
+                )
             return
 
         LOGGER.error(
@@ -110,9 +121,15 @@ def create_bot(
         )
         message = "The command failed. Please try again later."
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
+            await interaction.followup.send(
+                message,
+                ephemeral=not public_response,
+            )
         else:
-            await interaction.response.send_message(message, ephemeral=True)
+            await interaction.response.send_message(
+                message,
+                ephemeral=not public_response,
+            )
 
     return bot
 

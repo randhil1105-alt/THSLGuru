@@ -24,6 +24,9 @@ persistent SQLite database.
 | `/help` | Show the command guide |
 | `/botinfo` | Show bot and catalog information |
 
+`/packs`, `/pack`, `/inventory`, and `/balance` post their responses publicly
+in the channel.
+
 Administrator-only commands:
 
 - `/addplayer` adds a card. Stats use comma-separated `KEY=value` pairs, such
@@ -34,9 +37,10 @@ Administrator-only commands:
 - `/grantcoins` grants coins.
 - `/grantcard` grants one or more card copies.
 
-The initial catalog contains Dan, XavierCapone9, and Gamer as GOLD cards and
-Licha and Hala as TOTW cards. If a future catalog has no cards of a requested
-pack rarity, the pack command explains that none are available and does not charge.
+The initial catalog contains Dan, XavierCapone9, Gamer, and Hala (Gold 90) as
+GOLD cards, plus Licha and the original Hala card as TOTW. If a future catalog
+has no cards of a requested pack rarity, the pack command explains that none are
+available and does not charge.
 
 ## Run locally or on Replit
 
@@ -122,9 +126,9 @@ workers before relying on it for the live economy.
 
 ## Card images
 
-The catalog uses `cards/dan.png`, `cards/licha.webp`, `cards/hala.webp`, and
-`cards/xaviercapone9.png`, and `cards/gamer.png`. These are the supplied card
-images and are checked by the offline test suite.
+The catalog uses `cards/dan.png`, `cards/licha.webp`, `cards/hala.webp`,
+`cards/hala.png`, `cards/xaviercapone9.png`, and `cards/gamer.png`. These are
+the supplied card images and are checked by the offline test suite.
 
 ## Tests
 

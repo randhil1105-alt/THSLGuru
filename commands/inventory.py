@@ -25,7 +25,7 @@ class InventoryCommands(discord_commands.Cog):
         embed = inventory_embed("Your Inventory", entries)
         if not entries:
             embed.description = "Your inventory is empty. Claim coins or open a pack to get started."
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed, ephemeral=False)
 
     @app_commands.command(name="collection", description="See the card catalog and your collection.")
     async def collection(self, interaction: discord.Interaction) -> None:

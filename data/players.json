@@ -54,6 +54,24 @@
     "image_path": "cards/hala.webp"
   },
   {
+    "name": "Hala (Gold 90)",
+    "overall": 90,
+    "position": "WI",
+    "country": "Scotland",
+    "team": "Colorado Avalanche",
+    "rarity": "GOLD",
+    "value": 3000000,
+    "stats": {
+      "SHO": 88,
+      "DRI": 93,
+      "SAV": 85,
+      "PAS": 90,
+      "DEF": 86,
+      "ACT": 87
+    },
+    "image_path": "cards/hala.png"
+  },
+  {
     "name": "XavierCapone9",
     "overall": 91,
     "position": "WI",

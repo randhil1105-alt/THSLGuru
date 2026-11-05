@@ -99,8 +99,33 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(xavier.image_path, "cards/xaviercapone9.png")
         self.assertEqual(
             {player.name for player in self.database.get_players(rarity="GOLD")},
-            {"Dan", "XavierCapone9", "Gamer"},
+            {"Dan", "XavierCapone9", "Gamer", "Hala (Gold 90)"},
         )
+
+    def test_hala_gold_seed_preserves_the_original_totw_card(self) -> None:
+        hala_gold = self.database.get_player("Hala (Gold 90)")
+        self.assertIsNotNone(hala_gold)
+        assert hala_gold is not None
+        self.assertEqual(hala_gold.overall, 90)
+        self.assertEqual(hala_gold.position, "WI")
+        self.assertEqual(hala_gold.country, "Scotland")
+        self.assertEqual(hala_gold.team, "Colorado Avalanche")
+        self.assertEqual(hala_gold.rarity, "GOLD")
+        self.assertEqual(hala_gold.value, 3_000_000)
+        self.assertEqual(
+            hala_gold.stats,
+            {"SHO": 88, "DRI": 93, "SAV": 85, "PAS": 90, "DEF": 86, "ACT": 87},
+        )
+        self.assertEqual(hala_gold.image_path, "cards/hala.png")
+
+        existing_hala = self.database.get_player("Hala")
+        self.assertIsNotNone(existing_hala)
+        assert existing_hala is not None
+        self.assertEqual(
+            (existing_hala.overall, existing_hala.rarity, existing_hala.value),
+            (93, "TOTW", 2_000_000),
+        )
+        self.assertEqual(existing_hala.image_path, "cards/hala.webp")
 
     def test_gamer_seed_card_has_exact_data_and_gold_rarity(self) -> None:
         gamer = self.database.get_player("Gamer")

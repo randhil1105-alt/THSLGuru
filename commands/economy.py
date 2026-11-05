@@ -54,7 +54,7 @@ class EconomyCommands(discord_commands.Cog):
         amount = self.database.get_balance(interaction.user.id)
         await interaction.response.send_message(
             f"Your balance: **{format_coins(amount)}**.",
-            ephemeral=True,
+            ephemeral=False,
         )
 
     @app_commands.command(name="leaderboard", description="See the top coin balances.")

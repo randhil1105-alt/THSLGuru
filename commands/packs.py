@@ -41,7 +41,7 @@ class PackBuyButton(discord.ui.Button["PackPurchaseView"]):
         if self.view is None:
             await interaction.response.send_message(
                 "This pack menu is no longer available.",
-                ephemeral=True,
+                ephemeral=False,
             )
             return
         await self.view.buy(interaction, rarity=self.rarity, cost=self.cost)
@@ -80,7 +80,7 @@ class PackPurchaseView(discord.ui.View):
         if str(interaction.user.id) != self.user_id:
             await interaction.response.send_message(
                 "Only the member who opened this pack menu can use it.",
-                ephemeral=True,
+                ephemeral=False,
             )
             return False
         return True
@@ -96,7 +96,7 @@ class PackPurchaseView(discord.ui.View):
             if self._used:
                 await interaction.response.send_message(
                     "This pack menu has already been used. Run `/packs` to open a new one.",
-                    ephemeral=True,
+                    ephemeral=False,
                 )
                 return
 
@@ -141,20 +141,20 @@ class PackCommands(discord_commands.Cog):
         except NoEligibleCards:
             await interaction.response.send_message(
                 f"No **{rarity}** cards are available yet. Your balance was not charged.",
-                ephemeral=True,
+                ephemeral=False,
             )
             return
         except InsufficientFunds:
             await interaction.response.send_message(
                 f"This pack costs {format_coins(cost)}. Your balance was not charged.",
-                ephemeral=True,
+                ephemeral=False,
             )
             return
 
         await send_player_card(
             interaction,
             player,
-            ephemeral=True,
+            ephemeral=False,
             content=(
                 f"You opened a **{rarity} pack** for {format_coins(cost)}. "
                 f"Remaining balance: {format_coins(balance)}."
@@ -223,7 +223,7 @@ class PackCommands(discord_commands.Cog):
         await interaction.response.send_message(
             embed=embed,
             view=view,
-            ephemeral=True,
+            ephemeral=False,
         )
 
     @app_commands.command(
