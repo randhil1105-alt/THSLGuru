@@ -1077,7 +1077,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(),
             "",
         )
-        self.assertEqual(len(all_choices), len(self.database.get_players()))
+        self.assertEqual(
+            len(all_choices),
+            min(25, len(self.database.get_players())),
+        )
         self.assertEqual(
             len({choice.value.casefold() for choice in all_choices}),
             len(all_choices),
@@ -1481,7 +1484,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
         self.assertIn(label, gold_field)
-        self.assertIn("3.92%", gold_field)
+        self.assertIn("3.28%", gold_field)
 
         set_response = FakeResponse()
         team_cog = TeamCommands(self.database)
@@ -1988,6 +1991,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Gamer", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("90 Hala (Gold)", field_values["GOLD · 5,000,000 coins"])
         for label in (
+            "88 Apex (Gold)",
             "87 Dan (Gold)",
             "91 XavierCapone9 (Gold)",
             "89 Gamer (Gold)",
@@ -2004,11 +2008,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "84 Megan (Gold)",
             "89 Jaycob (Gold)",
             "82 Karuwrld (Gold)",
+            "84 HHH (Gold)",
+            "84 R4ze (Gold)",
         ):
             self.assertIn(label, field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("7.84%", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("3.92%", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("1.96%", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("6.56%", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("3.28%", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("1.64%", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Very rare ×0.25", menu["embed"].description)
         self.assertIn("93 Licha (TOTW)", field_values["TOTW · 20,000,000 coins"])
         self.assertIn("93 Hala (TOTW)", field_values["TOTW · 20,000,000 coins"])
@@ -2033,25 +2039,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         purchased_inventory = self.database.get_inventory(user_id)
         self.assertEqual(len(purchased_inventory), 1)
         self.assertIn(
-            purchased_inventory[0].player.name,
-            {
-                "Dan",
-                "XavierCapone9",
-                "Gamer",
-                "Hala (Gold 90)",
-                "Dryboomrun",
-                "Needy",
-                "Fadi",
-                "Mason",
-                "Demox",
-                "Cheddar",
-                "Mr P",
-                "Dark",
-                "Road",
-                "Ebs",
-                "Cam",
-                "Licha (Gold 90)",
-            },
+            purchased_inventory[0].player,
+            self.database.get_players(rarity="GOLD"),
         )
         self.assertEqual(purchased_inventory[0].player.rarity, "GOLD")
         self.assertEqual(
@@ -2081,6 +2070,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "GOLD",
                 GOLD_PACK_COST,
                 {
+                    "88 Apex (Gold)",
                     "Dan",
                     "XavierCapone9",
                     "Gamer",
@@ -2100,8 +2090,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "84 Megan (Gold)",
                     "89 Jaycob (Gold)",
                     "82 Karuwrld (Gold)",
+                    "84 HHH (Gold)",
+                    "84 R4ze (Gold)",
                 },
-                "7.84%",
+                "6.56%",
             ),
             ("TOTW", TOTW_PACK_COST, {"Licha", "Hala"}, "50.00%"),
         )
@@ -2541,6 +2533,39 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "value": 460_000,
                 "stats": {"SHO": 84, "DRI": 78, "SAV": 77, "PAS": 80, "DEF": 82, "ACT": 76},
             },
+            "HHH": {
+                "label": "84 HHH (Gold)",
+                "position": "WI",
+                "country": "England",
+                "team": "Anaheim Ducks",
+                "allowed": ("WING1", "WING2"),
+                "forbidden": ("GK", "CM1", "SUB1", "SUB2"),
+                "image": "cards/hhh_gold.png",
+                "value": 2_600_000,
+                "stats": {"SHO": 89, "DRI": 85, "SAV": 77, "PAS": 84, "DEF": 78, "ACT": 82},
+            },
+            "Apex": {
+                "label": "88 Apex (Gold)",
+                "position": "WI",
+                "country": "England",
+                "team": "Buffalo Sabres",
+                "allowed": ("WING1", "WING2"),
+                "forbidden": ("GK", "CM1", "SUB1", "SUB2"),
+                "image": "cards/apex_gold.png",
+                "value": 2_600_000,
+                "stats": {"SHO": 91, "DRI": 88, "SAV": 76, "PAS": 86, "DEF": 80, "ACT": 82},
+            },
+            "R4ze": {
+                "label": "84 R4ze (Gold)",
+                "position": "GK",
+                "country": "Georgia",
+                "team": "Florida Panthers",
+                "allowed": ("GK",),
+                "forbidden": ("WING1", "CM1", "SUB1", "SUB2"),
+                "image": "cards/r4ze_gold.png",
+                "value": 2_600_000,
+                "stats": {"SAV": 87, "DIV": 85, "PAS": 81, "CLE": 83, "SWE": 80, "ACT": 84},
+            },
         }
         player_cog = PlayerCommands(self.database)
         for name, details in expected.items():
@@ -2943,7 +2968,9 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.owner_id, interaction.user.id)
 
     async def test_new_gold_cards_are_available_in_minigame_with_type_and_original_art(self) -> None:
-        for index, name in enumerate(("Megan", "Jaycob", "Karuwrld")):
+        for index, name in enumerate(
+            ("Megan", "Jaycob", "Karuwrld", "HHH", "Apex", "R4ze")
+        ):
             with self.subTest(card=name):
                 player = self.database.get_player(name)
                 self.assertIsNotNone(player)

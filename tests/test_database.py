@@ -124,6 +124,9 @@ class DatabaseTests(unittest.TestCase):
                 "Megan",
                 "Jaycob",
                 "Karuwrld",
+                "HHH",
+                "Apex",
+                "R4ze",
             },
         )
 
@@ -202,22 +205,96 @@ class DatabaseTests(unittest.TestCase):
                 )
                 self.assertIn(player, gold_cards)
 
+    def test_hhh_apex_and_r4ze_have_exact_gold_data_and_slot_rules(self) -> None:
+        expected = {
+            "HHH": (
+                84,
+                "WI",
+                "England",
+                "Anaheim Ducks",
+                {"SHO": 89, "DRI": 85, "SAV": 77, "PAS": 84, "DEF": 78, "ACT": 82},
+                "cards/hhh_gold.png",
+                ("WING1", "WING2"),
+            ),
+            "Apex": (
+                88,
+                "WI",
+                "England",
+                "Buffalo Sabres",
+                {"SHO": 91, "DRI": 88, "SAV": 76, "PAS": 86, "DEF": 80, "ACT": 82},
+                "cards/apex_gold.png",
+                ("WING1", "WING2"),
+            ),
+            "R4ze": (
+                84,
+                "GK",
+                "Georgia",
+                "Florida Panthers",
+                {"SAV": 87, "DIV": 85, "PAS": 81, "CLE": 83, "SWE": 80, "ACT": 84},
+                "cards/r4ze_gold.png",
+                ("GK",),
+            ),
+        }
+        gold_cards = self.database.get_players(rarity="GOLD")
+        for name, details in expected.items():
+            with self.subTest(card=name):
+                card = self.database.get_player(name)
+                self.assertIsNotNone(card)
+                assert card is not None
+                overall, position, country, team, stats, image_path, allowed = details
+                self.assertEqual(
+                    (
+                        card.overall,
+                        card.position,
+                        card.country,
+                        card.team,
+                        card.rarity,
+                        card.value,
+                        card.stats,
+                        card.image_path,
+                        card.allowed_lineup_positions,
+                    ),
+                    (
+                        overall,
+                        position,
+                        country,
+                        team,
+                        "GOLD",
+                        2_600_000,
+                        stats,
+                        image_path,
+                        allowed,
+                    ),
+                )
+                self.assertIn(card, gold_cards)
+
     def test_new_gold_cards_only_assign_to_their_allowed_lineup_positions(self) -> None:
-        for name, allowed, forbidden in (
-            ("Megan", "GK", ("WING1", "CM1", "SUB1", "SUB2")),
-            ("Jaycob", "GK", ("WING1", "CM1", "SUB1", "SUB2")),
-            ("Karuwrld", "WING1", ("GK", "CM1", "SUB1", "SUB2")),
+        for name, allowed_positions, forbidden in (
+            ("Megan", ("GK",), ("WING1", "CM1", "SUB1", "SUB2")),
+            ("Jaycob", ("GK",), ("WING1", "CM1", "SUB1", "SUB2")),
+            ("Karuwrld", ("WING1", "WING2"), ("GK", "CM1", "SUB1", "SUB2")),
+            ("HHH", ("WING1", "WING2"), ("GK", "CM1", "SUB1", "SUB2")),
+            ("Apex", ("WING1", "WING2"), ("GK", "CM1", "SUB1", "SUB2")),
+            ("R4ze", ("GK",), ("WING1", "CM1", "SUB1", "SUB2")),
         ):
-            user_id = f"lineup-rule-{name.lower()}"
+            user_id = f"lineup-rule-invalid-{name.lower()}"
             self.database.add_inventory(user_id, name)
             for position in forbidden:
                 with self.subTest(card=name, position=position):
                     with self.assertRaises(InvalidLineupPosition):
                         self.database.set_lineup_position(user_id, position, name)
-            self.assertEqual(
-                self.database.set_lineup_position(user_id, allowed, name).name,
-                name,
-            )
+            for index, allowed in enumerate(allowed_positions):
+                allowed_user_id = f"lineup-rule-valid-{name.lower()}-{index}"
+                self.database.add_inventory(allowed_user_id, name)
+                self.database.set_formation(allowed_user_id, "Offensive")
+                self.assertEqual(
+                    self.database.set_lineup_position(
+                        allowed_user_id,
+                        allowed,
+                        name,
+                    ).name,
+                    name,
+                )
 
     def test_mr_p_dark_and_road_seed_cards_have_exact_gold_data(self) -> None:
         expected = {

@@ -433,5 +433,62 @@
     },
     "image_path": "cards/karuwrld_gold.png",
     "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "HHH",
+    "overall": 84,
+    "position": "WI",
+    "country": "England",
+    "team": "Anaheim Ducks",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SHO": 89,
+      "DRI": 85,
+      "SAV": 77,
+      "PAS": 84,
+      "DEF": 78,
+      "ACT": 82
+    },
+    "image_path": "cards/hhh_gold.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Apex",
+    "overall": 88,
+    "position": "WI",
+    "country": "England",
+    "team": "Buffalo Sabres",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SHO": 91,
+      "DRI": 88,
+      "SAV": 76,
+      "PAS": 86,
+      "DEF": 80,
+      "ACT": 82
+    },
+    "image_path": "cards/apex_gold.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "R4ze",
+    "overall": 84,
+    "position": "GK",
+    "country": "Georgia",
+    "team": "Florida Panthers",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SAV": 87,
+      "DIV": 85,
+      "PAS": 81,
+      "CLE": 83,
+      "SWE": 80,
+      "ACT": 84
+    },
+    "image_path": "cards/r4ze_gold.png",
+    "allowed_lineup_positions": ["GK"]
   }
 ]
