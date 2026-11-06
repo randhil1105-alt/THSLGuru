@@ -80,6 +80,45 @@ class GuruBot(discord_commands.Bot):
                     ", ".join(mode_choices) or "(none)",
                 )
 
+            if global_commands:
+                auction_command = next(
+                    (
+                        command
+                        for command in global_commands
+                        if command.name == "auction"
+                    ),
+                    None,
+                )
+                auction_subcommands = (
+                    sorted(
+                        option.name
+                        for option in (auction_command.options or [])
+                    )
+                    if auction_command is not None
+                    else []
+                )
+                LOGGER.info(
+                    "Synced /auction subcommands: %s",
+                    ", ".join(auction_subcommands) or "(none)",
+                )
+
+                public_command_names = {
+                    command.name
+                    for command in global_commands
+                    if command.default_member_permissions is None
+                }
+                for command_name in ("auction", "claim", "minigame"):
+                    if command_name in public_command_names:
+                        LOGGER.info(
+                            "Verified /%s has no default member permission restriction.",
+                            command_name,
+                        )
+                    else:
+                        LOGGER.error(
+                            "Synced /%s is missing or has a default member permission restriction.",
+                            command_name,
+                        )
+
             restricted_commands = sorted(
                 command.name
                 for command in global_commands
