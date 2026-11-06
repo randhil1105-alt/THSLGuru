@@ -9,12 +9,19 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.common import format_coins, send_player_card
+from commands.common import (
+    format_coins,
+    player_embed,
+    resolve_card_image,
+    send_player_card,
+)
 from database import (
     GOLD_PACK_COST,
+    MAX_PACK_QUANTITY,
     TOTW_PACK_COST,
     Database,
     InsufficientFunds,
+    InvalidAmount,
     NoEligibleCards,
     Player,
 )
@@ -28,14 +35,25 @@ PACKS = (
 
 
 class PackBuyButton(discord.ui.Button["PackPurchaseView"]):
-    def __init__(self, rarity: str, cost: int, *, disabled: bool = False) -> None:
+    def __init__(
+        self,
+        rarity: str,
+        cost: int,
+        quantity: int = 1,
+        *,
+        disabled: bool = False,
+    ) -> None:
+        label = f"Buy {rarity} · {cost:,}"
+        if quantity > 1:
+            label = f"Buy {rarity} ×{quantity} · {cost * quantity:,}"
         super().__init__(
-            label=f"Buy {rarity} · {cost:,}",
+            label=label,
             style=discord.ButtonStyle.primary,
             disabled=disabled,
         )
         self.rarity = rarity
         self.cost = cost
+        self.quantity = quantity
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if self.view is None:
@@ -48,7 +66,7 @@ class PackBuyButton(discord.ui.Button["PackPurchaseView"]):
 
 
 class PackPurchaseView(discord.ui.View):
-    """A user-bound, single-use pack menu with an idempotent purchase callback."""
+    """A user-bound, single-use menu with an idempotent pack purchase."""
 
     def __init__(
         self,
@@ -57,11 +75,13 @@ class PackPurchaseView(discord.ui.View):
         cards_by_rarity: dict[str, list[Player]],
         *,
         only_rarity: str | None = None,
+        quantity: int = 1,
     ) -> None:
         super().__init__(timeout=180)
         self.command = command
         self.user_id = str(user_id)
         self.cards_by_rarity = cards_by_rarity
+        self.quantity = quantity
         self._purchase_lock = asyncio.Lock()
         self._used = False
 
@@ -72,6 +92,7 @@ class PackPurchaseView(discord.ui.View):
                 PackBuyButton(
                     rarity,
                     cost,
+                    quantity,
                     disabled=not bool(cards_by_rarity.get(rarity)),
                 )
             )
@@ -107,6 +128,7 @@ class PackPurchaseView(discord.ui.View):
                     rarity=rarity,
                     cost=cost,
                     purchase_id=interaction.id,
+                    quantity=self.quantity,
                 )
             finally:
                 for child in self.children:
@@ -130,14 +152,25 @@ class PackCommands(discord_commands.Cog):
         rarity: str,
         cost: int,
         purchase_id: str | int,
+        quantity: int = 1,
     ) -> None:
         try:
-            player, balance = self.database.open_pack(
-                interaction.user.id,
-                rarity,
-                cost,
-                purchase_id=purchase_id,
-            )
+            if quantity == 1:
+                player, balance = self.database.open_pack(
+                    interaction.user.id,
+                    rarity,
+                    cost,
+                    purchase_id=purchase_id,
+                )
+                players = [player]
+            else:
+                players, balance = self.database.open_packs(
+                    interaction.user.id,
+                    rarity,
+                    cost,
+                    quantity,
+                    purchase_id=purchase_id,
+                )
         except NoEligibleCards:
             await interaction.response.send_message(
                 f"No **{rarity}** cards are available yet. Your balance was not charged.",
@@ -146,19 +179,63 @@ class PackCommands(discord_commands.Cog):
             return
         except InsufficientFunds:
             await interaction.response.send_message(
-                f"This pack costs {format_coins(cost)}. Your balance was not charged.",
+                f"These packs cost {format_coins(cost * quantity)} in total. "
+                "Your balance was not charged.",
+                ephemeral=False,
+            )
+            return
+        except InvalidAmount as exc:
+            await interaction.response.send_message(
+                str(exc),
                 ephemeral=False,
             )
             return
 
-        await send_player_card(
-            interaction,
-            player,
-            ephemeral=False,
+        if quantity == 1:
+            await send_player_card(
+                interaction,
+                players[0],
+                ephemeral=False,
+                content=(
+                    f"You opened a **{rarity} pack** for {format_coins(cost)}. "
+                    f"Remaining balance: {format_coins(balance)}."
+                ),
+            )
+            return
+
+        card_type = "Gold" if rarity == "GOLD" else "TOTW"
+        embeds: list[discord.Embed] = []
+        files: list[discord.File] = []
+        for index, player in enumerate(players, start=1):
+            embed = player_embed(player)
+            image_path = resolve_card_image(player)
+            if image_path:
+                filename = f"pack-{index:02d}-{image_path.name}"
+                files.append(discord.File(image_path, filename=filename))
+                embed.set_image(url=f"attachment://{filename}")
+            elif player.image_path:
+                embed.add_field(
+                    name="Card image",
+                    value=f"Image not found. Upload it to `{player.image_path}`.",
+                    inline=False,
+                )
+            else:
+                embed.add_field(
+                    name="Card image",
+                    value="No image is assigned to this card yet.",
+                    inline=False,
+                )
+            embeds.append(embed)
+
+        await interaction.response.send_message(
             content=(
-                f"You opened a **{rarity} pack** for {format_coins(cost)}. "
+                f"You opened **{quantity} {card_type} packs** for "
+                f"{format_coins(cost * quantity)}. "
                 f"Remaining balance: {format_coins(balance)}."
             ),
+            embeds=embeds,
+            files=files or None,
+            ephemeral=False,
         )
 
     def _pack_cards(self) -> dict[str, list[Player]]:
@@ -172,6 +249,7 @@ class PackCommands(discord_commands.Cog):
         interaction: discord.Interaction,
         *,
         only_rarity: str | None = None,
+        quantity: int = 1,
     ) -> None:
         cards_by_rarity = self._pack_cards()
         visible_packs = [
@@ -183,7 +261,8 @@ class PackCommands(discord_commands.Cog):
             title="Available Card Packs" if only_rarity is None else f"{only_rarity} Pack",
             description=(
                 f"Your balance: **{format_coins(self.database.get_balance(interaction.user.id))}**\n"
-                "Choose a pack button to purchase. Each menu can be used once.\n"
+                f"Choose a pack button to buy {quantity} pack"
+                f"{'' if quantity == 1 else 's'} at once. This menu can be used once.\n"
                 "Each pack contains one random player card of its listed rarity."
             ),
             color=discord.Color.gold() if only_rarity == "GOLD" else discord.Color.dark_purple(),
@@ -195,14 +274,20 @@ class PackCommands(discord_commands.Cog):
                 contents = f"No eligible cards are currently available in the {rarity} catalog."
             else:
                 card_type = "Gold" if rarity == "GOLD" else "TOTW"
-                contents = f"Contains one random {card_type} player card."
+                contents = (
+                    f"Contains one random {card_type} player card."
+                    if quantity == 1
+                    else f"Contains one random {card_type} player card per pack."
+                )
 
+            total_cost = cost * quantity
             embed.add_field(
                 name=f"{rarity} · {format_coins(cost)}",
                 value=(
                     f"{contents}\n"
                     f"Price: {format_coins(cost)}. Requires an eligible {rarity} "
-                    "card in the catalog."
+                    f"card in the catalog.\nTotal for {quantity}: "
+                    f"{format_coins(total_cost)}."
                 ),
                 inline=False,
             )
@@ -212,6 +297,7 @@ class PackCommands(discord_commands.Cog):
             interaction.user.id,
             cards_by_rarity,
             only_rarity=only_rarity,
+            quantity=quantity,
         )
         await interaction.response.send_message(
             embed=embed,
@@ -223,8 +309,15 @@ class PackCommands(discord_commands.Cog):
         name="packs",
         description="View available card packs and prices.",
     )
-    async def packs(self, interaction: discord.Interaction) -> None:
-        await self._send_pack_menu(interaction)
+    @app_commands.describe(
+        quantity=f"Number of packs to buy at once (1–{MAX_PACK_QUANTITY})"
+    )
+    async def packs(
+        self,
+        interaction: discord.Interaction,
+        quantity: app_commands.Range[int, 1, MAX_PACK_QUANTITY] = 1,
+    ) -> None:
+        await self._send_pack_menu(interaction, quantity=quantity)
 
     @app_commands.command(
         name="pack",

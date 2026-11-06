@@ -1051,6 +1051,69 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(inventory[0].player.name, player.name)
         self.assertEqual(inventory[0].player.rarity, "GOLD")
 
+    def test_multi_pack_purchase_awards_every_pack_and_is_idempotent(self) -> None:
+        class SelectCards:
+            def __init__(self, names: list[str]) -> None:
+                self.names = iter(names)
+
+            def choices(self, population, *, weights, k):
+                del weights, k
+                name = next(self.names)
+                return [next(card for card in population if card["name"] == name)]
+
+        class NoSelection:
+            def choices(self, population, *, weights, k):
+                raise AssertionError("An idempotent replay must not select new cards.")
+
+        user_id = "multi-pack-user"
+        purchase_id = "multi-pack-interaction"
+        self.database.set_balance(user_id, 3 * GOLD_PACK_COST + 234)
+        cards, balance = self.database.open_packs(
+            user_id,
+            "GOLD",
+            GOLD_PACK_COST,
+            3,
+            rng=SelectCards(["Chicken", "Sluckz", "Chicken"]),
+            purchase_id=purchase_id,
+        )
+        self.assertEqual([card.name for card in cards], ["Chicken", "Sluckz", "Chicken"])
+        self.assertEqual(balance, 234)
+        self.assertEqual(self.database.get_balance(user_id), 234)
+        self.assertEqual(
+            {entry.player.name: entry.quantity for entry in self.database.get_inventory(user_id)},
+            {"Chicken": 2, "Sluckz": 1},
+        )
+
+        replayed_cards, replayed_balance = self.database.open_packs(
+            user_id,
+            "GOLD",
+            GOLD_PACK_COST,
+            3,
+            rng=NoSelection(),
+            purchase_id=purchase_id,
+        )
+        self.assertEqual([card.name for card in replayed_cards], ["Chicken", "Sluckz", "Chicken"])
+        self.assertEqual(replayed_balance, 234)
+        self.assertEqual(self.database.get_balance(user_id), 234)
+        self.assertEqual(
+            {entry.player.name: entry.quantity for entry in self.database.get_inventory(user_id)},
+            {"Chicken": 2, "Sluckz": 1},
+        )
+
+    def test_multi_pack_purchase_with_insufficient_funds_changes_nothing(self) -> None:
+        user_id = "multi-pack-insufficient-user"
+        self.database.set_balance(user_id, 2 * GOLD_PACK_COST)
+        with self.assertRaises(InsufficientFunds):
+            self.database.open_packs(
+                user_id,
+                "GOLD",
+                GOLD_PACK_COST,
+                3,
+                purchase_id="insufficient-multi-pack-interaction",
+            )
+        self.assertEqual(self.database.get_balance(user_id), 2 * GOLD_PACK_COST)
+        self.assertEqual(self.database.get_inventory(user_id), [])
+
     def test_totw_pack_only_awards_totw_and_charges_exactly_once(self) -> None:
         self.database.add_player(TOTW_PLAYER)
         self.database.add_player(SILVER_PLAYER)

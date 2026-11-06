@@ -51,32 +51,41 @@ class GuruBot(discord_commands.Bot):
     async def setup_hook(self) -> None:
         await load_command_modules(self)
         try:
+            global_commands = await self.tree.sync()
+            global_command_names = sorted(command.name for command in global_commands)
+            LOGGER.info(
+                "Discord accepted %d global slash commands: %s",
+                len(global_commands),
+                ", ".join(global_command_names) or "(none)",
+            )
+
+            restricted_commands = sorted(
+                command.name
+                for command in global_commands
+                if command.default_member_permissions is not None
+            )
+            LOGGER.info(
+                "Synced %d global slash commands (%d available to everyone; "
+                "%d with default member restrictions).",
+                len(global_commands),
+                len(global_commands) - len(restricted_commands),
+                len(restricted_commands),
+            )
+            if restricted_commands:
+                LOGGER.info(
+                    "Global commands with default_member_permissions: %s",
+                    ", ".join(restricted_commands),
+                )
+
             if self.development_guild_id is not None:
                 guild = discord.Object(id=self.development_guild_id)
                 self.tree.copy_global_to(guild=guild)
                 commands = await self.tree.sync(guild=guild)
                 sync_scope = f"to development guild {self.development_guild_id}"
-            else:
-                commands = await self.tree.sync()
-                sync_scope = "globally"
-
-            restricted_commands = sorted(
-                command.name
-                for command in commands
-                if command.default_member_permissions is not None
-            )
-            LOGGER.info(
-                "Synced %d slash commands %s (%d available to everyone; %d with "
-                "default member restrictions).",
-                len(commands),
-                sync_scope,
-                len(commands) - len(restricted_commands),
-                len(restricted_commands),
-            )
-            if restricted_commands:
                 LOGGER.info(
-                    "Commands with default_member_permissions: %s",
-                    ", ".join(restricted_commands),
+                    "Synced %d slash commands %s.",
+                    len(commands),
+                    sync_scope,
                 )
         except Exception:
             LOGGER.exception("Slash-command registration failed.")

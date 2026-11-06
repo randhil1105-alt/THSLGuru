@@ -36,7 +36,7 @@ class InformationCommands(discord_commands.Cog):
                 "`/balance` · Check your balance\n"
                 "`/leaderboard` · See top balances\n"
                 "`/pack pack_type` · Choose GOLD or TOTW, then confirm purchase\n"
-                "`/packs` · View pack contents, odds, prices, and buy buttons\n"
+                "`/packs quantity` · View packs and buy up to 10 at once\n"
                 "`/sell player quantity` · Sell cards at listed value"
             ),
             inline=False,

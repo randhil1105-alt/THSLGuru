@@ -14,6 +14,7 @@ from typing import Any, Iterator, Mapping, Sequence
 CLAIM_COOLDOWN_SECONDS = 24 * 60 * 60
 GOLD_PACK_COST = 5_000_000
 TOTW_PACK_COST = 20_000_000
+MAX_PACK_QUANTITY = 10
 SQLITE_INT_MAX = (1 << 63) - 1
 SUPPORTED_STATS = ("SHO", "DRI", "SAV", "PAS", "DEF", "ACT", "DIV", "CLE", "SWE")
 FORMATION_STARTERS = {
@@ -1358,6 +1359,191 @@ class Database:
                     ),
                 )
             return self._player_from_row(selected), remaining_balance
+
+    def open_packs(
+        self,
+        user_id: str | int,
+        rarity: str,
+        cost: int,
+        quantity: int,
+        rng: Any | None = None,
+        purchase_id: str | int | None = None,
+    ) -> tuple[list[Player], int]:
+        """Charge once and award a batch of same-rarity packs atomically."""
+        normalized_id = self._validate_user_id(user_id)
+        quantity = self._validate_amount(quantity)
+        if quantity > MAX_PACK_QUANTITY:
+            raise InvalidAmount(
+                f"You can buy at most {MAX_PACK_QUANTITY} packs at once."
+            )
+
+        expected_rarity = rarity.strip().upper()
+        if expected_rarity not in {"GOLD", "TOTW"}:
+            raise InvalidPlayer("Packs can only award GOLD or TOTW cards.")
+        cost = self._validate_amount(cost)
+        expected_cost = {
+            "GOLD": GOLD_PACK_COST,
+            "TOTW": TOTW_PACK_COST,
+        }[expected_rarity]
+        if cost != expected_cost:
+            raise InvalidAmount(
+                f"{expected_rarity} packs must cost exactly {expected_cost:,} coins."
+            )
+        total_cost = cost * quantity
+        if total_cost > SQLITE_INT_MAX:
+            raise InvalidAmount("The total pack cost exceeds the supported maximum.")
+
+        normalized_purchase_id: str | None = None
+        batch_purchase_ids: list[str] = []
+        if purchase_id is not None:
+            normalized_purchase_id = str(purchase_id).strip()
+            if not normalized_purchase_id:
+                raise InvalidAmount("A valid pack purchase ID is required.")
+            batch_purchase_ids = [
+                f"{normalized_purchase_id}:batch:{index:02d}"
+                for index in range(1, quantity + 1)
+            ]
+            if max(map(len, batch_purchase_ids)) > 128:
+                raise InvalidAmount("A valid pack purchase ID is required.")
+
+        chooser = rng if rng is not None else random.SystemRandom()
+        with self._transaction() as connection:
+            if normalized_purchase_id is not None:
+                previous_single = connection.execute(
+                    "SELECT 1 FROM pack_purchases WHERE interaction_id = ?",
+                    (normalized_purchase_id,),
+                ).fetchone()
+                if previous_single:
+                    raise InvalidAmount("That pack purchase ID has already been used.")
+
+                batch_prefix = f"{normalized_purchase_id}:batch:"
+                previous_rows = connection.execute(
+                    """
+                    SELECT purchases.interaction_id, purchases.user_id,
+                           purchases.rarity, purchases.cost,
+                           purchases.balance_after, players.*
+                    FROM pack_purchases AS purchases
+                    JOIN players ON players.id = purchases.player_id
+                    WHERE substr(purchases.interaction_id, 1, ?) = ?
+                    """,
+                    (len(batch_prefix), batch_prefix),
+                ).fetchall()
+                if previous_rows:
+                    previous_by_id = {
+                        str(row["interaction_id"]): row for row in previous_rows
+                    }
+                    if set(previous_by_id) != set(batch_purchase_ids):
+                        raise InvalidAmount(
+                            "That pack purchase ID has already been used."
+                        )
+                    ordered_previous = [
+                        previous_by_id[key] for key in batch_purchase_ids
+                    ]
+                    if any(
+                        str(row["user_id"]) != normalized_id
+                        or str(row["rarity"]) != expected_rarity
+                        or int(row["cost"]) != cost
+                        for row in ordered_previous
+                    ):
+                        raise InvalidAmount(
+                            "That pack purchase ID has already been used."
+                        )
+                    return (
+                        [self._player_from_row(row) for row in ordered_previous],
+                        int(ordered_previous[-1]["balance_after"]),
+                    )
+
+            candidates = connection.execute(
+                "SELECT * FROM players WHERE rarity = ? ORDER BY id",
+                (expected_rarity,),
+            ).fetchall()
+            if not candidates:
+                raise NoEligibleCards(expected_rarity)
+
+            self._ensure_user(connection, normalized_id)
+            user = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?", (normalized_id,)
+            ).fetchone()
+            balance = int(user["balance"])
+            if balance < total_cost:
+                raise InsufficientFunds(
+                    f"Need {total_cost:,} coins; balance is {balance:,}."
+                )
+
+            weights = [
+                card_rating_weight(int(candidate["overall"]))
+                for candidate in candidates
+            ]
+            selected_cards = [
+                chooser.choices(candidates, weights=weights, k=1)[0]
+                for _ in range(quantity)
+            ]
+
+            inventory_additions: dict[int, int] = {}
+            for selected in selected_cards:
+                player_id = int(selected["id"])
+                inventory_additions[player_id] = (
+                    inventory_additions.get(player_id, 0) + 1
+                )
+            for player_id, addition in inventory_additions.items():
+                owned = connection.execute(
+                    "SELECT quantity FROM inventory "
+                    "WHERE user_id = ? AND player_id = ?",
+                    (normalized_id, player_id),
+                ).fetchone()
+                if owned and int(owned["quantity"]) + addition > SQLITE_INT_MAX:
+                    raise InvalidAmount("That inventory quantity is too large.")
+
+            update = connection.execute(
+                "UPDATE users SET balance = balance - ? "
+                "WHERE user_id = ? AND balance >= ?",
+                (total_cost, normalized_id, total_cost),
+            )
+            if update.rowcount != 1:
+                raise InsufficientFunds(
+                    "The balance changed before the pack purchase."
+                )
+
+            for player_id, addition in inventory_additions.items():
+                connection.execute(
+                    """
+                    INSERT INTO inventory(user_id, player_id, quantity)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id, player_id)
+                    DO UPDATE SET quantity = inventory.quantity + excluded.quantity
+                    """,
+                    (normalized_id, player_id, addition),
+                )
+
+            if normalized_purchase_id is not None:
+                remaining_balance = balance
+                created_at = int(time.time())
+                for purchase_key, selected in zip(
+                    batch_purchase_ids, selected_cards
+                ):
+                    remaining_balance -= cost
+                    connection.execute(
+                        """
+                        INSERT INTO pack_purchases
+                            (interaction_id, user_id, player_id, rarity, cost,
+                             balance_after, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            purchase_key,
+                            normalized_id,
+                            int(selected["id"]),
+                            expected_rarity,
+                            cost,
+                            remaining_balance,
+                            created_at,
+                        ),
+                    )
+
+            return (
+                [self._player_from_row(selected) for selected in selected_cards],
+                balance - total_cost,
+            )
 
     def sell_card(
         self, user_id: str | int, player_name: str, quantity: int = 1

@@ -6,7 +6,7 @@ import struct
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import discord
 
@@ -188,7 +188,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             await self.bot.setup_hook()
 
         copy_global_to.assert_called_once_with(guild=guild)
-        sync.assert_awaited_once_with(guild=guild)
+        sync.assert_has_awaits([call(), call(guild=guild)])
+        self.assertEqual(sync.await_count, 2)
 
     async def test_default_permissions_are_public_except_admin_commands(self) -> None:
         await load_command_modules(self.bot)
@@ -238,7 +239,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.value for field in response.messages[0]["embed"].fields
         )
         self.assertIn("`/pack pack_type`", help_text)
-        self.assertIn("`/packs`", help_text)
+        self.assertIn("`/packs quantity`", help_text)
         self.assertIn("`/claim` · Claim a GOLD player card every 24 hours", help_text)
         self.assertNotIn("Claim 5,000 coins", help_text)
         self.assertNotIn("/goldpack", help_text)
@@ -2304,6 +2305,53 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     player_card_label(inventory[0].player),
                 )
                 purchase_response.messages[0]["file"].close()
+
+    async def test_packs_command_buys_multiple_packs_in_one_purchase(self) -> None:
+        user_id = "multi-pack-command-user"
+        quantity = 3
+        self.database.set_balance(user_id, quantity * GOLD_PACK_COST + 321)
+        command_response = FakeResponse()
+        await PackCommands.packs.callback(
+            PackCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=user_id),
+                response=command_response,
+            ),
+            quantity,
+        )
+
+        menu = command_response.messages[0]
+        view = menu["view"]
+        self.assertEqual(view.quantity, quantity)
+        gold_button = next(button for button in view.children if button.rarity == "GOLD")
+        self.assertEqual(gold_button.quantity, quantity)
+        self.assertIn(f"×{quantity}", gold_button.label)
+
+        purchase_response = FakeResponse()
+        await gold_button.callback(
+            SimpleNamespace(
+                user=SimpleNamespace(id=user_id),
+                response=purchase_response,
+                id=13_001,
+                message=FakeMessage(),
+            )
+        )
+        result = purchase_response.messages[0]
+        self.assertIn(f"{quantity} Gold packs", result["content"])
+        self.assertIn(f"{quantity * GOLD_PACK_COST:,} coins", result["content"])
+        self.assertEqual(len(result["embeds"]), quantity)
+        self.assertTrue(
+            all("(Gold)" in embed.title for embed in result["embeds"])
+        )
+        self.assertEqual(len(result["files"]), quantity)
+        for uploaded_file in result["files"]:
+            self.assertTrue(uploaded_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
+            uploaded_file.close()
+
+        self.assertEqual(self.database.get_balance(user_id), 321)
+        inventory = self.database.get_inventory(user_id)
+        self.assertEqual(sum(entry.quantity for entry in inventory), quantity)
+        self.assertTrue(all(entry.player.rarity == "GOLD" for entry in inventory))
 
     async def test_pack_error_paths_are_public(self) -> None:
         detached_button = PackBuyButton("GOLD", GOLD_PACK_COST)
