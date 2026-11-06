@@ -7,6 +7,7 @@ import io
 import logging
 import random
 import re
+from collections.abc import Callable
 
 import discord
 from discord import app_commands
@@ -23,7 +24,7 @@ from database import Database, Player
 LOGGER = logging.getLogger("thsl_guru.minigame")
 
 MINIGAME_REWARD = 500_000
-MINIGAME_DURATION_SECONDS = 60
+MINIGAME_DURATION_SECONDS = 180
 
 
 def _normalize_answer(value: str) -> str:
@@ -42,6 +43,8 @@ class IndividualMinigameView(discord.ui.View):
         player: Player,
         channel: discord.abc.Messageable,
         duration_seconds: float = MINIGAME_DURATION_SECONDS,
+        game_id: str | None = None,
+        on_finished: Callable[[IndividualMinigameView], None] | None = None,
     ) -> None:
         super().__init__(timeout=duration_seconds)
         self.database = database
@@ -49,6 +52,9 @@ class IndividualMinigameView(discord.ui.View):
         self.player = player
         self.channel = channel
         self.duration_seconds = float(duration_seconds)
+        self.game_id = str(game_id) if game_id is not None else f"{self.owner_id}:{id(self)}"
+        self.on_finished = on_finished
+        self.attempted_user_game_ids: set[tuple[str, int]] = set()
         self.message: discord.Message | None = None
         self.finished = False
         self._deadline_task: asyncio.Task[None] | None = None
@@ -84,6 +90,12 @@ class IndividualMinigameView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        if self.has_used_attempt(interaction.user.id):
+            await interaction.response.send_message(
+                "You have already used your one attempt for this game.",
+                ephemeral=True,
+            )
+            return
         if self.finished:
             await interaction.response.send_message(
                 "This game has ended.",
@@ -91,6 +103,19 @@ class IndividualMinigameView(discord.ui.View):
             )
             return
         await interaction.response.send_modal(GuessAnswerModal(self))
+
+    def has_used_attempt(self, user_id: int) -> bool:
+        return (self.game_id, int(user_id)) in self.attempted_user_game_ids
+
+    def _finish(self) -> None:
+        if self.finished:
+            return
+        self.finished = True
+        self.answer_button.disabled = True
+        self.stop()
+        self.cancel_deadline()
+        if self.on_finished is not None:
+            self.on_finished(self)
 
     async def submit_answer(
         self,
@@ -104,29 +129,33 @@ class IndividualMinigameView(discord.ui.View):
             )
             return
 
+        attempt_key = (self.game_id, int(interaction.user.id))
         async with self._lock:
             if self.finished:
                 result = "finished"
                 balance = None
-            elif _normalize_answer(answer) != _normalize_answer(self.player.name):
-                result = "incorrect"
+            elif attempt_key in self.attempted_user_game_ids:
+                result = "attempt_used"
                 balance = None
             else:
-                try:
-                    balance = self.database.add_coins(
-                        self.owner_id,
-                        MINIGAME_REWARD,
-                    )
-                except Exception:
-                    LOGGER.exception("Could not save a minigame reward.")
-                    result = "reward_error"
+                self.attempted_user_game_ids.add(attempt_key)
+                self.answer_button.disabled = True
+                if _normalize_answer(answer) != _normalize_answer(self.player.name):
+                    result = "incorrect"
                     balance = None
                 else:
-                    self.finished = True
-                    self.answer_button.disabled = True
-                    self.stop()
-                    self.cancel_deadline()
-                    result = "correct"
+                    try:
+                        balance = self.database.add_coins(
+                            self.owner_id,
+                            MINIGAME_REWARD,
+                        )
+                    except Exception:
+                        LOGGER.exception("Could not save a minigame reward.")
+                        result = "reward_error"
+                        balance = None
+                    else:
+                        self._finish()
+                        result = "correct"
 
         if result == "finished":
             await interaction.response.send_message(
@@ -134,18 +163,26 @@ class IndividualMinigameView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        if result == "incorrect":
+        if result == "attempt_used":
             await interaction.response.send_message(
-                "That answer is incorrect. You can try again while the game is active.",
+                "You have already used your one attempt for this game.",
                 ephemeral=True,
             )
+            return
+        if result == "incorrect":
+            await interaction.response.send_message(
+                "That answer is incorrect. Your one attempt has been used.",
+                ephemeral=True,
+            )
+            await self._disable_prompt_button()
             return
         if result == "reward_error":
             await interaction.response.send_message(
                 "That answer is correct, but the reward could not be saved. "
-                "Please try again.",
+                "Your one attempt has been used.",
                 ephemeral=True,
             )
+            await self._disable_prompt_button()
             return
 
         await interaction.response.send_message(
@@ -162,10 +199,7 @@ class IndividualMinigameView(discord.ui.View):
         async with self._lock:
             if self.finished:
                 return
-            self.finished = True
-            self.answer_button.disabled = True
-            self.stop()
-            self.cancel_deadline()
+            self._finish()
 
         await self._disable_prompt_button()
         await self._send_reveal()
@@ -247,18 +281,60 @@ class MinigameCommands(discord_commands.Cog):
             raise ValueError("The minigame duration must be positive.")
         self.database = database
         self.duration_seconds = float(duration_seconds)
+        self._active_games: dict[tuple[int, str], IndividualMinigameView] = {}
+        self._active_games_by_owner: dict[int, IndividualMinigameView] = {}
+
+    def _register_game(self, game: IndividualMinigameView) -> None:
+        game.on_finished = self._remove_game
+        self._active_games[(game.owner_id, game.game_id)] = game
+        self._active_games_by_owner[game.owner_id] = game
+
+    def _remove_game(self, game: IndividualMinigameView) -> None:
+        self._active_games.pop((game.owner_id, game.game_id), None)
+        if self._active_games_by_owner.get(game.owner_id) is game:
+            self._active_games_by_owner.pop(game.owner_id, None)
 
     @app_commands.command(
         name="minigame",
         description="Guess a hockey player from three clues.",
     )
-    async def minigame(self, interaction: discord.Interaction) -> None:
+    @app_commands.describe(
+        answer="Enter your one guess for a game you started.",
+    )
+    async def minigame(
+        self,
+        interaction: discord.Interaction,
+        answer: str | None = None,
+    ) -> None:
+        if answer is not None:
+            game = self._active_games_by_owner.get(int(interaction.user.id))
+            if game is None or game.finished:
+                await interaction.response.send_message(
+                    "You have no active minigame to answer. Run `/minigame` first.",
+                    ephemeral=True,
+                )
+                return
+            await game.submit_answer(interaction, answer)
+            return
+
         if interaction.guild is None or interaction.channel is None:
             await interaction.response.send_message(
                 "The minigame can only be played in a server channel.",
                 ephemeral=False,
             )
             return
+
+        owner_id = int(interaction.user.id)
+        active_game = self._active_games_by_owner.get(owner_id)
+        if active_game is not None and not active_game.finished:
+            await interaction.response.send_message(
+                "You already have an active minigame. Use `/minigame answer` "
+                "to submit your one guess.",
+                ephemeral=True,
+            )
+            return
+        if active_game is not None:
+            self._remove_game(active_game)
 
         players = self.database.get_players()
         if not players:
@@ -275,13 +351,21 @@ class MinigameCommands(discord_commands.Cog):
             player=player,
             channel=interaction.channel,
             duration_seconds=self.duration_seconds,
+            game_id=(
+                str(interaction.id)
+                if getattr(interaction, "id", None) is not None
+                else None
+            ),
         )
+        self._register_game(view)
         embed = discord.Embed(
             title="🏒 GUESS WHO?",
             description=(
                 "Guess the player using the clues below. "
                 "Only you can answer this game. "
-                f"You have {int(self.duration_seconds)} seconds."
+                "You get one attempt. "
+                f"You have {int(self.duration_seconds)} seconds. "
+                "Submit it with `/minigame answer` or the Answer button."
             ),
             color=discord.Color.blurple(),
         )
@@ -298,11 +382,16 @@ class MinigameCommands(discord_commands.Cog):
             value=player.position,
         )
 
-        await interaction.response.send_message(
-            embed=embed,
-            view=view,
-            ephemeral=False,
-        )
+        try:
+            await interaction.response.send_message(
+                embed=embed,
+                view=view,
+                ephemeral=False,
+            )
+        except Exception:
+            self._remove_game(view)
+            view.stop()
+            raise
         try:
             view.message = await interaction.original_response()
         finally:

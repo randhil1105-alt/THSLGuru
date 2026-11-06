@@ -38,8 +38,8 @@ Administrator-only commands:
 - `/grantcoins` grants coins.
 - `/grantcard` grants one or more card copies.
 
-The seeded catalog includes 16 GOLD cards, including Ebs, Cam, and Gold Licha,
-plus the existing Licha and Hala TOTW cards. Card names display as
+The seeded catalog includes 19 GOLD cards, including Ryuko, Rj, Criss, Ebs,
+Cam, and Gold Licha, plus the existing Licha and Hala TOTW cards. Card names display as
 `<overall> <player> (<card type>)` throughout player-facing lists and details.
 If a catalog has no cards of a requested pack rarity, the pack command explains
 that none are available and does not charge.

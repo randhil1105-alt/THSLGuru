@@ -322,5 +322,59 @@
       "ACT": 92
     },
     "image_path": "cards/licha_gold_90.png"
+  },
+  {
+    "name": "Ryuko",
+    "overall": 89,
+    "position": "WI",
+    "country": "USA",
+    "team": "Colorado Avalanche",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SHO": 91,
+      "DRI": 89,
+      "SAV": 78,
+      "PAS": 87,
+      "DEF": 85,
+      "ACT": 80
+    },
+    "image_path": "cards/ryuko_gold.png"
+  },
+  {
+    "name": "Rj",
+    "overall": 85,
+    "position": "WI",
+    "country": "England",
+    "team": "Vegas Golden Knights",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SHO": 87,
+      "DRI": 85,
+      "SAV": 79,
+      "PAS": 85,
+      "DEF": 83,
+      "ACT": 82
+    },
+    "image_path": "cards/rj_gold.png"
+  },
+  {
+    "name": "Criss",
+    "overall": 86,
+    "position": "C",
+    "country": "Italy",
+    "team": "Anaheim Ducks",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SHO": 88,
+      "DRI": 87,
+      "SAV": 83,
+      "PAS": 86,
+      "DEF": 85,
+      "ACT": 84
+    },
+    "image_path": "cards/criss_gold.png"
   }
 ]
