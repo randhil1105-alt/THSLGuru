@@ -22,6 +22,7 @@ persistent SQLite database.
 | `/team` | View your three starters, two substitutes, team value, and rink image |
 | `/set position player` | Choose an owned card version for a compatible slot |
 | `/formation formation` | Choose Balanced, Offensive, or Defensive |
+| `/match opponent` | Challenge a player to a live 45-second match for 5,000,000 coins |
 | `/help` | Show the command guide |
 | `/botinfo` | Show bot and catalog information |
 
@@ -102,6 +103,15 @@ only Wing cards can fill Wing slots. Cards cannot occupy multiple slots.
 `SUB1` and `SUB2` accept any owned card; use `player:CLEAR` to empty a slot.
 Changing formation keeps cards in compatible slots, may move a card only to an
 empty slot of the same role, and explains any cards that no longer fit.
+
+Use `/match opponent:@player` in a server channel to send a public challenge.
+The opponent has 60 seconds to accept or decline. Accepted matches run for 45
+seconds, show live events and score updates, and use only the three valid
+starting cards for each player's current formation; substitutes are not used.
+The final result lists both usernames, starting lineups, goal scorers, the
+winner, and the 5,000,000-coin reward. Each player can have only one pending or
+active match at a time. A missing lineup, a player leaving the server, or a bot
+restart cancels the match without a reward.
 
 `/team` renders the three starting cards inside the white rink, with the two
 substitute cards in the section below it. It uses original card artwork and

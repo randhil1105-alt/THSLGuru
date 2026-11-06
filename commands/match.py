@@ -46,7 +46,7 @@ EMBED_FIELD_LIMIT = 950
 
 
 def _participant_name(user: discord.abc.User) -> str:
-    return str(getattr(user, "display_name", None) or user.name)[:100]
+    return str(user.name)[:100]
 
 
 def _side_from_match(match: dict[str, Any], user_id: str) -> MatchSide:

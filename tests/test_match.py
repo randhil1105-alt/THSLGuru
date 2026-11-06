@@ -373,6 +373,62 @@ class MatchDatabaseTests(unittest.TestCase):
         self.assertCountEqual(outcomes, ["created", "blocked"])
         self.assertIsNotNone(self.database.get_active_match_for_user("shared-player"))
 
+    def test_independent_matches_can_run_and_reward_without_interfering(self) -> None:
+        for user_id in ("u1", "u2", "u3", "u4"):
+            self._assign_balanced_lineup(user_id)
+
+        first = self._invite("match-a", challenger="u1", opponent="u2")
+        second = self._invite("match-b", challenger="u3", opponent="u4")
+        first = self.database.accept_match_invitation(
+            first["match_id"],
+            "u2",
+            now=110,
+        )
+        second = self.database.accept_match_invitation(
+            second["match_id"],
+            "u4",
+            now=110,
+        )
+        self.assertEqual(first["status"], "ACTIVE")
+        self.assertEqual(second["status"], "ACTIVE")
+
+        self.assertTrue(
+            self.database.complete_match(
+                "match-a",
+                "u1",
+                {
+                    "home_score": 1,
+                    "away_score": 0,
+                    "winner_id": "u1",
+                    "goals": [{"text": "first match goal"}],
+                },
+                now=155,
+            )
+        )
+        self.assertEqual(self.database.get_match("match-b")["status"], "ACTIVE")
+        self.assertEqual(
+            self.database.get_active_match_for_user("u3")["match_id"],
+            "match-b",
+        )
+
+        self.assertTrue(
+            self.database.complete_match(
+                "match-b",
+                "u4",
+                {
+                    "home_score": 0,
+                    "away_score": 1,
+                    "winner_id": "u4",
+                    "goals": [{"text": "second match goal"}],
+                },
+                now=156,
+            )
+        )
+        self.assertEqual(self.database.get_balance("u1"), MATCH_REWARD)
+        self.assertEqual(self.database.get_balance("u4"), MATCH_REWARD)
+        self.assertEqual(self.database.get_balance("u2"), 0)
+        self.assertEqual(self.database.get_balance("u3"), 0)
+
 
 class MatchCommandTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -425,6 +481,33 @@ class MatchCommandTests(unittest.IsolatedAsyncioTestCase):
             [button.label for button in payload["view"].children],
             ["Accept Match", "Decline Match"],
         )
+
+    async def test_invitation_uses_discord_usernames_not_server_nicknames(self) -> None:
+        user = SimpleNamespace(
+            id=11,
+            name="challenger_handle",
+            display_name="Server nickname",
+        )
+        opponent = SimpleNamespace(
+            id=22,
+            name="opponent_handle",
+            display_name="Opponent nickname",
+            bot=False,
+        )
+        response = FakeResponse()
+        interaction = SimpleNamespace(
+            user=user,
+            guild=SimpleNamespace(id=33),
+            channel=SimpleNamespace(id=44),
+            response=response,
+            original_response=AsyncMock(return_value=FakeMessage()),
+        )
+
+        await MatchCommands.match.callback(self.cog, interaction, opponent)
+
+        description = response.messages[0]["embed"].description
+        self.assertIn("challenger_handle", description)
+        self.assertNotIn("Server nickname", description)
 
     async def test_self_challenge_is_rejected(self) -> None:
         user = SimpleNamespace(
