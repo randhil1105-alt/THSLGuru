@@ -9,7 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.common import format_coins, player_card_label, send_player_card
+from commands.common import format_coins, send_player_card
 from database import (
     GOLD_PACK_COST,
     TOTW_PACK_COST,
@@ -17,8 +17,6 @@ from database import (
     InsufficientFunds,
     NoEligibleCards,
     Player,
-    calculate_pack_odds,
-    card_rating_band,
 )
 
 LOGGER = logging.getLogger("thsl_guru.packs")
@@ -186,9 +184,7 @@ class PackCommands(discord_commands.Cog):
             description=(
                 f"Your balance: **{format_coins(self.database.get_balance(interaction.user.id))}**\n"
                 "Choose a pack button to purchase. Each menu can be used once.\n"
-                "Per-card weights by OVR: 75–84 Common ×4; 85–89 Uncommon ×2; "
-                "90–94 Rare ×1; 95+ Very rare ×0.25. Ratings below 75 also use "
-                "the Common weight."
+                "Each pack contains one random player card of its listed rarity."
             ),
             color=discord.Color.gold() if only_rarity == "GOLD" else discord.Color.dark_purple(),
         )
@@ -196,24 +192,16 @@ class PackCommands(discord_commands.Cog):
         for rarity, cost in visible_packs:
             cards = cards_by_rarity[rarity]
             if not cards:
-                contents = "No eligible cards are currently in the catalog."
+                contents = f"No eligible cards are currently available in the {rarity} catalog."
             else:
-                odds = calculate_pack_odds(cards)
-                listed_cards = [
-                    (
-                        f"• **{player_card_label(card)}** — {odds[card.id]:.2f}% "
-                        f"({card_rating_band(card.overall)[0]}, "
-                        f"weight {card_rating_band(card.overall)[1]:g})"
-                    )
-                    for card in cards
-                ]
-                contents = "Eligible cards and weighted odds:\n" + "\n".join(listed_cards)
+                card_type = "Gold" if rarity == "GOLD" else "TOTW"
+                contents = f"Contains one random {card_type} player card."
 
             embed.add_field(
                 name=f"{rarity} · {format_coins(cost)}",
                 value=(
                     f"{contents}\n"
-                    f"Requirement: at least {format_coins(cost)} and one {rarity} "
+                    f"Price: {format_coins(cost)}. Requires an eligible {rarity} "
                     "card in the catalog."
                 ),
                 inline=False,
@@ -233,7 +221,7 @@ class PackCommands(discord_commands.Cog):
 
     @app_commands.command(
         name="packs",
-        description="View available card packs, odds, and prices.",
+        description="View available card packs and prices.",
     )
     async def packs(self, interaction: discord.Interaction) -> None:
         await self._send_pack_menu(interaction)

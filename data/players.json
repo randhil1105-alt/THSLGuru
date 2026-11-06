@@ -441,7 +441,7 @@
     "country": "England",
     "team": "Anaheim Ducks",
     "rarity": "GOLD",
-    "value": 2600000,
+    "value": 450000,
     "stats": {
       "SHO": 89,
       "DRI": 85,
@@ -460,7 +460,7 @@
     "country": "England",
     "team": "Buffalo Sabres",
     "rarity": "GOLD",
-    "value": 2600000,
+    "value": 1500000,
     "stats": {
       "SHO": 91,
       "DRI": 88,
@@ -479,7 +479,7 @@
     "country": "Georgia",
     "team": "Florida Panthers",
     "rarity": "GOLD",
-    "value": 2600000,
+    "value": 430000,
     "stats": {
       "SAV": 87,
       "DIV": 85,

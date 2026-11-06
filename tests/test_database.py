@@ -215,6 +215,7 @@ class DatabaseTests(unittest.TestCase):
                 {"SHO": 89, "DRI": 85, "SAV": 77, "PAS": 84, "DEF": 78, "ACT": 82},
                 "cards/hhh_gold.png",
                 ("WING1", "WING2"),
+                450_000,
             ),
             "Apex": (
                 88,
@@ -224,6 +225,7 @@ class DatabaseTests(unittest.TestCase):
                 {"SHO": 91, "DRI": 88, "SAV": 76, "PAS": 86, "DEF": 80, "ACT": 82},
                 "cards/apex_gold.png",
                 ("WING1", "WING2"),
+                1_500_000,
             ),
             "R4ze": (
                 84,
@@ -233,6 +235,7 @@ class DatabaseTests(unittest.TestCase):
                 {"SAV": 87, "DIV": 85, "PAS": 81, "CLE": 83, "SWE": 80, "ACT": 84},
                 "cards/r4ze_gold.png",
                 ("GK",),
+                430_000,
             ),
         }
         gold_cards = self.database.get_players(rarity="GOLD")
@@ -241,7 +244,7 @@ class DatabaseTests(unittest.TestCase):
                 card = self.database.get_player(name)
                 self.assertIsNotNone(card)
                 assert card is not None
-                overall, position, country, team, stats, image_path, allowed = details
+                overall, position, country, team, stats, image_path, allowed, value = details
                 self.assertEqual(
                     (
                         card.overall,
@@ -260,7 +263,7 @@ class DatabaseTests(unittest.TestCase):
                         country,
                         team,
                         "GOLD",
-                        2_600_000,
+                        value,
                         stats,
                         image_path,
                         allowed,
@@ -704,6 +707,9 @@ class DatabaseTests(unittest.TestCase):
         by_name = {card.name: odds_before[card.id] for card in gold_cards}
         self.assertGreater(by_name["Fadi"], by_name["Hala (Gold 90)"])
         self.assertEqual(by_name["Dan"], by_name["Dryboomrun"])
+        self.assertAlmostEqual(by_name["Needy"], 2 / 61 * 100)
+        self.assertAlmostEqual(by_name["Megan"], 4 / 61 * 100)
+        self.assertAlmostEqual(by_name["Hala (Gold 90)"], 1 / 61 * 100)
 
         totw_cards = self.database.get_players(rarity="TOTW")
         totw_odds = calculate_pack_odds(totw_cards)

@@ -124,6 +124,21 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.close()
         self.temp_dir.cleanup()
 
+    def assert_pack_menu_hides_card_pool(self, embed: discord.Embed) -> None:
+        rendered = "\n".join(
+            [
+                embed.title or "",
+                embed.description or "",
+                *(f"{field.name}\n{field.value}" for field in embed.fields),
+            ]
+        )
+        normalized = rendered.casefold()
+        for player in self.database.get_players():
+            self.assertNotIn(player.name.casefold(), normalized)
+        self.assertNotRegex(rendered, r"\b\d+(?:\.\d+)?%")
+        self.assertNotIn("odds", normalized)
+        self.assertNotIn("weight", normalized)
+
     async def test_modules_load_once_and_register_expected_commands(self) -> None:
         self.assertEqual(len(COMMAND_MODULES), len(set(COMMAND_MODULES)))
         await load_command_modules(self.bot)
@@ -569,8 +584,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
-        for details in expected.values():
-            self.assertIn(details["label"], gold_field)
+        self.assertIn("Contains one random Gold player card.", gold_field)
+        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
 
         team_cog = TeamCommands(self.database)
         self.database.set_formation(user_id, "Offensive")
@@ -809,8 +824,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
-        for name, (overall, *_details) in expected.items():
-            self.assertIn(f"{overall} {name} (Gold)", gold_field)
+        self.assertIn("Contains one random Gold player card.", gold_field)
+        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
 
         team_cog = TeamCommands(self.database)
         self.database.set_formation(user_id, "Offensive")
@@ -999,8 +1014,12 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         pack_text = "\n".join(field.value for field in pack_response.messages[0]["embed"].fields)
+        self.assertIn("Contains one random Gold player card.", pack_text)
+        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
         for name in expected:
-            self.assertIn(f"84 {name} (Gold)", pack_text)
+            card = self.database.get_player(name)
+            self.assertIsNotNone(card)
+            self.assertIn(card, self.database.get_players(rarity="GOLD"))
 
         team_cog = TeamCommands(self.database)
         self.database.set_formation(inventory_user, "Offensive")
@@ -1130,7 +1149,12 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in packs_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
-        self.assertIn("86 Fadi (Gold)", gold_field)
+        self.assertIn("Contains one random Gold player card.", gold_field)
+        self.assert_pack_menu_hides_card_pool(packs_response.messages[0]["embed"])
+        self.assertIn(
+            self.database.get_player("Fadi"),
+            self.database.get_players(rarity="GOLD"),
+        )
 
         self.database.add_inventory(user_id, "Fadi")
         for command_name in ("inventory", "collection"):
@@ -1339,7 +1363,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         gold_field = {
             field.name: field.value for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
-        self.assertIn(label, gold_field)
+        self.assertIn("Contains one random Gold player card.", gold_field)
+        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
 
         self.assertIn("CM1", LINEUP_POSITIONS)
         set_command = {
@@ -1483,8 +1508,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
-        self.assertIn(label, gold_field)
-        self.assertIn("3.28%", gold_field)
+        self.assertIn("Contains one random Gold player card.", gold_field)
+        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
 
         set_response = FakeResponse()
         team_cog = TeamCommands(self.database)
@@ -1969,7 +1994,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 slot.y for key, slot in formation.items() if key != "GK"
             ))
 
-    async def test_packs_menu_shows_odds_and_confirms_once(self) -> None:
+    async def test_packs_menu_hides_card_pool_and_confirms_once(self) -> None:
         user_id = "packs-menu-user"
         self.database.set_balance(user_id, GOLD_PACK_COST + 250)
         command_response = FakeResponse()
@@ -1986,39 +2011,24 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         menu = command_response.messages[0]
         self.assertFalse(menu["ephemeral"])
         field_values = {field.name: field.value for field in menu["embed"].fields}
-        self.assertIn("Dan", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("XavierCapone9", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("Gamer", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("90 Hala (Gold)", field_values["GOLD · 5,000,000 coins"])
-        for label in (
-            "88 Apex (Gold)",
-            "87 Dan (Gold)",
-            "91 XavierCapone9 (Gold)",
-            "89 Gamer (Gold)",
-            "90 Hala (Gold)",
-            "87 Dryboomrun (Gold)",
-            "85 Needy (Gold)",
-            "86 Fadi (Gold)",
-            "86 Mr P (Gold)",
-            "84 Dark (Gold)",
-            "86 Road (Gold)",
-            "90 Ebs (Gold)",
-            "90 Cam (Gold)",
-            "90 Licha (Gold)",
-            "84 Megan (Gold)",
-            "89 Jaycob (Gold)",
-            "82 Karuwrld (Gold)",
-            "84 HHH (Gold)",
-            "84 R4ze (Gold)",
-        ):
-            self.assertIn(label, field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("6.56%", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("3.28%", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("1.64%", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("Very rare ×0.25", menu["embed"].description)
-        self.assertIn("93 Licha (TOTW)", field_values["TOTW · 20,000,000 coins"])
-        self.assertIn("93 Hala (TOTW)", field_values["TOTW · 20,000,000 coins"])
-        self.assertIn("50.00%", field_values["TOTW · 20,000,000 coins"])
+        self.assertEqual(
+            set(field_values),
+            {
+                "GOLD · 5,000,000 coins",
+                "TOTW · 20,000,000 coins",
+            },
+        )
+        self.assertIn(
+            "Contains one random Gold player card.",
+            field_values["GOLD · 5,000,000 coins"],
+        )
+        self.assertIn(
+            "Contains one random TOTW player card.",
+            field_values["TOTW · 20,000,000 coins"],
+        )
+        self.assertIn("Price: 5,000,000 coins.", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("Price: 20,000,000 coins.", field_values["TOTW · 20,000,000 coins"])
+        self.assert_pack_menu_hides_card_pool(menu["embed"])
 
         view = menu["view"]
         gold_button = next(
@@ -2066,38 +2076,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pack_command_selects_and_purchases_both_pack_types(self) -> None:
         pack_cases = (
-            (
-                "GOLD",
-                GOLD_PACK_COST,
-                {
-                    "88 Apex (Gold)",
-                    "Dan",
-                    "XavierCapone9",
-                    "Gamer",
-                    "90 Hala (Gold)",
-                    "Dryboomrun",
-                    "Needy",
-                    "Fadi",
-                    "Mason",
-                    "Demox",
-                    "Cheddar",
-                    "Mr P",
-                    "Dark",
-                    "Road",
-                    "Ebs",
-                    "Cam",
-                    "90 Licha (Gold)",
-                    "84 Megan (Gold)",
-                    "89 Jaycob (Gold)",
-                    "82 Karuwrld (Gold)",
-                    "84 HHH (Gold)",
-                    "84 R4ze (Gold)",
-                },
-                "6.56%",
-            ),
-            ("TOTW", TOTW_PACK_COST, {"Licha", "Hala"}, "50.00%"),
+            ("GOLD", GOLD_PACK_COST, "Contains one random Gold player card."),
+            ("TOTW", TOTW_PACK_COST, "Contains one random TOTW player card."),
         )
-        for index, (rarity, cost, expected_names, odds) in enumerate(pack_cases):
+        for index, (rarity, cost, offer) in enumerate(pack_cases):
             with self.subTest(rarity=rarity):
                 user_id = f"single-pack-command-{rarity.lower()}"
                 self.database.set_balance(user_id, cost + 321)
@@ -2116,9 +2098,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 fields = {field.name: field.value for field in menu["embed"].fields}
                 pack_field = f"{rarity} · {cost:,} coins"
                 self.assertEqual(set(fields), {pack_field})
-                for name in expected_names:
-                    self.assertIn(name, fields[pack_field])
-                self.assertIn(odds, fields[pack_field])
+                self.assertIn(offer, fields[pack_field])
+                self.assertIn(f"Price: {cost:,} coins.", fields[pack_field])
+                self.assert_pack_menu_hides_card_pool(menu["embed"])
 
                 view = menu["view"]
                 self.assertEqual(len(view.children), 1)
@@ -2541,7 +2523,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "allowed": ("WING1", "WING2"),
                 "forbidden": ("GK", "CM1", "SUB1", "SUB2"),
                 "image": "cards/hhh_gold.png",
-                "value": 2_600_000,
+                "value": 450_000,
                 "stats": {"SHO": 89, "DRI": 85, "SAV": 77, "PAS": 84, "DEF": 78, "ACT": 82},
             },
             "Apex": {
@@ -2552,7 +2534,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "allowed": ("WING1", "WING2"),
                 "forbidden": ("GK", "CM1", "SUB1", "SUB2"),
                 "image": "cards/apex_gold.png",
-                "value": 2_600_000,
+                "value": 1_500_000,
                 "stats": {"SHO": 91, "DRI": 88, "SAV": 76, "PAS": 86, "DEF": 80, "ACT": 82},
             },
             "R4ze": {
@@ -2563,7 +2545,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "allowed": ("GK",),
                 "forbidden": ("WING1", "CM1", "SUB1", "SUB2"),
                 "image": "cards/r4ze_gold.png",
-                "value": 2_600_000,
+                "value": 430_000,
                 "stats": {"SAV": 87, "DIV": 85, "PAS": 81, "CLE": 83, "SWE": 80, "ACT": 84},
             },
         }
@@ -2633,8 +2615,12 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in packs_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
-        for details in expected.values():
-            self.assertIn(details["label"], gold_pack_text)
+        self.assertIn("Contains one random Gold player card.", gold_pack_text)
+        self.assert_pack_menu_hides_card_pool(packs_response.messages[0]["embed"])
+        for name in expected:
+            player = self.database.get_player(name)
+            self.assertIsNotNone(player)
+            self.assertIn(player, self.database.get_players(rarity="GOLD"))
 
         team_cog = TeamCommands(self.database)
         for index, (name, details) in enumerate(expected.items()):
