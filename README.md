@@ -38,8 +38,8 @@ Administrator-only commands:
 - `/grantcoins` grants coins.
 - `/grantcard` grants one or more card copies.
 
-The seeded catalog includes 13 GOLD cards, including Mr P, Dark, and Road, plus
-Licha and the original Hala card as TOTW. Card names display as
+The seeded catalog includes 16 GOLD cards, including Ebs, Cam, and Gold Licha,
+plus the existing Licha and Hala TOTW cards. Card names display as
 `<overall> <player> (<card type>)` throughout player-facing lists and details.
 If a catalog has no cards of a requested pack rarity, the pack command explains
 that none are available and does not charge.

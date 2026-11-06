@@ -115,6 +115,9 @@ class DatabaseTests(unittest.TestCase):
                 "Mr P",
                 "Dark",
                 "Road",
+                "Ebs",
+                "Cam",
+                "Licha (Gold 90)",
             },
         )
 
@@ -179,12 +182,86 @@ class DatabaseTests(unittest.TestCase):
                 )
                 self.assertIn(card, gold_cards)
 
+    def test_ebs_cam_and_gold_licha_seed_cards_have_exact_data(self) -> None:
+        expected = {
+            "Ebs": (
+                90,
+                "WI",
+                "Ireland",
+                "Ottawa Senators",
+                {"SHO": 93, "DRI": 90, "SAV": 74, "PAS": 88, "DEF": 85, "ACT": 83},
+                "cards/ebs_gold.png",
+            ),
+            "Cam": (
+                90,
+                "WI",
+                "USA",
+                "Ottawa Senators",
+                {"SHO": 93, "DRI": 90, "SAV": 76, "PAS": 88, "DEF": 83, "ACT": 78},
+                "cards/cam_gold.png",
+            ),
+            "Licha (Gold 90)": (
+                90,
+                "GK",
+                "England",
+                "Ottawa Senators",
+                {"SAV": 92, "DIV": 90, "PAS": 89, "CLE": 87, "SWE": 86, "ACT": 92},
+                "cards/licha_gold_90.png",
+            ),
+        }
+        gold_cards = self.database.get_players(rarity="GOLD")
+        for name, details in expected.items():
+            with self.subTest(card=name):
+                card = self.database.get_player(name)
+                self.assertIsNotNone(card)
+                assert card is not None
+                overall, position, country, team, stats, image_path = details
+                self.assertEqual(
+                    (
+                        card.overall,
+                        card.position,
+                        card.country,
+                        card.team,
+                        card.rarity,
+                        card.value,
+                        card.stats,
+                        card.image_path,
+                    ),
+                    (
+                        overall,
+                        position,
+                        country,
+                        team,
+                        "GOLD",
+                        2_600_000,
+                        stats,
+                        image_path,
+                    ),
+                )
+                self.assertIn(card, gold_cards)
+
+        original_licha = self.database.get_player("Licha")
+        self.assertIsNotNone(original_licha)
+        assert original_licha is not None
+        self.assertEqual(
+            (original_licha.overall, original_licha.rarity, original_licha.value, original_licha.image_path),
+            (93, "TOTW", 12_000_000, "cards/licha.webp"),
+        )
+
     def test_new_seed_cards_are_added_without_overwriting_existing_user_data(self) -> None:
         legacy_database = Database(Path(self.temp_dir.name) / "legacy.sqlite3")
         old_catalog = [
             record
             for record in load_player_seed()
-            if record["name"] not in {"Mr P", "Dark", "Road"}
+            if record["name"]
+            not in {
+                "Mr P",
+                "Dark",
+                "Road",
+                "Ebs",
+                "Cam",
+                "Licha (Gold 90)",
+            }
         ]
         legacy_database.initialize(old_catalog)
         original_players = {
@@ -196,7 +273,7 @@ class DatabaseTests(unittest.TestCase):
         legacy_database.initialize(load_player_seed())
         legacy_database.initialize(load_player_seed())
 
-        self.assertEqual(len(legacy_database.get_players()), len(original_players) + 3)
+        self.assertEqual(len(legacy_database.get_players()), len(original_players) + 6)
         self.assertTrue(
             all(
                 legacy_database.get_player(name).id == player_id
@@ -206,10 +283,17 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(legacy_database.get_balance("preserved-user"), 123_456)
         inventory = legacy_database.get_inventory("preserved-user")
         self.assertEqual([(entry.player.name, entry.quantity) for entry in inventory], [("Dan", 2)])
-        self.assertEqual(
-            len([player for player in legacy_database.get_players() if player.name == "Mr P"]),
-            1,
-        )
+        for name in ("Mr P", "Dark", "Road", "Ebs", "Cam", "Licha (Gold 90)"):
+            self.assertEqual(
+                len(
+                    [
+                        player
+                        for player in legacy_database.get_players()
+                        if player.name == name
+                    ]
+                ),
+                1,
+            )
 
     def test_each_new_gold_card_can_be_selected_from_a_gold_pack(self) -> None:
         class SelectNamedCard:
@@ -220,7 +304,9 @@ class DatabaseTests(unittest.TestCase):
                 del weights, k
                 return [next(card for card in population if card["name"] == self.name)]
 
-        for index, name in enumerate(("Mr P", "Dark", "Road")):
+        for index, name in enumerate(
+            ("Mr P", "Dark", "Road", "Ebs", "Cam", "Licha (Gold 90)")
+        ):
             with self.subTest(card=name):
                 user_id = f"gold-pack-card-{index}"
                 self.database.set_balance(user_id, GOLD_PACK_COST)

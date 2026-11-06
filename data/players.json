@@ -268,5 +268,59 @@
       "ACT": 85
     },
     "image_path": "cards/road_gold.png"
+  },
+  {
+    "name": "Ebs",
+    "overall": 90,
+    "position": "WI",
+    "country": "Ireland",
+    "team": "Ottawa Senators",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SHO": 93,
+      "DRI": 90,
+      "SAV": 74,
+      "PAS": 88,
+      "DEF": 85,
+      "ACT": 83
+    },
+    "image_path": "cards/ebs_gold.png"
+  },
+  {
+    "name": "Cam",
+    "overall": 90,
+    "position": "WI",
+    "country": "USA",
+    "team": "Ottawa Senators",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SHO": 93,
+      "DRI": 90,
+      "SAV": 76,
+      "PAS": 88,
+      "DEF": 83,
+      "ACT": 78
+    },
+    "image_path": "cards/cam_gold.png"
+  },
+  {
+    "name": "Licha (Gold 90)",
+    "overall": 90,
+    "position": "GK",
+    "country": "England",
+    "team": "Ottawa Senators",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SAV": 92,
+      "DIV": 90,
+      "PAS": 89,
+      "CLE": 87,
+      "SWE": 86,
+      "ACT": 92
+    },
+    "image_path": "cards/licha_gold_90.png"
   }
 ]
