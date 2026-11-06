@@ -13,6 +13,7 @@ COMMAND_MODULES = (
     "commands.admin",
     "commands.information",
     "commands.minigame",
+    "commands.match",
 )
 
 if len(COMMAND_MODULES) != len(set(COMMAND_MODULES)):

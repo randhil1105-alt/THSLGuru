@@ -15,6 +15,8 @@ CLAIM_COOLDOWN_SECONDS = 24 * 60 * 60
 GOLD_PACK_COST = 5_000_000
 TOTW_PACK_COST = 20_000_000
 MAX_PACK_QUANTITY = 10
+MATCH_REWARD = 5_000_000
+MATCH_INVITATION_SECONDS = 60
 SQLITE_INT_MAX = (1 << 63) - 1
 SUPPORTED_STATS = ("SHO", "DRI", "SAV", "PAS", "DEF", "ACT", "DIV", "CLE", "SWE")
 FORMATION_STARTERS = {
@@ -94,6 +96,33 @@ class InvalidAmount(EconomyError):
     pass
 
 
+class MatchError(EconomyError):
+    """Base class for expected match and invitation errors."""
+
+
+class MatchAlreadyActive(MatchError):
+    pass
+
+
+class MatchNotFound(MatchError):
+    pass
+
+
+class MatchNotPending(MatchError):
+    pass
+
+
+class MatchActionUnauthorized(MatchError):
+    pass
+
+class InvalidMatchParticipant(MatchError):
+    pass
+
+
+class InvalidMatchResult(MatchError):
+    pass
+
+
 class InvalidPlayer(EconomyError):
     pass
 
@@ -118,6 +147,17 @@ class FormationChange:
     formation: str
     moved: tuple[tuple[str, str, Player], ...] = ()
     unassigned: tuple[tuple[str, Player], ...] = ()
+
+
+@dataclass(frozen=True)
+class StartingLineup:
+    formation: str
+    starters: tuple[dict[str, Any], ...]
+    missing_slots: tuple[str, ...] = ()
+
+    @property
+    def valid(self) -> bool:
+        return not self.missing_slots
 
 
 @dataclass(frozen=True)
@@ -361,10 +401,44 @@ class Database:
                     PRIMARY KEY (user_id, notice)
                 );
 
+                CREATE TABLE IF NOT EXISTS matches (
+                    match_id TEXT PRIMARY KEY,
+                    challenger_id TEXT NOT NULL,
+                    opponent_id TEXT NOT NULL,
+                    challenger_name TEXT NOT NULL,
+                    opponent_name TEXT NOT NULL,
+                    guild_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    invite_message_id TEXT,
+                    status TEXT NOT NULL CHECK (
+                        status IN (
+                            'PENDING', 'ACTIVE', 'COMPLETED', 'DECLINED',
+                            'EXPIRED', 'CANCELLED'
+                        )
+                    ),
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    started_at REAL,
+                    finished_at REAL,
+                    lineups_json TEXT,
+                    result_json TEXT,
+                    winner_id TEXT,
+                    reward_amount INTEGER NOT NULL DEFAULT 0 CHECK (reward_amount >= 0),
+                    announced_at INTEGER,
+                    cancel_reason TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS active_match_users (
+                    user_id TEXT PRIMARY KEY,
+                    match_id TEXT NOT NULL REFERENCES matches(match_id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_players_rarity_name
                     ON players(rarity, name);
                 CREATE INDEX IF NOT EXISTS idx_users_balance
                     ON users(balance DESC);
+                CREATE INDEX IF NOT EXISTS idx_matches_status_expiry
+                    ON matches(status, expires_at);
                 """
             )
             player_columns = {
@@ -905,6 +979,73 @@ class Database:
         ]
 
     @staticmethod
+    def _starting_lineup_from_connection(
+        connection: sqlite3.Connection,
+        user_id: str,
+    ) -> StartingLineup:
+        formation_row = connection.execute(
+            "SELECT formation FROM team_settings_v2 WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        formation = (
+            str(formation_row["formation"]) if formation_row else DEFAULT_FORMATION
+        )
+        active_positions = FORMATION_STARTERS[formation]
+        placeholders = ", ".join("?" for _ in active_positions)
+        rows = connection.execute(
+            f"""
+            SELECT team_starters.position AS lineup_position, players.*
+            FROM team_starters
+            JOIN players ON players.id = team_starters.player_id
+            JOIN inventory
+                ON inventory.user_id = team_starters.user_id
+                AND inventory.player_id = team_starters.player_id
+            WHERE team_starters.user_id = ?
+                AND team_starters.position IN ({placeholders})
+                AND inventory.quantity > 0
+            """,
+            (user_id, *active_positions),
+        ).fetchall()
+
+        valid_by_position: dict[str, Player] = {}
+        for row in rows:
+            position = str(row["lineup_position"])
+            player = Database._player_from_row(row)
+            allowed_positions = player.allowed_lineup_positions
+            if (
+                position in active_positions
+                and card_position_role(player.position)
+                == POSITION_ROLE_BY_SLOT.get(position)
+                and (allowed_positions is None or position in allowed_positions)
+            ):
+                valid_by_position[position] = player
+
+        starters = tuple(
+            {
+                "slot": position,
+                "name": valid_by_position[position].name,
+                "overall": valid_by_position[position].overall,
+                "position": valid_by_position[position].position,
+            }
+            for position in active_positions
+            if position in valid_by_position
+        )
+        missing = tuple(
+            position for position in active_positions if position not in valid_by_position
+        )
+        return StartingLineup(
+            formation=formation,
+            starters=starters,
+            missing_slots=missing,
+        )
+
+    def get_starting_lineup(self, user_id: str | int) -> StartingLineup:
+        """Return a validated snapshot of only the current formation's starters."""
+        normalized_id = self._validate_user_id(user_id)
+        with self._read_connection() as connection:
+            return self._starting_lineup_from_connection(connection, normalized_id)
+
+    @staticmethod
     def _validate_lineup_position(position: str) -> str:
         normalized = str(position).strip().upper()
         normalized = {
@@ -967,6 +1108,620 @@ class Database:
             ):
                 result[position] = player
         return result
+
+    @staticmethod
+    def _match_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        record = dict(row)
+        record["lineups"] = (
+            json.loads(record.pop("lineups_json"))
+            if record.get("lineups_json") is not None
+            else None
+        )
+        record["result"] = (
+            json.loads(record.pop("result_json"))
+            if record.get("result_json") is not None
+            else None
+        )
+        return record
+
+    @staticmethod
+    def _release_match_reservations(
+        connection: sqlite3.Connection,
+        match_id: str,
+    ) -> None:
+        connection.execute(
+            "DELETE FROM active_match_users WHERE match_id = ?",
+            (match_id,),
+        )
+
+    def create_match_invitation(
+        self,
+        match_id: str,
+        challenger_id: str | int,
+        opponent_id: str | int,
+        challenger_name: str,
+        opponent_name: str,
+        guild_id: str | int,
+        channel_id: str | int,
+        *,
+        now: int | float | None = None,
+        expires_at: int | float | None = None,
+    ) -> dict[str, Any]:
+        """Reserve both participants and persist a single-use match invitation."""
+        challenger = self._validate_user_id(challenger_id)
+        opponent = self._validate_user_id(opponent_id)
+        if challenger == opponent:
+            raise InvalidMatchParticipant("You cannot challenge yourself.")
+
+        normalized_match_id = str(match_id).strip()
+        if not normalized_match_id or len(normalized_match_id) > 100:
+            raise ValueError("A valid match ID is required.")
+        current_time = float(time.time() if now is None else now)
+        expiration = (
+            current_time + MATCH_INVITATION_SECONDS
+            if expires_at is None
+            else float(expires_at)
+        )
+        if expiration <= current_time:
+            raise ValueError("The invitation expiration must be in the future.")
+
+        with self._transaction() as connection:
+            for participant_id in (challenger, opponent):
+                expired_rows = connection.execute(
+                    """
+                    SELECT matches.match_id
+                    FROM matches
+                    JOIN active_match_users
+                        ON active_match_users.match_id = matches.match_id
+                    WHERE active_match_users.user_id = ?
+                        AND matches.status = 'PENDING'
+                        AND matches.expires_at <= ?
+                    """,
+                    (participant_id, current_time),
+                ).fetchall()
+                for expired_row in expired_rows:
+                    expired_id = str(expired_row["match_id"])
+                    connection.execute(
+                        """
+                        UPDATE matches
+                        SET status = 'EXPIRED', finished_at = ?
+                        WHERE match_id = ? AND status = 'PENDING'
+                        """,
+                        (current_time, expired_id),
+                    )
+                    self._release_match_reservations(connection, expired_id)
+
+            active = connection.execute(
+                """
+                SELECT user_id FROM active_match_users
+                WHERE user_id IN (?, ?)
+                """,
+                (challenger, opponent),
+            ).fetchall()
+            if active:
+                active_ids = ", ".join(str(row["user_id"]) for row in active)
+                raise MatchAlreadyActive(
+                    f"At least one participant already has a pending invitation "
+                    f"or active match ({active_ids})."
+                )
+
+            connection.execute(
+                """
+                INSERT INTO matches(
+                    match_id, challenger_id, opponent_id,
+                    challenger_name, opponent_name, guild_id, channel_id,
+                    status, created_at, expires_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                """,
+                (
+                    normalized_match_id,
+                    challenger,
+                    opponent,
+                    str(challenger_name).strip()[:100] or challenger,
+                    str(opponent_name).strip()[:100] or opponent,
+                    self._validate_user_id(guild_id),
+                    self._validate_user_id(channel_id),
+                    current_time,
+                    expiration,
+                ),
+            )
+            connection.executemany(
+                "INSERT INTO active_match_users(user_id, match_id) VALUES (?, ?)",
+                ((challenger, normalized_match_id), (opponent, normalized_match_id)),
+            )
+            row = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (normalized_match_id,),
+            ).fetchone()
+        result = self._match_from_row(row)
+        assert result is not None
+        return result
+
+    def set_match_invitation_message(
+        self,
+        match_id: str,
+        message_id: str | int,
+        *,
+        now: int | float | None = None,
+    ) -> bool:
+        sent_at = float(time.time() if now is None else now)
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT status FROM matches WHERE match_id = ?
+                """,
+                (str(match_id),),
+            ).fetchone()
+            if row is None or str(row["status"]) not in {"PENDING", "ACTIVE"}:
+                return False
+            if str(row["status"]) == "ACTIVE":
+                connection.execute(
+                    "UPDATE matches SET invite_message_id = ? WHERE match_id = ?",
+                    (self._validate_user_id(message_id), str(match_id)),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE matches
+                    SET invite_message_id = ?, created_at = ?, expires_at = ?
+                    WHERE match_id = ? AND status = 'PENDING'
+                    """,
+                    (
+                        self._validate_user_id(message_id),
+                        sent_at,
+                        sent_at + MATCH_INVITATION_SECONDS,
+                        str(match_id),
+                    ),
+                )
+            return True
+
+    def get_match(self, match_id: str) -> dict[str, Any] | None:
+        with self._read_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (str(match_id),),
+            ).fetchone()
+        return self._match_from_row(row)
+
+    def get_pending_match_invitations(self) -> list[dict[str, Any]]:
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM matches
+                WHERE status = 'PENDING'
+                ORDER BY created_at, match_id
+                """
+            ).fetchall()
+        return [self._match_from_row(row) for row in rows if row is not None]
+
+    def get_active_match_for_user(
+        self,
+        user_id: str | int,
+    ) -> dict[str, Any] | None:
+        normalized_id = self._validate_user_id(user_id)
+        with self._read_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT matches.*
+                FROM active_match_users
+                JOIN matches ON matches.match_id = active_match_users.match_id
+                WHERE active_match_users.user_id = ?
+                """,
+                (normalized_id,),
+            ).fetchone()
+        return self._match_from_row(row)
+
+    def accept_match_invitation(
+        self,
+        match_id: str,
+        accepter_id: str | int,
+        *,
+        now: int | float | None = None,
+    ) -> dict[str, Any]:
+        """Atomically accept an invitation and snapshot both valid lineups."""
+        normalized_id = self._validate_user_id(accepter_id)
+        current_time = float(time.time() if now is None else now)
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (str(match_id),),
+            ).fetchone()
+            if row is None:
+                raise MatchNotFound("This match invitation no longer exists.")
+            if str(row["opponent_id"]) != normalized_id:
+                raise MatchActionUnauthorized(
+                    "Only the challenged player can accept this match."
+                )
+            if str(row["status"]) != "PENDING":
+                raise MatchNotPending("This invitation is no longer pending.")
+
+            if float(row["expires_at"]) <= current_time:
+                connection.execute(
+                    """
+                    UPDATE matches SET status = 'EXPIRED', finished_at = ?
+                    WHERE match_id = ? AND status = 'PENDING'
+                    """,
+                    (current_time, str(match_id)),
+                )
+                self._release_match_reservations(connection, str(match_id))
+                expired = connection.execute(
+                    "SELECT * FROM matches WHERE match_id = ?",
+                    (str(match_id),),
+                ).fetchone()
+                result = self._match_from_row(expired)
+                assert result is not None
+                return result
+
+            lineups_by_user: dict[str, dict[str, Any]] = {}
+            lineup_errors: list[str] = []
+            participants = (
+                (str(row["challenger_id"]), str(row["challenger_name"])),
+                (str(row["opponent_id"]), str(row["opponent_name"])),
+            )
+            for participant_id, participant_name in participants:
+                lineup = self._starting_lineup_from_connection(
+                    connection,
+                    participant_id,
+                )
+                lineups_by_user[participant_id] = {
+                    "formation": lineup.formation,
+                    "starters": list(lineup.starters),
+                    "missing_slots": list(lineup.missing_slots),
+                }
+                if not lineup.valid:
+                    lineup_errors.append(
+                        f"{participant_name} is missing valid starter slot(s): "
+                        f"{', '.join(lineup.missing_slots)}"
+                    )
+
+            lineups_json = json.dumps(lineups_by_user, separators=(",", ":"))
+            if lineup_errors:
+                reason = "Invalid starting lineup. " + "; ".join(lineup_errors) + "."
+                connection.execute(
+                    """
+                    UPDATE matches
+                    SET status = 'CANCELLED', finished_at = ?,
+                        lineups_json = ?, cancel_reason = ?
+                    WHERE match_id = ? AND status = 'PENDING'
+                    """,
+                    (current_time, lineups_json, reason, str(match_id)),
+                )
+                self._release_match_reservations(connection, str(match_id))
+            else:
+                connection.execute(
+                    """
+                    UPDATE matches
+                    SET status = 'ACTIVE', started_at = ?, lineups_json = ?
+                    WHERE match_id = ? AND status = 'PENDING'
+                    """,
+                    (current_time, lineups_json, str(match_id)),
+                )
+
+            updated = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (str(match_id),),
+            ).fetchone()
+        result = self._match_from_row(updated)
+        assert result is not None
+        return result
+
+    def decline_match_invitation(
+        self,
+        match_id: str,
+        decliner_id: str | int,
+        *,
+        now: int | float | None = None,
+    ) -> dict[str, Any]:
+        normalized_id = self._validate_user_id(decliner_id)
+        current_time = float(time.time() if now is None else now)
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (str(match_id),),
+            ).fetchone()
+            if row is None:
+                raise MatchNotFound("This match invitation no longer exists.")
+            if str(row["opponent_id"]) != normalized_id:
+                raise MatchActionUnauthorized(
+                    "Only the challenged player can decline this match."
+                )
+            if str(row["status"]) != "PENDING":
+                raise MatchNotPending("This invitation is no longer pending.")
+
+            if float(row["expires_at"]) <= current_time:
+                status = "EXPIRED"
+            else:
+                status = "DECLINED"
+            connection.execute(
+                """
+                UPDATE matches SET status = ?, finished_at = ?
+                WHERE match_id = ? AND status = 'PENDING'
+                """,
+                (status, current_time, str(match_id)),
+            )
+            self._release_match_reservations(connection, str(match_id))
+            updated = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (str(match_id),),
+            ).fetchone()
+        result = self._match_from_row(updated)
+        assert result is not None
+        return result
+
+    def expire_match_invitation(
+        self,
+        match_id: str,
+        *,
+        now: int | float | None = None,
+    ) -> dict[str, Any] | None:
+        current_time = float(time.time() if now is None else now)
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM matches
+                WHERE match_id = ? AND status = 'PENDING' AND expires_at <= ?
+                """,
+                (str(match_id), current_time),
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                """
+                UPDATE matches SET status = 'EXPIRED', finished_at = ?
+                WHERE match_id = ? AND status = 'PENDING'
+                """,
+                (current_time, str(match_id)),
+            )
+            self._release_match_reservations(connection, str(match_id))
+            updated = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (str(match_id),),
+            ).fetchone()
+        return self._match_from_row(updated)
+
+    def cancel_match(
+        self,
+        match_id: str,
+        reason: str,
+        *,
+        now: int | float | None = None,
+    ) -> dict[str, Any] | None:
+        current_time = float(time.time() if now is None else now)
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM matches
+                WHERE match_id = ? AND status IN ('PENDING', 'ACTIVE')
+                """,
+                (str(match_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                """
+                UPDATE matches SET status = 'CANCELLED', finished_at = ?,
+                    cancel_reason = ?
+                WHERE match_id = ? AND status IN ('PENDING', 'ACTIVE')
+                """,
+                (current_time, str(reason)[:1000], str(match_id)),
+            )
+            self._release_match_reservations(connection, str(match_id))
+            updated = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (str(match_id),),
+            ).fetchone()
+        return self._match_from_row(updated)
+
+    def cancel_match_for_user(
+        self,
+        user_id: str | int,
+        reason: str,
+        *,
+        guild_id: str | int | None = None,
+        now: int | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            if guild_id is None:
+                row = connection.execute(
+                    """
+                    SELECT matches.* FROM active_match_users
+                    JOIN matches ON matches.match_id = active_match_users.match_id
+                    WHERE active_match_users.user_id = ?
+                    """,
+                    (normalized_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    SELECT matches.* FROM active_match_users
+                    JOIN matches ON matches.match_id = active_match_users.match_id
+                    WHERE active_match_users.user_id = ? AND matches.guild_id = ?
+                    """,
+                    (normalized_id, self._validate_user_id(guild_id)),
+                ).fetchone()
+            if row is None:
+                return None
+            match_id = str(row["match_id"])
+            connection.execute(
+                """
+                UPDATE matches SET status = 'CANCELLED', finished_at = ?,
+                    cancel_reason = ?
+                WHERE match_id = ? AND status IN ('PENDING', 'ACTIVE')
+                """,
+                (current_time, str(reason)[:1000], match_id),
+            )
+            self._release_match_reservations(connection, match_id)
+            updated = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (match_id,),
+            ).fetchone()
+        return self._match_from_row(updated)
+
+    def cancel_interrupted_matches(
+        self,
+        reason: str = "The bot restarted before this match completed.",
+        *,
+        now: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Cancel in-progress games after a process restart; never award coins."""
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM matches
+                WHERE status = 'ACTIVE'
+                    OR (status = 'PENDING' AND invite_message_id IS NULL)
+                ORDER BY created_at, match_id
+                """
+            ).fetchall()
+            match_ids = [str(row["match_id"]) for row in rows]
+            for match_id in match_ids:
+                connection.execute(
+                    """
+                    UPDATE matches SET status = 'CANCELLED', finished_at = ?,
+                        cancel_reason = ?
+                    WHERE match_id = ? AND status IN ('PENDING', 'ACTIVE')
+                    """,
+                    (current_time, str(reason)[:1000], match_id),
+                )
+                self._release_match_reservations(connection, match_id)
+            updated_rows = [
+                connection.execute(
+                    "SELECT * FROM matches WHERE match_id = ?",
+                    (match_id,),
+                ).fetchone()
+                for match_id in match_ids
+            ]
+        return [
+            self._match_from_row(row)
+            for row in updated_rows
+            if row is not None
+        ]
+
+    def complete_match(
+        self,
+        match_id: str,
+        winner_id: str | int,
+        result: Mapping[str, Any],
+        *,
+        now: int | None = None,
+    ) -> bool:
+        """Award the fixed prize and persist the result exactly once."""
+        normalized_winner = self._validate_user_id(winner_id)
+        current_time = int(time.time() if now is None else now)
+        serialized_result = json.dumps(result, separators=(",", ":"))
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM matches WHERE match_id = ?",
+                (str(match_id),),
+            ).fetchone()
+            if row is None:
+                raise MatchNotFound("This match no longer exists.")
+            if str(row["status"]) == "COMPLETED":
+                return False
+            if str(row["status"]) != "ACTIVE":
+                return False
+            if normalized_winner not in {
+                str(row["challenger_id"]),
+                str(row["opponent_id"]),
+            }:
+                raise InvalidMatchParticipant(
+                    "The winner must be one of the match participants."
+                )
+            try:
+                home_score = int(result["home_score"])
+                away_score = int(result["away_score"])
+                result_winner = str(result["winner_id"])
+                goals = result["goals"]
+            except (KeyError, TypeError, ValueError) as exc:
+                raise InvalidMatchResult(
+                    "A completed match needs a score, goals, and winner."
+                ) from exc
+            if (
+                home_score < 0
+                or away_score < 0
+                or home_score == away_score
+                or not isinstance(goals, list)
+                or not goals
+            ):
+                raise InvalidMatchResult(
+                    "A completed match must include at least one goal and a winner."
+                )
+            expected_winner = (
+                str(row["challenger_id"])
+                if home_score > away_score
+                else str(row["opponent_id"])
+            )
+            if normalized_winner != expected_winner or result_winner != expected_winner:
+                raise InvalidMatchResult(
+                    "The recorded winner must match the final score."
+                )
+
+            self._ensure_user(connection, normalized_winner)
+            balance_row = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (normalized_winner,),
+            ).fetchone()
+            balance = int(balance_row["balance"])
+            if balance + MATCH_REWARD > SQLITE_INT_MAX:
+                raise InvalidAmount(
+                    "The winner's balance cannot accept the match reward."
+                )
+            connection.execute(
+                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                (MATCH_REWARD, normalized_winner),
+            )
+            connection.execute(
+                """
+                UPDATE matches
+                SET status = 'COMPLETED', winner_id = ?, reward_amount = ?,
+                    finished_at = ?, result_json = ?, announced_at = NULL
+                WHERE match_id = ? AND status = 'ACTIVE'
+                """,
+                (
+                    normalized_winner,
+                    MATCH_REWARD,
+                    current_time,
+                    serialized_result,
+                    str(match_id),
+                ),
+            )
+            self._release_match_reservations(connection, str(match_id))
+            return True
+
+    def get_unannounced_match_results(self) -> list[dict[str, Any]]:
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM matches
+                WHERE status = 'COMPLETED' AND announced_at IS NULL
+                ORDER BY finished_at, match_id
+                """
+            ).fetchall()
+        return [self._match_from_row(row) for row in rows if row is not None]
+
+    def mark_match_result_announced(
+        self,
+        match_id: str,
+        *,
+        now: int | None = None,
+    ) -> bool:
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE matches SET announced_at = ?
+                WHERE match_id = ? AND status = 'COMPLETED'
+                    AND announced_at IS NULL
+                """,
+                (current_time, str(match_id)),
+            )
+            return cursor.rowcount == 1
 
     def get_lineup_migration_notices(self, user_id: str | int) -> list[str]:
         normalized_id = self._validate_user_id(user_id)

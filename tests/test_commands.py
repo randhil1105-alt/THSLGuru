@@ -77,6 +77,7 @@ EXPECTED_COMMANDS = {
     "grantcoins",
     "grantcard",
     "minigame",
+    "match",
 }
 
 
@@ -240,6 +241,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("`/pack pack_type`", help_text)
         self.assertIn("`/packs quantity`", help_text)
+        self.assertIn("`/match opponent`", help_text)
         self.assertIn("`/claim` · Claim a GOLD player card every 24 hours", help_text)
         self.assertNotIn("Claim 5,000 coins", help_text)
         self.assertNotIn("/goldpack", help_text)

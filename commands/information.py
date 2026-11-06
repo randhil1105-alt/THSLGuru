@@ -23,6 +23,7 @@ class InformationCommands(discord_commands.Cog):
                 "`/inventory` · View cards you own\n"
                 "`/collection` · Browse the catalog\n"
                 "`/minigame` · Play a private-answer guessing game\n"
+                "`/match opponent` · Challenge another player to a 45-second match\n"
                 "`/team` · View three starters, two substitutes, and team value\n"
                 "`/set position player` · Assign an owned card to a compatible slot\n"
                 "`/formation formation` · Choose Balanced, Offensive, or Defensive"
