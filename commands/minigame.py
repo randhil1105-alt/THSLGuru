@@ -7,6 +7,7 @@ import io
 import logging
 import random
 import re
+import uuid
 from collections.abc import Callable
 
 import discord
@@ -19,7 +20,16 @@ from commands.common import (
     player_embed,
     resolve_card_image,
 )
-from database import Database, Player, format_card_type
+from commands.draft import DraftSessionView
+from database import (
+    DRAFT_COOLDOWN_SECONDS,
+    Database,
+    DraftAlreadyActive,
+    DraftCooldownActive,
+    Player,
+    format_card_type,
+)
+from draft_simulation import InsufficientDraftCatalog, generate_draft_groups
 
 LOGGER = logging.getLogger("thsl_guru.minigame")
 
@@ -283,6 +293,7 @@ class MinigameCommands(discord_commands.Cog):
         self.duration_seconds = float(duration_seconds)
         self._active_games: dict[tuple[int, str], IndividualMinigameView] = {}
         self._active_games_by_owner: dict[int, IndividualMinigameView] = {}
+        self._active_drafts_by_owner: dict[int, DraftSessionView] = {}
 
     def _register_game(self, game: IndividualMinigameView) -> None:
         game.on_finished = self._remove_game
@@ -294,19 +305,110 @@ class MinigameCommands(discord_commands.Cog):
         if self._active_games_by_owner.get(game.owner_id) is game:
             self._active_games_by_owner.pop(game.owner_id, None)
 
+    def _remove_draft(self, game: DraftSessionView) -> None:
+        if self._active_drafts_by_owner.get(game.owner_id) is game:
+            self._active_drafts_by_owner.pop(game.owner_id, None)
+
+    async def _start_draft(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or interaction.channel is None:
+            await interaction.response.send_message(
+                "Draft can only be played in a server channel.",
+                ephemeral=True,
+            )
+            return
+
+        owner_id = int(interaction.user.id)
+        active_draft = self._active_drafts_by_owner.get(owner_id)
+        if active_draft is not None and not active_draft.finished:
+            await interaction.response.send_message(
+                "You already have a Draft in progress.",
+                ephemeral=True,
+            )
+            return
+        if active_draft is not None:
+            self._remove_draft(active_draft)
+
+        catalog = self.database.get_players()
+        try:
+            groups = generate_draft_groups(catalog)
+        except InsufficientDraftCatalog as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+
+        game_id = uuid.uuid4().hex
+        try:
+            self.database.start_draft_session(owner_id, game_id)
+        except DraftAlreadyActive:
+            await interaction.response.send_message(
+                "You already have a Draft in progress.",
+                ephemeral=True,
+            )
+            return
+        except DraftCooldownActive as exc:
+            minutes, seconds = divmod(exc.remaining_seconds, 60)
+            await interaction.response.send_message(
+                f"You can start another Draft in {minutes}:{seconds:02d}.",
+                ephemeral=True,
+            )
+            return
+
+        view = DraftSessionView(
+            self.database,
+            owner_id=owner_id,
+            username=str(
+                getattr(interaction.user, "name", None)
+                or getattr(interaction.user, "display_name", "Player")
+            ),
+            game_id=game_id,
+            groups=groups,
+            catalog=catalog,
+            on_finished=self._remove_draft,
+        )
+        self._active_drafts_by_owner[owner_id] = view
+        embeds, files = view._option_embeds_and_files()
+        try:
+            await interaction.response.send_message(
+                embeds=embeds,
+                files=files,
+                view=view,
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            view.message = await interaction.original_response()
+        except Exception:
+            self.database.cancel_draft_session(game_id, owner_id)
+            self._remove_draft(view)
+            view.stop()
+            LOGGER.exception("Could not send Draft prompt %s.", game_id)
+            raise
+
     @app_commands.command(
         name="minigame",
-        description="Guess a hockey player from four clues.",
+        description="Play Guess Who or draft a four-player team.",
     )
     @app_commands.describe(
+        mode="Choose Guess Who or Draft",
         answer="Enter your one guess for a game you started.",
+    )
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="Guess Who", value="guess"),
+            app_commands.Choice(name="Draft", value="draft"),
+        ],
     )
     async def minigame(
         self,
         interaction: discord.Interaction,
+        mode: app_commands.Choice[str] | None = None,
         answer: str | None = None,
     ) -> None:
         if answer is not None:
+            if mode is not None and mode.value != "guess":
+                await interaction.response.send_message(
+                    "Submit an answer with Guess Who, or start Draft without an answer.",
+                    ephemeral=True,
+                )
+                return
             game = self._active_games_by_owner.get(int(interaction.user.id))
             if game is None or game.finished:
                 await interaction.response.send_message(
@@ -315,6 +417,10 @@ class MinigameCommands(discord_commands.Cog):
                 )
                 return
             await game.submit_answer(interaction, answer)
+            return
+
+        if mode is not None and mode.value == "draft":
+            await self._start_draft(interaction)
             return
 
         if interaction.guild is None or interaction.channel is None:

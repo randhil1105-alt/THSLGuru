@@ -17,6 +17,8 @@ TOTW_PACK_COST = 20_000_000
 MAX_PACK_QUANTITY = 10
 MATCH_REWARD = 5_000_000
 MATCH_INVITATION_SECONDS = 60
+DRAFT_COOLDOWN_SECONDS = 10 * 60
+DRAFT_WIN_REWARD = 200_000
 SQLITE_INT_MAX = (1 << 63) - 1
 SUPPORTED_STATS = ("SHO", "DRI", "SAV", "PAS", "DEF", "ACT", "DIV", "CLE", "SWE")
 FORMATION_STARTERS = {
@@ -93,6 +95,22 @@ class NoEligibleCards(EconomyError):
 
 
 class InvalidAmount(EconomyError):
+    pass
+
+
+class DraftCooldownActive(CooldownActive):
+    """Raised when a player tries to start a Draft before their cooldown ends."""
+
+
+class DraftAlreadyActive(EconomyError):
+    pass
+
+
+class DraftSessionNotFound(EconomyError):
+    pass
+
+
+class DraftSessionUnauthorized(EconomyError):
     pass
 
 
@@ -433,12 +451,32 @@ class Database:
                     match_id TEXT NOT NULL REFERENCES matches(match_id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS draft_cooldowns (
+                    user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+                    last_started_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS draft_sessions (
+                    game_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    status TEXT NOT NULL CHECK (
+                        status IN ('ACTIVE', 'COMPLETED', 'CANCELLED')
+                    ),
+                    started_at INTEGER NOT NULL,
+                    finished_at INTEGER,
+                    won INTEGER CHECK (won IN (0, 1)),
+                    reward_amount INTEGER NOT NULL DEFAULT 0 CHECK (reward_amount >= 0),
+                    result_json TEXT
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_players_rarity_name
                     ON players(rarity, name);
                 CREATE INDEX IF NOT EXISTS idx_users_balance
                     ON users(balance DESC);
                 CREATE INDEX IF NOT EXISTS idx_matches_status_expiry
                     ON matches(status, expires_at);
+                CREATE INDEX IF NOT EXISTS idx_draft_sessions_user_status
+                    ON draft_sessions(user_id, status);
                 """
             )
             player_columns = {
@@ -836,6 +874,161 @@ class Database:
                 (amount, normalized_id),
             )
             return current + amount
+
+    def start_draft_session(
+        self,
+        user_id: str | int,
+        game_id: str,
+        *,
+        now: int | None = None,
+    ) -> None:
+        """Reserve a Draft and persist its per-user cooldown atomically."""
+        normalized_id = self._validate_user_id(user_id)
+        normalized_game_id = str(game_id).strip()
+        if not normalized_game_id or len(normalized_game_id) > 100:
+            raise InvalidAmount("A valid Draft session ID is required.")
+        current_time = int(time.time() if now is None else now)
+
+        with self._transaction() as connection:
+            self._ensure_user(connection, normalized_id)
+            active = connection.execute(
+                """
+                SELECT game_id, started_at FROM draft_sessions
+                WHERE user_id = ? AND status = 'ACTIVE'
+                ORDER BY started_at DESC
+                LIMIT 1
+                """,
+                (normalized_id,),
+            ).fetchone()
+            if active is not None:
+                if current_time < int(active["started_at"]) + DRAFT_COOLDOWN_SECONDS:
+                    raise DraftAlreadyActive("You already have a Draft in progress.")
+                connection.execute(
+                    """
+                    UPDATE draft_sessions
+                    SET status = 'CANCELLED', finished_at = ?
+                    WHERE game_id = ? AND status = 'ACTIVE'
+                    """,
+                    (current_time, str(active["game_id"])),
+                )
+
+            cooldown = connection.execute(
+                "SELECT last_started_at FROM draft_cooldowns WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            if cooldown is not None:
+                remaining = (
+                    int(cooldown["last_started_at"])
+                    + DRAFT_COOLDOWN_SECONDS
+                    - current_time
+                )
+                if remaining > 0:
+                    raise DraftCooldownActive(remaining)
+
+            connection.execute(
+                """
+                INSERT INTO draft_sessions(game_id, user_id, status, started_at)
+                VALUES (?, ?, 'ACTIVE', ?)
+                """,
+                (normalized_game_id, normalized_id, current_time),
+            )
+            connection.execute(
+                """
+                INSERT INTO draft_cooldowns(user_id, last_started_at)
+                VALUES (?, ?)
+                ON CONFLICT(user_id)
+                DO UPDATE SET last_started_at = excluded.last_started_at
+                """,
+                (normalized_id, current_time),
+            )
+
+    def finish_draft_session(
+        self,
+        game_id: str,
+        user_id: str | int,
+        *,
+        won: bool,
+        result: Mapping[str, Any],
+        now: int | None = None,
+    ) -> tuple[bool, int]:
+        """Persist a Draft result and award a win once in one transaction."""
+        normalized_id = self._validate_user_id(user_id)
+        if not isinstance(won, bool) or not isinstance(result, Mapping):
+            raise InvalidAmount("A valid Draft result is required.")
+        try:
+            serialized_result = json.dumps(result, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            raise InvalidAmount("The Draft result could not be saved.") from exc
+        normalized_game_id = str(game_id)
+        current_time = int(time.time() if now is None else now)
+
+        with self._transaction() as connection:
+            session = connection.execute(
+                "SELECT user_id, status FROM draft_sessions WHERE game_id = ?",
+                (normalized_game_id,),
+            ).fetchone()
+            if session is None:
+                raise DraftSessionNotFound("This Draft session no longer exists.")
+            if str(session["user_id"]) != normalized_id:
+                raise DraftSessionUnauthorized(
+                    "Only the player who started this Draft can finish it."
+                )
+
+            self._ensure_user(connection, normalized_id)
+            balance_row = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            current_balance = int(balance_row["balance"])
+            if str(session["status"]) != "ACTIVE":
+                return False, current_balance
+
+            reward = DRAFT_WIN_REWARD if won else 0
+            if current_balance + reward > SQLITE_INT_MAX:
+                raise InvalidAmount("Your balance cannot accept the Draft reward.")
+            if reward:
+                connection.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                    (reward, normalized_id),
+                )
+            connection.execute(
+                """
+                UPDATE draft_sessions
+                SET status = 'COMPLETED', finished_at = ?, won = ?,
+                    reward_amount = ?, result_json = ?
+                WHERE game_id = ? AND user_id = ? AND status = 'ACTIVE'
+                """,
+                (
+                    current_time,
+                    int(won),
+                    reward,
+                    serialized_result,
+                    normalized_game_id,
+                    normalized_id,
+                ),
+            )
+            return True, current_balance + reward
+
+    def cancel_draft_session(
+        self,
+        game_id: str,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> bool:
+        """Cancel an unfinished Draft without changing the player's balance."""
+        normalized_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE draft_sessions
+                SET status = 'CANCELLED', finished_at = ?
+                WHERE game_id = ? AND user_id = ? AND status = 'ACTIVE'
+                """,
+                (current_time, str(game_id), normalized_id),
+            )
+            return cursor.rowcount == 1
 
     def get_leaderboard(self, limit: int = 10) -> list[tuple[str, int]]:
         if not 1 <= int(limit) <= 100:

@@ -11,7 +11,7 @@ persistent SQLite database.
 | `/card player` | Choose a catalog card using autocomplete and view its full image |
 | `/cards` | Browse the full player card catalog |
 | `/claim` | Claim a weighted GOLD player card once every 24 hours |
-| `/minigame` | Guess a player's nationality, rating, position, and card type for coins |
+| `/minigame mode` | Choose Guess Who or Draft |
 | `/balance` | Check your balance |
 | `/leaderboard` | Show the ten largest balances |
 | `/inventory` | Show cards you own |
@@ -65,11 +65,16 @@ commands on startup. To sync immediately to a development server, set the
 non-secret `DISCORD_GUILD_ID` environment variable to that server's ID. Remove
 it to use global command sync.
 
-The public `/minigame` command starts an individual 60-second game with an
-owner-only **Answer** button. Guess submissions are private; a correct answer
-awards exactly 500,000 coins through SQLite and publicly reveals the player's
-card. Message Content Intent is not needed because guesses arrive through the
-interaction modal rather than channel messages.
+`/minigame mode:Guess Who` starts the existing individual 180-second guessing
+game with an owner-only **Answer** button. Guess submissions are private; a
+correct answer awards exactly 500,000 coins through SQLite and publicly reveals
+the player's card. `/minigame mode:Draft` starts a private player draft: choose one card from
+each of the GK, CM, and two WI groups, then play a randomized match against a
+four-player AI squad. Higher squad averages improve (but do not guarantee) the
+chance of winning. A win awards 200,000 coins; losses award nothing. Each user
+has a separate, persistent 10-minute Draft cooldown. Draft choices and results
+show original card artwork when it is available. Message Content Intent is not
+needed because Guess Who answers arrive through the interaction modal.
 
 ## SQLite persistence
 
