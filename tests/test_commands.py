@@ -20,7 +20,12 @@ from commands.common import (
     resolve_card_image,
 )
 from commands.inventory import InventoryCommands
-from commands.lineup_image import OUTPUT_FILENAME, build_lineup_svg
+from commands.lineup_image import (
+    OUTPUT_FILENAME,
+    STARTER_SLOT_LAYOUTS,
+    SUBSTITUTE_SLOT_LAYOUTS,
+    build_lineup_svg,
+)
 from commands.minigame import (
     MINIGAME_DURATION_SECONDS,
     MINIGAME_REWARD,
@@ -34,18 +39,18 @@ from commands.team import TeamCommands
 from commands.information import InformationCommands
 from database import (
     Database,
+    FORMATION_STARTERS,
     GOLD_PACK_COST,
     InventoryEntry,
     LINEUP_POSITIONS,
+    SUBSTITUTE_POSITIONS,
     TOTW_PACK_COST,
     format_card_type,
 )
 from main import create_bot, load_player_seed
 
 EXPECTED_COMMANDS = {
-    "player",
     "card",
-    "players",
     "cards",
     "claim",
     "balance",
@@ -118,6 +123,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         names_before = [command.name for command in self.bot.tree.get_commands()]
         self.assertEqual(set(names_before), EXPECTED_COMMANDS)
         self.assertEqual(len(names_before), len(set(names_before)))
+        self.assertNotIn("player", names_before)
+        self.assertNotIn("players", names_before)
         self.assertNotIn("goldpack", names_before)
         self.assertNotIn("totwpack", names_before)
 
@@ -214,9 +221,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Claim 5,000 coins", help_text)
         self.assertNotIn("/goldpack", help_text)
         self.assertNotIn("/totwpack", help_text)
+        self.assertNotIn("/player", help_text)
+        self.assertNotIn("/players", help_text)
 
     async def test_catalog_alias_commands_display_card_types(self) -> None:
-        for command_name in ("players", "cards"):
+        for command_name in ("cards",):
             response = FakeResponse()
             await getattr(InventoryCommands, command_name).callback(
                 InventoryCommands(self.database),
@@ -457,7 +466,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     name[:3],
                 )
                 self.assertEqual([choice.value for choice in choices], [name])
-                for command_name in ("player", "card"):
+                for command_name in ("card",):
                     response = FakeResponse()
                     await getattr(PlayerCommands, command_name).callback(
                         player_cog,
@@ -507,7 +516,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f"84 {name} (Gold)", pack_text)
 
         team_cog = TeamCommands(self.database)
-        for name, position in (("Mason", "LW"), ("Demox", "RW")):
+        self.database.set_formation(inventory_user, "Offensive")
+        for name, position in (("Mason", "WING1"), ("Demox", "WING2")):
             await TeamCommands.set_position.callback(
                 team_cog,
                 SimpleNamespace(user=SimpleNamespace(id=inventory_user), response=FakeResponse()),
@@ -520,10 +530,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.set_position.callback(
             team_cog,
             SimpleNamespace(user=SimpleNamespace(id=cheddar_user), response=FakeResponse()),
-            discord.app_commands.Choice(name="LW", value="LW"),
+            discord.app_commands.Choice(name="WING1", value="WING1"),
             "Cheddar",
         )
-        self.assertEqual(self.database.get_lineup(cheddar_user)["LW"].name, "Cheddar")
+        self.assertEqual(self.database.get_lineup(cheddar_user)["WING1"].name, "Cheddar")
 
         team_interaction = SimpleNamespace(
             user=SimpleNamespace(id=inventory_user, display_name="New Cards"),
@@ -535,8 +545,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in team_interaction.followup.messages[0]["embed"].fields
         }
-        self.assertIn("84 Mason (Gold)", team_fields["LW · Left Wing"])
-        self.assertIn("84 Demox (Gold)", team_fields["RW · Right Wing"])
+        self.assertIn("Mason — 84 OVR (GOLD)", team_fields["WING1 · Wing 1"])
+        self.assertIn("Demox — 84 OVR (GOLD)", team_fields["WING2 · Wing 2"])
         team_file = team_interaction.followup.messages[0]["file"]
         self.assertTrue(team_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         team_file.close()
@@ -551,7 +561,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in cheddar_interaction.followup.messages[0]["embed"].fields
         }
-        self.assertIn("84 Cheddar (Gold)", cheddar_fields["LW · Left Wing"])
+        self.assertIn("Cheddar — 84 OVR (GOLD)", cheddar_fields["WING1 · Wing 1"])
         cheddar_interaction.followup.messages[0]["file"].close()
 
     async def test_card_command_autocompletes_partial_names_and_shows_full_card(self) -> None:
@@ -652,11 +662,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.set_position.callback(
             team_cog,
             SimpleNamespace(user=SimpleNamespace(id=user_id), response=set_response),
-            discord.app_commands.Choice(name="C · Center", value="C"),
+            discord.app_commands.Choice(name="CM 1", value="CM1"),
             "Fadi",
         )
         self.assertIn(
-            "Assigned **86 Fadi (Gold)** to **C**",
+            "Assigned **Fadi — 86 OVR (GOLD)** to **CM1**",
             set_response.messages[0]["content"],
         )
         team_interaction = SimpleNamespace(
@@ -669,7 +679,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         team_fields = {
             field.name: field.value for field in team_message["embed"].fields
         }
-        self.assertIn("86 Fadi (Gold)", team_fields["C · Center"])
+        self.assertIn("Fadi — 86 OVR (GOLD)", team_fields["CM1 · CM 1"])
         self.assertTrue(
             team_message["file"].fp.read().startswith(b"\x89PNG\r\n\x1a\n")
         )
@@ -774,7 +784,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(card, self.database.get_players(rarity="GOLD"))
         label = "87 Dryboomrun (Gold)"
 
-        for command_name in ("card", "player"):
+        for command_name in ("card",):
             response = FakeResponse()
             await getattr(PlayerCommands, command_name).callback(
                 PlayerCommands(self.database),
@@ -840,7 +850,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         }["GOLD · 5,000,000 coins"]
         self.assertIn(label, gold_field)
 
-        self.assertIn("C", LINEUP_POSITIONS)
+        self.assertIn("CM1", LINEUP_POSITIONS)
         set_command = {
             command.name: command for command in self.bot.tree.get_commands()
         }["set"]
@@ -848,19 +858,22 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             parameter for parameter in set_command.parameters
             if parameter.name == "position"
         )
-        self.assertIn("C", [choice.value for choice in position_parameter.choices])
+        self.assertIn("CM1", [choice.value for choice in position_parameter.choices])
 
         team_cog = TeamCommands(self.database)
         assign_response = FakeResponse()
         await TeamCommands.set_position.callback(
             team_cog,
             SimpleNamespace(user=SimpleNamespace(id=user_id), response=assign_response),
-            discord.app_commands.Choice(name="C · Center", value="C"),
+            discord.app_commands.Choice(name="CM 1", value="CM1"),
             "Dryboomrun",
         )
-        self.assertIn(label, assign_response.messages[0]["content"])
+        self.assertIn(
+            "Dryboomrun — 87 OVR (GOLD)",
+            assign_response.messages[0]["content"],
+        )
         lineup = self.database.get_lineup(user_id)
-        self.assertEqual(lineup["C"].name, "Dryboomrun")
+        self.assertEqual(lineup["CM1"].name, "Dryboomrun")
         duplicate_response = FakeResponse()
         await TeamCommands.set_position.callback(
             team_cog,
@@ -870,7 +883,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn(label, duplicate_response.messages[0]["content"])
         svg = build_lineup_svg(lineup, "Balanced", "87 OVR average")
-        self.assertIn(label, svg)
+        self.assertIn("Dryboomrun", svg)
+        self.assertIn("87 OVR · GOLD", svg)
         self.assertIn("data:image/png;base64,", svg)
         team_interaction = SimpleNamespace(
             user=SimpleNamespace(id=user_id, display_name="Dryboomrun"),
@@ -880,7 +894,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         fields = {field.name: field.value for field in team_message["embed"].fields}
-        self.assertIn(label, fields["C · Center"])
+        self.assertIn("Dryboomrun — 87 OVR (GOLD)", fields["CM1 · CM 1"])
         team_image = team_message["file"]
         self.assertTrue(team_image.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         team_image.close()
@@ -919,7 +933,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
         self.assertIn(card, self.database.get_players(rarity="GOLD"))
 
-        for command_name in ("player", "card"):
+        for command_name in ("card",):
             response = FakeResponse()
             await getattr(PlayerCommands, command_name).callback(
                 PlayerCommands(self.database),
@@ -958,7 +972,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(label, grant_response.messages[0]["content"])
 
         inventory_cog = InventoryCommands(self.database)
-        for command_name in ("inventory", "collection", "players", "cards"):
+        for command_name in ("inventory", "collection", "cards"):
             response = FakeResponse()
             await getattr(InventoryCommands, command_name).callback(
                 inventory_cog,
@@ -986,10 +1000,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.set_position.callback(
             team_cog,
             SimpleNamespace(user=SimpleNamespace(id=user_id), response=set_response),
-            discord.app_commands.Choice(name="RW", value="RW"),
+            discord.app_commands.Choice(name="CM1", value="CM1"),
             "Needy",
         )
-        self.assertIn(label, set_response.messages[0]["content"])
+        self.assertIn("Needy — 85 OVR (GOLD)", set_response.messages[0]["content"])
 
         team_interaction = SimpleNamespace(
             user=SimpleNamespace(id=user_id, display_name="Needy"),
@@ -999,7 +1013,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         fields = {field.name: field.value for field in team_message["embed"].fields}
-        self.assertIn(label, fields["RW · Right Wing"])
+        self.assertIn("Needy — 85 OVR (GOLD)", fields["CM1 · CM 1"])
         team_file = team_message["file"]
         self.assertTrue(team_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         team_file.close()
@@ -1066,7 +1080,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
 
         player_cog = PlayerCommands(self.database)
-        for command_name in ("card", "player"):
+        for command_name in ("card",):
             response = FakeResponse()
             await getattr(PlayerCommands, command_name).callback(
                 player_cog,
@@ -1111,7 +1125,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("×1", response.messages[0]["embed"].description)
 
         team_cog = TeamCommands(self.database)
-        for position in ("LW", "RW"):
+        self.database.set_formation(user_id, "Offensive")
+        for position in ("WING1", "WING2"):
             response = FakeResponse()
             await TeamCommands.set_position.callback(
                 team_cog,
@@ -1120,11 +1135,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "Gamer",
             )
             self.assertEqual(self.database.get_lineup(user_id)[position].name, "Gamer")
-            if position == "LW":
+            if position == "WING1":
                 await TeamCommands.set_position.callback(
                     team_cog,
                     SimpleNamespace(user=SimpleNamespace(id=user_id), response=FakeResponse()),
-                    discord.app_commands.Choice(name="LW", value="LW"),
+                    discord.app_commands.Choice(name="WING1", value="WING1"),
                     "CLEAR",
                 )
 
@@ -1136,16 +1151,16 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         self.assertIn(
-            "89 Gamer (Gold)",
+            "Gamer — 89 OVR (GOLD)",
             {field.name: field.value for field in team_message["embed"].fields}[
-                "RW · Right Wing"
+                "WING2 · Wing 2"
             ],
         )
         lineup_file = team_message["file"]
         lineup_bytes = lineup_file.fp.read()
         lineup_file.close()
         self.assertTrue(lineup_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1810))
+        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1640))
 
     async def test_hala_gold_card_is_catalogued_grantable_and_lineup_ready(self) -> None:
         player = self.database.get_player("Hala (Gold 90)")
@@ -1173,7 +1188,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(image_path.name, "hala.png")
         self.assertTrue(image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
 
-        for command_name in ("card", "player"):
+        for command_name in ("card",):
             response = FakeResponse()
             await getattr(PlayerCommands, command_name).callback(
                 PlayerCommands(self.database),
@@ -1224,7 +1239,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(response.messages[0]["ephemeral"])
 
         team_cog = TeamCommands(self.database)
-        for position in ("LW", "RW"):
+        self.database.set_formation(user_id, "Offensive")
+        for position in ("WING1", "WING2"):
             await TeamCommands.set_position.callback(
                 team_cog,
                 SimpleNamespace(user=SimpleNamespace(id=user_id), response=FakeResponse()),
@@ -1235,14 +1251,14 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 self.database.get_lineup(user_id)[position].name,
                 "Hala (Gold 90)",
             )
-            if position == "LW":
+            if position == "WING1":
                 await TeamCommands.set_position.callback(
                     team_cog,
                     SimpleNamespace(
                         user=SimpleNamespace(id=user_id),
                         response=FakeResponse(),
                     ),
-                    discord.app_commands.Choice(name="LW", value="LW"),
+                    discord.app_commands.Choice(name="WING1", value="WING1"),
                     "CLEAR",
                 )
 
@@ -1254,16 +1270,16 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         self.assertIn(
-            "90 Hala (Gold)",
+            "Hala — 90 OVR (GOLD)",
             {field.name: field.value for field in team_message["embed"].fields}[
-                "RW · Right Wing"
+                "WING2 · Wing 2"
             ],
         )
         lineup_file = team_message["file"]
         lineup_bytes = lineup_file.fp.read()
         lineup_file.close()
         self.assertTrue(lineup_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1810))
+        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1640))
 
     async def test_xavier_card_is_lookup_grant_inventory_and_team_ready(self) -> None:
         player = self.database.get_player("XavierCapone9")
@@ -1299,7 +1315,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(image_path.name, "xaviercapone9.png")
 
         player_cog = PlayerCommands(self.database)
-        for command_name in ("card", "player"):
+        for command_name in ("card",):
             response = FakeResponse()
             interaction = SimpleNamespace(response=response)
             command = getattr(PlayerCommands, command_name)
@@ -1357,7 +1373,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("×1", response.messages[0]["embed"].description)
 
         team_cog = TeamCommands(self.database)
-        for position in ("LW", "RW"):
+        self.database.set_formation(user_id, "Offensive")
+        for position in ("WING1", "WING2"):
             response = FakeResponse()
             await TeamCommands.set_position.callback(
                 team_cog,
@@ -1369,18 +1386,18 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "XavierCapone9",
             )
             self.assertIn(
-                "Assigned **91 XavierCapone9 (Gold)**",
+                "Assigned **XavierCapone9 — 91 OVR (GOLD)**",
                 response.messages[0]["content"],
             )
             self.assertEqual(self.database.get_lineup(user_id)[position].name, "XavierCapone9")
-            if position == "LW":
+            if position == "WING1":
                 await TeamCommands.set_position.callback(
                     team_cog,
                     SimpleNamespace(
                         user=SimpleNamespace(id=user_id),
                         response=FakeResponse(),
                     ),
-                    discord.app_commands.Choice(name="LW", value="LW"),
+                    discord.app_commands.Choice(name="WING1", value="WING1"),
                     "CLEAR",
                 )
 
@@ -1392,16 +1409,16 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         self.assertIn(
-            "91 XavierCapone9 (Gold)",
+            "XavierCapone9 — 91 OVR (GOLD)",
             {field.name: field.value for field in team_message["embed"].fields}[
-                "RW · Right Wing"
+                "WING2 · Wing 2"
             ],
         )
         lineup_file = team_message["file"]
         lineup_bytes = lineup_file.fp.read()
         lineup_file.close()
         self.assertTrue(lineup_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1810))
+        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1640))
 
     async def test_lineup_rink_svg_uses_ice_and_hockey_markings(self) -> None:
         svg = build_lineup_svg({}, "Balanced", "Not rated yet")
@@ -1410,14 +1427,20 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('stop-color="#e5edf2"', svg)
         self.assertIn('stroke="#d52b3e"', svg)
         self.assertEqual(svg.count('stroke="#2867a6"'), 2)
-        self.assertIn('x1="800" y1="165" x2="800" y2="795"', svg)
-        self.assertIn('cx="800" cy="480" r="112"', svg)
-        self.assertEqual(svg.count('r="68" fill="none"'), 4)
-        self.assertIn('cx="360" cy="330" r="68"', svg)
-        self.assertIn('cx="1240" cy="630" r="68"', svg)
-        self.assertIn('x1="152" y1="165" x2="152" y2="795"', svg)
+        self.assertIn('x1="800" y1="165" x2="800" y2="1025"', svg)
+        self.assertIn('cx="800" cy="575" r="112"', svg)
+        self.assertEqual(svg.count('r="68" fill="none"'), 6)
+        self.assertIn('cx="360" cy="380" r="68"', svg)
+        self.assertIn('cx="1240" cy="740" r="68"', svg)
+        self.assertIn('x1="152" y1="165" x2="152" y2="1025"', svg)
         self.assertIn('fill-opacity="0.12" stroke="#d52b3e"', svg)
-        self.assertIn('width="1484" height="670" rx="90"', svg)
+        self.assertIn('width="1484" height="900" rx="90"', svg)
+        self.assertIn(">THSL STARTING LINEUP<", svg)
+        self.assertIn('fill="#fff" stroke="#d52b3e"', svg)
+        for position in FORMATION_STARTERS["Balanced"]:
+            layout = STARTER_SLOT_LAYOUTS[position]
+            self.assertGreaterEqual(layout.y, 163)
+            self.assertLessEqual(layout.y + layout.height, 1027)
 
     async def test_packs_menu_shows_odds_and_confirms_once(self) -> None:
         user_id = "packs-menu-user"
@@ -1641,33 +1664,92 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(poor_response.messages[0]["ephemeral"])
 
+    async def test_set_autocomplete_selects_owned_hala_versions_by_exact_id(self) -> None:
+        user_id = "hala-set-user"
+        gold_hala = self.database.get_player("Hala (Gold 90)")
+        totw_hala = self.database.get_player("Hala")
+        assert gold_hala is not None and totw_hala is not None
+        self.database.add_inventory(user_id, gold_hala.name)
+        self.database.add_inventory(user_id, totw_hala.name)
+        cog = TeamCommands(self.database)
+
+        choices = await TeamCommands.set_player_autocomplete(
+            cog,
+            SimpleNamespace(user=SimpleNamespace(id=user_id)),
+            "Hala",
+        )
+        self.assertEqual(
+            [(choice.name, choice.value) for choice in choices],
+            [
+                ("Hala — 90 OVR (GOLD)", str(gold_hala.id)),
+                ("Hala — 93 OVR (TOTW)", str(totw_hala.id)),
+            ],
+        )
+
+        for position, card in (("WING1", gold_hala), ("CM1", totw_hala)):
+            response = FakeResponse()
+            await TeamCommands.set_position.callback(
+                cog,
+                SimpleNamespace(user=SimpleNamespace(id=user_id), response=response),
+                discord.app_commands.Choice(name=position, value=position),
+                str(card.id),
+            )
+            self.assertIn("Assigned", response.messages[0]["content"])
+        lineup = self.database.get_lineup(user_id)
+        self.assertEqual(lineup["WING1"].id, gold_hala.id)
+        self.assertEqual(lineup["WING1"].rarity, "GOLD")
+        self.assertEqual(lineup["CM1"].id, totw_hala.id)
+        self.assertEqual(lineup["CM1"].rarity, "TOTW")
+
+        not_owned_response = FakeResponse()
+        await TeamCommands.set_position.callback(
+            cog,
+            SimpleNamespace(user=SimpleNamespace(id="other-user"), response=not_owned_response),
+            discord.app_commands.Choice(name="CM 1", value="CM1"),
+            str(totw_hala.id),
+        )
+        self.assertTrue(not_owned_response.messages[0]["ephemeral"])
+        self.assertIn("must own", not_owned_response.messages[0]["content"])
+
+        invalid_response = FakeResponse()
+        await TeamCommands.set_position.callback(
+            cog,
+            SimpleNamespace(user=SimpleNamespace(id=user_id), response=invalid_response),
+            discord.app_commands.Choice(name="GK", value="GK"),
+            str(gold_hala.id),
+        )
+        self.assertTrue(invalid_response.messages[0]["ephemeral"])
+        self.assertIn("Only GK cards", invalid_response.messages[0]["content"])
+
+        duplicate_response = FakeResponse()
+        await TeamCommands.set_position.callback(
+            cog,
+            SimpleNamespace(user=SimpleNamespace(id=user_id), response=duplicate_response),
+            discord.app_commands.Choice(name="SUB1", value="SUB1"),
+            str(gold_hala.id),
+        )
+        self.assertIn("already assigned", duplicate_response.messages[0]["content"])
+
     async def test_set_formation_and_team_commands_work_together(self) -> None:
         user_id = "team-command-user"
-        for name, overall in (("Bench One", 81), ("Bench Two", 79)):
-            self.database.add_player(
-                {
-                    "name": name,
-                    "overall": overall,
-                    "position": "C",
-                    "country": "Canada",
-                    "team": "Test Team",
-                    "rarity": "TOTW",
-                    "value": 1,
-                    "stats": {},
-                    "image_path": None,
-                }
-            )
-        all_players = ("Dan", "Fadi", "Hala", "Licha", "Bench One", "Bench Two")
+        all_players = (
+            "XavierCapone9",
+            "Gamer",
+            "Dan",
+            "Fadi",
+            "Licha",
+            "Dryboomrun",
+            "Needy",
+        )
         for name in all_players:
             self.database.add_inventory(user_id, name)
         cog = TeamCommands(self.database)
         assignments = (
-            ("LW", "Dan"),
-            ("C", "Fadi"),
-            ("RW", "Hala"),
+            ("WING1", "XavierCapone9"),
+            ("CM1", "Dan"),
             ("GK", "Licha"),
-            ("SUB1", "Bench One"),
-            ("SUB2", "Bench Two"),
+            ("SUB1", "Dryboomrun"),
+            ("SUB2", "Needy"),
         )
         for position, player in assignments:
             interaction = SimpleNamespace(
@@ -1682,24 +1764,40 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertIn("Assigned", interaction.response.messages[0]["content"])
 
-        lineup_svg = build_lineup_svg(
-            self.database.get_lineup(user_id),
-            "Defensive",
-            "90 OVR",
-        )
-        self.assertEqual(lineup_svg.count("<image href="), 4)
-        for player_name in all_players:
-            self.assertIn(player_name, lineup_svg)
-
-        formation_interaction = SimpleNamespace(
-            user=SimpleNamespace(id=user_id),
-            response=FakeResponse(),
-        )
+        offensive_response = FakeResponse()
         await TeamCommands.formation.callback(
             cog,
-            formation_interaction,
+            SimpleNamespace(user=SimpleNamespace(id=user_id), response=offensive_response),
+            discord.app_commands.Choice(name="Offensive", value="Offensive"),
+        )
+        self.assertIn("(2 Wings · 1 GK)", offensive_response.messages[0]["content"])
+        self.assertIn("Dan", offensive_response.messages[0]["content"])
+        self.assertNotIn("Dan", self.database.get_lineup(user_id))
+
+        await TeamCommands.set_position.callback(
+            cog,
+            SimpleNamespace(user=SimpleNamespace(id=user_id), response=FakeResponse()),
+            discord.app_commands.Choice(name="Wing 2", value="WING2"),
+            "Gamer",
+        )
+        defensive_response = FakeResponse()
+        await TeamCommands.formation.callback(
+            cog,
+            SimpleNamespace(user=SimpleNamespace(id=user_id), response=defensive_response),
             discord.app_commands.Choice(name="Defensive", value="Defensive"),
         )
+        self.assertIn("2 CMs · 1 GK", defensive_response.messages[0]["content"])
+        self.assertIn("XavierCapone9", defensive_response.messages[0]["content"])
+        self.assertIn("Gamer", defensive_response.messages[0]["content"])
+        self.assertIn("were not moved to another role", defensive_response.messages[0]["content"])
+
+        for position, player in (("CM1", "Dan"), ("CM2", "Fadi")):
+            await TeamCommands.set_position.callback(
+                cog,
+                SimpleNamespace(user=SimpleNamespace(id=user_id), response=FakeResponse()),
+                discord.app_commands.Choice(name=position, value=position),
+                player,
+            )
         self.assertEqual(self.database.get_formation(user_id), "Defensive")
 
         team_interaction = SimpleNamespace(
@@ -1712,11 +1810,12 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         team_message = team_interaction.followup.messages[0]
         embed = team_message["embed"]
         fields = {field.name: field.value for field in embed.fields}
-        self.assertIn("90 OVR", fields["Starting lineup OVR"])
+        self.assertIn("89 OVR", fields["Starting lineup OVR"])
         self.assertIn("Defensive", fields["Formation"])
+        self.assertEqual(fields["Team value"], "**15,680,000 coins** · 3 starters and up to 2 substitutes")
         self.assertEqual(
             {name.split(" · ", 1)[0] for name in fields if " · " in name},
-            set(LINEUP_POSITIONS),
+            set(FORMATION_STARTERS["Defensive"] + SUBSTITUTE_POSITIONS),
         )
         self.assertEqual(embed.image.url, f"attachment://{OUTPUT_FILENAME}")
         attachment = team_message["file"]
@@ -1724,42 +1823,46 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         image_bytes = attachment.fp.read()
         attachment.close()
         self.assertTrue(image_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertEqual(struct.unpack(">II", image_bytes[16:24]), (1600, 1810))
+        self.assertEqual(struct.unpack(">II", image_bytes[16:24]), (1600, 1640))
+        svg = build_lineup_svg(self.database.get_lineup(user_id), "Defensive", "89 OVR")
+        self.assertEqual(svg.count("<image href="), 5)
+        for position in FORMATION_STARTERS["Defensive"]:
+            layout = STARTER_SLOT_LAYOUTS[position]
+            self.assertGreaterEqual(layout.x, 76)
+            self.assertGreaterEqual(layout.y, 163)
+            self.assertLessEqual(layout.x + layout.width, 1524)
+            self.assertLessEqual(layout.y + layout.height, 1027)
+        for layout in SUBSTITUTE_SLOT_LAYOUTS:
+            self.assertGreater(layout.y, 1045)
 
     async def test_team_image_renders_empty_starting_substitute_and_mixed_lineups(self) -> None:
-        for name, overall, image_path in (
-            ("Bench One", 81, None),
-            ("Bench Two", 79, None),
-            ("Missing Art", 75, "cards/not-present.png"),
-        ):
-            self.database.add_player(
-                {
-                    "name": name,
-                    "overall": overall,
-                    "position": "C",
-                    "country": "Canada",
-                    "team": "Test Team",
-                    "rarity": "TOTW",
-                    "value": 1,
-                    "stats": {},
-                    "image_path": image_path,
-                }
-            )
+        self.database.add_player(
+            {
+                "name": "Missing Art",
+                "overall": 75,
+                "position": "G",
+                "country": "Canada",
+                "team": "Test Team",
+                "rarity": "TOTW",
+                "value": 1,
+                "stats": {},
+                "image_path": "cards/not-present.png",
+            }
+        )
 
         assignments_by_case = {
             "empty": (),
             "starting": (
-                ("LW", "Dan"),
-                ("C", "Fadi"),
-                ("RW", "Hala"),
+                ("WING1", "XavierCapone9"),
+                ("CM1", "Fadi"),
                 ("GK", "Licha"),
             ),
-            "substitutes": (("SUB1", "Bench One"), ("SUB2", "Bench Two")),
+            "substitutes": (("SUB1", "Dryboomrun"), ("SUB2", "Needy")),
             "mixed": (
-                ("LW", "Dan"),
-                ("C", "Fadi"),
+                ("WING1", "XavierCapone9"),
+                ("CM1", "Fadi"),
                 ("GK", "Missing Art"),
-                ("SUB2", "Bench Two"),
+                ("SUB2", "Needy"),
             ),
         }
         image_outputs: dict[str, bytes] = {}
@@ -1778,7 +1881,6 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     followup=FakeFollowup(),
                 )
                 await TeamCommands.team.callback(cog, interaction)
-
                 self.assertTrue(interaction.response.deferred)
                 message = interaction.followup.messages[0]
                 attachment = message["file"]
@@ -1786,20 +1888,18 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 image_bytes = attachment.fp.read()
                 attachment.close()
                 self.assertTrue(image_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-                self.assertEqual(struct.unpack(">II", image_bytes[16:24]), (1600, 1810))
+                self.assertEqual(struct.unpack(">II", image_bytes[16:24]), (1600, 1640))
                 image_outputs[case_name] = image_bytes
 
                 fields = {field.name: field.value for field in message["embed"].fields}
-                self.assertIn("LW · Left Wing", fields)
-                self.assertIn("SUB1 · Substitute 1", fields)
-                self.assertIn("SUB2 · Substitute 2", fields)
+                for position in FORMATION_STARTERS["Balanced"] + SUBSTITUTE_POSITIONS:
+                    self.assertIn(position + " · ", " ".join(fields))
                 for position, player_name in assignments:
-                    player = self.database.get_player(player_name)
-                    assert player is not None
-                    self.assertIn(player_card_label(player), fields[f"{position} · " + {
-                        "LW": "Left Wing",
-                        "C": "Center",
-                        "RW": "Right Wing",
+                    self.assertIn(player_name, fields[f"{position} · " + {
+                        "WING1": "Wing 1",
+                        "WING2": "Wing 2",
+                        "CM1": "CM 1",
+                        "CM2": "CM 2",
                         "GK": "Goalie",
                         "SUB1": "Substitute 1",
                         "SUB2": "Substitute 2",
@@ -1807,10 +1907,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(set(image_outputs.values())), len(assignments_by_case))
         empty_svg = build_lineup_svg({}, "Balanced", "Not rated yet")
-        for position in LINEUP_POSITIONS:
+        self.assertEqual(empty_svg.count('id="slot-'), 5)
+        for position in FORMATION_STARTERS["Balanced"] + SUBSTITUTE_POSITIONS:
             slot_start = empty_svg.index(f'id="slot-{position.lower()}"')
             slot_end = empty_svg.index("</g>", slot_start)
-            self.assertIn('fill="none" stroke="#edf7f5"', empty_svg[slot_start:slot_end])
+            self.assertIn('fill="none" stroke="#8b9ba3"', empty_svg[slot_start:slot_end])
 
     async def test_team_renderer_handles_missing_card_art_without_failing(self) -> None:
         self.database.add_player(
@@ -1834,7 +1935,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Balanced",
             "75 OVR average",
         )
-        self.assertIn("IMAGE UNAVAILABLE", svg)
+        self.assertIn("NO ART", svg)
 
         interaction = SimpleNamespace(
             user=SimpleNamespace(id=user_id, display_name="Missing Art User"),

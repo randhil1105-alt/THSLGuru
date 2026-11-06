@@ -20,6 +20,7 @@ from database import (
     InvalidFormation,
     InvalidLineupPosition,
     PlayerNotFound,
+    Player,
     player_card_label,
 )
 from commands.common import format_coins
@@ -44,6 +45,13 @@ FORMATION_STYLES = {
     "Offensive": "2 Wings · 1 GK",
     "Defensive": "2 CMs · 1 GK",
 }
+
+
+def lineup_card_label(player: Player) -> str:
+    """Show a catalog card's display name with its exact OVR and rarity."""
+    label = player_card_label(player)
+    display_name = label.split(" ", 1)[1].rsplit(" (", 1)[0]
+    return f"{display_name} — {player.overall} OVR ({player.rarity.upper()})"
 
 
 class TeamCommands(discord_commands.Cog):
@@ -107,8 +115,7 @@ class TeamCommands(discord_commands.Cog):
                 value = "Empty"
             else:
                 value = (
-                    f"**{player.name} — {player.overall} OVR "
-                    f"({player.rarity.upper()})**"
+                    f"**{lineup_card_label(player)}**"
                     f"\nCard position: {player.position}"
                     f"\nValue: {format_coins(player.value)}"
                 )
@@ -200,8 +207,7 @@ class TeamCommands(discord_commands.Cog):
             return
 
         await interaction.response.send_message(
-            f"Assigned **{assigned.name} — {assigned.overall} OVR "
-            f"({assigned.rarity.upper()})** to **{position.value}** "
+            f"Assigned **{lineup_card_label(assigned)}** to **{position.value}** "
             f"({POSITION_LABELS[position.value]}).",
             ephemeral=True,
         )
@@ -220,10 +226,7 @@ class TeamCommands(discord_commands.Cog):
             )
         for entry in self.database.get_inventory(interaction.user.id):
             player = entry.player
-            label = (
-                f"{player.name} — {player.overall} OVR "
-                f"({player.rarity.upper()})"
-            )
+            label = lineup_card_label(player)
             if entry.quantity > 1:
                 label += f" ×{entry.quantity}"
             if query and query not in label.casefold():
@@ -261,7 +264,8 @@ class TeamCommands(discord_commands.Cog):
 
         active_positions = FORMATION_STARTERS[change.formation]
         message = (
-            f"Saved **{change.formation}**: "
+            f"Saved **{change.formation}** ({FORMATION_STYLES[change.formation]}). "
+            "Active starter slots: "
             f"{' · '.join(POSITION_LABELS[position] for position in active_positions)}."
         )
         if change.moved:

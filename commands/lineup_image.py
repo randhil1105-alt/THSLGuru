@@ -35,7 +35,7 @@ STARTER_SLOT_LAYOUTS = {
     "WING2": SlotLayout("WING2", "WING 2", 500, 835, 285, 170, "#b23a48"),
     "CM1": SlotLayout("CM1", "CM 1", 500, 835, 285, 170, "#b23a48"),
     "CM2": SlotLayout("CM2", "CM 2", 500, 835, 285, 170, "#b23a48"),
-    "GK": SlotLayout("GK", "GOALIE", 815, 835, 285, 170, "#2867a6"),
+    "GK": SlotLayout("GK", "GOALIE", 815, 835, 285, 170, "#b23a48"),
 }
 
 SUBSTITUTE_SLOT_LAYOUTS = (

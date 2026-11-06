@@ -3,14 +3,13 @@ name: Team rink lineup layout
 description: Rationale for keeping the full hockey rink visible beside lineup card art.
 ---
 
-Keep rink markings in a clear area and place all lineup card panels below the
-rink. Large panels over the ice obscured the center and end-zone face-off
-circles, goal creases, and goal lines.
+Place the three starting player-card panels inside the rink and the two
+substitute panels below it. Keep the center line and circle, face-off circles
+and dots, goal lines and creases, and blue lines visible.
 
-**Why:** The requested `/team` image must visibly read as a real hockey rink
-while also showing the original player-card artwork.
+**Why:** The user wants three starters inside the rink while keeping hockey
+markings visible, and substitutes in a separate area below the ice.
 
-**How to apply:** If changing the image dimensions or slot positions, keep the
-center line and circle, face-off circles and dots, goal lines and creases, and
-blue lines unobstructed while fitting every starting and substitute card panel
-below the rink.
+**How to apply:** When changing the `/team` image dimensions or slot positions,
+fit exactly three starter panels within the rink boundaries without obscuring
+markings; keep both substitute panels below the rink.

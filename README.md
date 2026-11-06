@@ -8,9 +8,7 @@ persistent SQLite database.
 
 | Command | Purpose |
 | --- | --- |
-| `/player name` | Look up a player's card |
 | `/card player` | Choose a catalog card using autocomplete and view its full image |
-| `/players` | Browse the full player catalog |
 | `/cards` | Browse the full player card catalog |
 | `/claim` | Claim a weighted GOLD player card once every 24 hours |
 | `/minigame` | Guess a player's nationality, rating, and position for coins |
@@ -21,9 +19,9 @@ persistent SQLite database.
 | `/pack pack_type` | Choose a GOLD or TOTW pack, then confirm purchase |
 | `/packs` | View weighted card odds, rating bands, prices, and purchase buttons |
 | `/sell player quantity` | Sell owned copies at the card's listed value |
-| `/team` | View your rink lineup image, substitutes, formation, and rating |
-| `/set position player` | Assign an owned card to a starter or substitute slot |
-| `/formation formation` | Choose Balanced, Attack, or Defensive |
+| `/team` | View your three starters, two substitutes, team value, and rink image |
+| `/set position player` | Choose an owned card version for a compatible slot |
+| `/formation formation` | Choose Balanced, Offensive, or Defensive |
 | `/help` | Show the command guide |
 | `/botinfo` | Show bot and catalog information |
 
@@ -85,34 +83,32 @@ rarities. Pack selection queries only the requested rarity and awards one card.
 Purchase interactions are recorded idempotently so a retried confirmation
 cannot charge twice. Lineups, formations, and pack receipts use additive
 `CREATE TABLE IF NOT EXISTS` migrations; existing player, balance, inventory,
-and starting-lineup rows are not reset. Center and substitute assignments use
-additional tables so the existing starter table does not need to be rebuilt.
+and legacy lineup rows are not reset. The new starter and formation tables are
+populated from compatible legacy assignments while preserving original records.
 
 ## Lineups and formations
 
-Each team has four starting slots—`LW` (Left Wing), `C` (Center), `RW` (Right Wing),
-and `GK` (Goalie)—plus two substitute slots, `SUB1` and `SUB2`. For example,
-`/set position:LW player:Dan` assigns a starter and
-`/set position:SUB1 player:Dan` assigns a substitute. Use `player:CLEAR` to
-empty a slot. A card must be in the user's inventory and cannot be assigned to
-more than one of the six slots.
+Every team displays exactly three starting positions and two substitute
+positions. The starting positions depend on the selected formation:
 
-`/formation formation:Attack` saves the user's tactical style independently
-from the four starting player assignments:
+- **Balanced** — one Wing, one CM, and one GK.
+- **Offensive** — two Wings and one GK.
+- **Defensive** — two CMs and one GK.
 
-- **Balanced** — equal emphasis on offense and defense.
-- **Attack** — offense-first style, emphasizing the wing positions.
-- **Defensive** — defense-first style, emphasizing protection of the goal.
+Use `/set` to choose from cards currently in your inventory. Each autocomplete
+choice displays the card's name, OVR, and rarity, and selects that exact card
+record. Only GK cards can fill GK slots, only CM cards can fill CM slots, and
+only Wing cards can fill Wing slots. Cards cannot occupy multiple slots.
+`SUB1` and `SUB2` accept any owned card; use `player:CLEAR` to empty a slot.
+Changing formation keeps cards in compatible slots, may move a card only to an
+empty slot of the same role, and explains any cards that no longer fit.
 
-`/team` generates a dark-background hockey-rink lineup image with light ice,
-red center and goal markings, blue lines, face-off circles and dots, rounded
-boards, the original card images for assigned players, and outlined circles for
-empty positions. It sends that PNG as a Discord attachment and also includes
-the formation and starting-lineup rating in the embed. The rating uses only
-the four starters; substitutes do not affect it. The formation style is stored
-and displayed, but this bot does not currently simulate matches or modify
-player ratings based on it. Missing or unreadable card images display a
-placeholder instead of preventing the lineup image from being sent.
+`/team` renders the three starting cards inside the white rink, with the two
+substitute cards in the section below it. It uses original card artwork and
+outlined circles for empty positions while keeping the center circle,
+face-off circles, and rink lines visible. The embed shows the starters' OVR
+and total team value, calculated from the listed values of assigned starters
+and substitutes.
 
 `/pack pack_type` opens a confirmation menu for the selected GOLD or TOTW pack.
 `/packs` lists both pack types, eligible cards, rating-based weight bands, and

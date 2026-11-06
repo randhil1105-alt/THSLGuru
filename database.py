@@ -21,13 +21,7 @@ FORMATION_STARTERS = {
     "Offensive": ("WING1", "WING2", "GK"),
     "Defensive": ("CM1", "CM2", "GK"),
 }
-STARTING_LINEUP_POSITIONS = tuple(
-    dict.fromkeys(
-        position
-        for formation_positions in FORMATION_STARTERS.values()
-        for position in formation_positions
-    )
-)
+STARTING_LINEUP_POSITIONS = ("WING1", "WING2", "CM1", "CM2", "GK")
 SUBSTITUTE_POSITIONS = ("SUB1", "SUB2")
 LINEUP_POSITIONS = STARTING_LINEUP_POSITIONS + SUBSTITUTE_POSITIONS
 TEAM_FORMATIONS = tuple(FORMATION_STARTERS)
@@ -457,6 +451,19 @@ class Database:
                         int(row["overall"]),
                         str(row["rarity"]),
                     )
+                    owned = connection.execute(
+                        """
+                        SELECT 1 FROM inventory
+                        WHERE user_id = ? AND player_id = ? AND quantity > 0
+                        """,
+                        (user_id, int(row["id"])),
+                    ).fetchone()
+                    if not owned:
+                        notices.append(
+                            f"{legacy_position}: {player_label} is no longer owned "
+                            "and was left unassigned."
+                        )
+                        continue
                     if mapped_position is None or role != POSITION_ROLE_BY_SLOT.get(
                         mapped_position
                     ):
@@ -1080,16 +1087,9 @@ class Database:
         new_positions = FORMATION_STARTERS[normalized_formation]
         with self._transaction() as connection:
             self._ensure_user(connection, normalized_id)
-            current_row = connection.execute(
-                "SELECT formation FROM team_settings_v2 WHERE user_id = ?",
-                (normalized_id,),
-            ).fetchone()
-            current_formation = (
-                str(current_row["formation"]) if current_row else DEFAULT_FORMATION
-            )
             rows = connection.execute(
                 """
-                SELECT team_starters.position, players.*
+                SELECT team_starters.position AS assigned_position, players.*
                 FROM team_starters
                 JOIN players ON players.id = team_starters.player_id
                 WHERE team_starters.user_id = ?
@@ -1097,7 +1097,7 @@ class Database:
                 (normalized_id,),
             ).fetchall()
             assigned = {
-                str(row["position"]): self._player_from_row(row)
+                str(row["assigned_position"]): self._player_from_row(row)
                 for row in rows
             }
             retained: dict[str, Player] = {}
@@ -1156,10 +1156,6 @@ class Database:
                 DO UPDATE SET formation = excluded.formation
                 """,
                 (normalized_id, normalized_formation),
-            )
-            connection.execute(
-                "DELETE FROM team_migration_notices WHERE user_id = ?",
-                (normalized_id,),
             )
         return FormationChange(
             formation=normalized_formation,

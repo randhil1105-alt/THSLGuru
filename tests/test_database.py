@@ -11,9 +11,9 @@ from threading import Barrier
 from database import (
     CLAIM_COOLDOWN_SECONDS,
     DEFAULT_FORMATION,
+    FORMATION_STARTERS,
     GOLD_PACK_COST,
     LINEUP_POSITIONS,
-    STARTING_LINEUP_POSITIONS,
     SUBSTITUTE_POSITIONS,
     TEAM_FORMATIONS,
     TOTW_PACK_COST,
@@ -533,93 +533,193 @@ class DatabaseTests(unittest.TestCase):
             [(first_player.name, 1)],
         )
 
-    def test_lineup_requires_owned_cards_and_rejects_duplicate_slots(self) -> None:
+    def test_formation_slots_and_strict_owned_position_validation(self) -> None:
         user_id = "lineup-user"
-        self.assertEqual(STARTING_LINEUP_POSITIONS, ("LW", "C", "RW", "GK"))
+        self.assertEqual(TEAM_FORMATIONS, ("Balanced", "Offensive", "Defensive"))
+        self.assertEqual(FORMATION_STARTERS["Balanced"], ("WING1", "CM1", "GK"))
+        self.assertEqual(FORMATION_STARTERS["Offensive"], ("WING1", "WING2", "GK"))
+        self.assertEqual(FORMATION_STARTERS["Defensive"], ("CM1", "CM2", "GK"))
         self.assertEqual(SUBSTITUTE_POSITIONS, ("SUB1", "SUB2"))
         self.assertEqual(
             LINEUP_POSITIONS,
-            ("LW", "C", "RW", "GK", "SUB1", "SUB2"),
+            ("WING1", "WING2", "CM1", "CM2", "GK", "SUB1", "SUB2"),
         )
-        self.database.add_player(TOTW_PLAYER)
-        self.database.add_player(SILVER_PLAYER)
-        with self.assertRaises(CardNotOwned):
-            self.database.set_lineup_position(user_id, "LW", "Dan")
 
-        for player_name in (
-            "Dan",
-            "Fadi",
-            "Hala",
-            "Licha",
-            "Test Week Star",
-            "Test Silver",
-        ):
+        for player_name in ("XavierCapone9", "Dan", "Licha", "Gamer", "Fadi"):
             self.database.add_inventory(user_id, player_name)
+        with self.assertRaises(CardNotOwned):
+            self.database.set_lineup_position("unowned-user", "WING1", "XavierCapone9")
 
         for position, player_name in (
-            ("LW", "Dan"),
-            ("C", "Fadi"),
-            ("RW", "Hala"),
+            ("WING1", "XavierCapone9"),
+            ("CM1", "Dan"),
             ("GK", "Licha"),
-            ("SUB1", "Test Week Star"),
-            ("SUB2", "Test Silver"),
         ):
             self.database.set_lineup_position(user_id, position, player_name)
 
-        with self.assertRaises(DuplicateLineupPlayer):
-            self.database.set_lineup_position(user_id, "SUB1", "Dan")
-        with self.assertRaises(DuplicateLineupPlayer):
-            self.database.set_lineup_position(user_id, "RW", "Test Week Star")
+        for position, player_name in (
+            ("GK", "XavierCapone9"),
+            ("CM1", "Licha"),
+            ("WING1", "Dan"),
+        ):
+            with self.subTest(position=position, player=player_name):
+                with self.assertRaises(InvalidLineupPosition):
+                    self.database.set_lineup_position(user_id, position, player_name)
         with self.assertRaises(InvalidLineupPosition):
-            self.database.set_lineup_position(user_id, "CENTER", "Hala")
+            self.database.set_lineup_position(user_id, "WING2", "Gamer")
+        with self.assertRaises(DuplicateLineupPlayer):
+            self.database.set_lineup_position(user_id, "SUB1", "XavierCapone9")
 
         lineup = self.database.get_lineup(user_id)
-        self.assertEqual(set(lineup), set(LINEUP_POSITIONS))
-        self.assertEqual(lineup["LW"].name, "Dan")
-        self.assertEqual(lineup["C"].name, "Fadi")
-        self.assertEqual(lineup["RW"].name, "Hala")
+        self.assertEqual(set(lineup), {"WING1", "CM1", "GK"})
+        self.assertEqual(lineup["WING1"].name, "XavierCapone9")
+        self.assertEqual(lineup["CM1"].name, "Dan")
         self.assertEqual(lineup["GK"].name, "Licha")
-        self.assertEqual(lineup["SUB1"].name, "Test Week Star")
-        self.assertEqual(lineup["SUB2"].name, "Test Silver")
-        self.assertTrue(self.database.clear_lineup_position(user_id, "LW"))
-        self.assertFalse(self.database.clear_lineup_position(user_id, "LW"))
-        self.assertTrue(self.database.clear_lineup_position(user_id, "SUB1"))
+        self.assertTrue(self.database.clear_lineup_position(user_id, "WING1"))
+        self.assertFalse(self.database.clear_lineup_position(user_id, "WING1"))
 
-    def test_formation_options_and_lineup_persist_after_database_reopen(self) -> None:
-        user_id = "persistent-team-user"
-        self.assertEqual(TEAM_FORMATIONS, ("Balanced", "Attack", "Defensive"))
-        self.assertEqual(self.database.get_formation(user_id), DEFAULT_FORMATION)
-        for name in ("Dan", "Fadi", "Hala", "Licha"):
-            self.database.add_inventory(user_id, name)
-        self.database.add_player(TOTW_PLAYER)
-        self.database.add_player(SILVER_PLAYER)
-        self.database.add_inventory(user_id, "Test Week Star")
-        self.database.add_inventory(user_id, "Test Silver")
-        self.database.set_lineup_position(user_id, "LW", "Dan")
-        self.database.set_lineup_position(user_id, "C", "Fadi")
-        self.database.set_lineup_position(user_id, "RW", "Hala")
-        self.database.set_lineup_position(user_id, "GK", "Licha")
-        self.database.set_lineup_position(user_id, "SUB1", "Test Week Star")
-        self.database.set_lineup_position(user_id, "SUB2", "Test Silver")
-        self.assertEqual(self.database.set_formation(user_id, "Attack"), "Attack")
-        with self.assertRaises(InvalidFormation):
-            self.database.set_formation(user_id, "1-2-2")
+    def test_card_versions_are_selected_by_exact_owned_card_id(self) -> None:
+        user_id = "hala-version-user"
+        gold_hala = self.database.get_player("Hala (Gold 90)")
+        totw_hala = self.database.get_player("Hala")
+        assert gold_hala is not None and totw_hala is not None
+        self.database.add_inventory(user_id, gold_hala.name)
+        self.database.add_inventory(user_id, totw_hala.name)
 
-        reloaded = Database(self.database.path)
-        reloaded.initialize(load_player_seed())
-        self.assertEqual(reloaded.get_formation(user_id), "Attack")
-        lineup = reloaded.get_lineup(user_id)
-        self.assertEqual(
-            {position: player.name for position, player in lineup.items()},
-            {
-                "LW": "Dan",
-                "C": "Fadi",
-                "RW": "Hala",
-                "GK": "Licha",
-                "SUB1": "Test Week Star",
-                "SUB2": "Test Silver",
-            },
+        selected_gold = self.database.set_lineup_position(
+            user_id,
+            "WING1",
+            str(gold_hala.id),
         )
+        selected_totw = self.database.set_lineup_position(
+            user_id,
+            "CM1",
+            str(totw_hala.id),
+        )
+        self.assertEqual((selected_gold.id, selected_gold.rarity), (gold_hala.id, "GOLD"))
+        self.assertEqual((selected_totw.id, selected_totw.rarity), (totw_hala.id, "TOTW"))
+        lineup = self.database.get_lineup(user_id)
+        self.assertEqual(lineup["WING1"].id, gold_hala.id)
+        self.assertEqual(lineup["CM1"].id, totw_hala.id)
+        with self.assertRaises(CardNotOwned):
+            self.database.set_lineup_position(
+                "different-owner",
+                "CM1",
+                str(totw_hala.id),
+            )
+
+    def test_formation_switch_preserves_roles_substitutes_and_reports_unassigned_cards(self) -> None:
+        user_id = "formation-user"
+        card_names = (
+            "XavierCapone9",
+            "Gamer",
+            "Dan",
+            "Fadi",
+            "Licha",
+            "Dryboomrun",
+            "Needy",
+        )
+        for name in card_names:
+            self.database.add_inventory(user_id, name)
+        self.database.set_lineup_position(user_id, "WING1", "XavierCapone9")
+        self.database.set_lineup_position(user_id, "CM1", "Dan")
+        self.database.set_lineup_position(user_id, "GK", "Licha")
+        self.database.set_lineup_position(user_id, "SUB1", "Dryboomrun")
+        self.database.set_lineup_position(user_id, "SUB2", "Needy")
+
+        offensive = self.database.set_formation_with_report(user_id, "Offensive")
+        self.assertEqual(offensive.formation, "Offensive")
+        self.assertEqual(
+            [(slot, player.name) for slot, player in offensive.unassigned],
+            [("CM1", "Dan")],
+        )
+        lineup = self.database.get_lineup(user_id)
+        self.assertEqual(set(lineup), {"WING1", "GK", "SUB1", "SUB2"})
+        self.assertEqual(lineup["WING1"].name, "XavierCapone9")
+        self.assertEqual(lineup["SUB1"].name, "Dryboomrun")
+        self.assertEqual(lineup["SUB2"].name, "Needy")
+
+        self.database.set_lineup_position(user_id, "WING2", "Gamer")
+        self.database.clear_lineup_position(user_id, "WING1")
+        back_to_balanced = self.database.set_formation_with_report(user_id, "Balanced")
+        self.assertEqual(
+            [(old, new, player.name) for old, new, player in back_to_balanced.moved],
+            [("WING2", "WING1", "Gamer")],
+        )
+        lineup = self.database.get_lineup(user_id)
+        self.assertEqual(lineup["WING1"].name, "Gamer")
+        self.assertNotIn("WING2", lineup)
+        self.assertEqual(lineup["SUB1"].name, "Dryboomrun")
+        self.assertEqual(lineup["SUB2"].name, "Needy")
+
+        defensive = self.database.set_formation_with_report(user_id, "Defensive")
+        self.assertEqual(defensive.formation, "Defensive")
+        self.assertIn(("WING1", "Gamer"), [
+            (slot, player.name) for slot, player in defensive.unassigned
+        ])
+        lineup = self.database.get_lineup(user_id)
+        self.assertEqual(set(lineup), {"GK", "SUB1", "SUB2"})
+        self.assertEqual(lineup["GK"].name, "Licha")
+
+        with self.assertRaises(InvalidFormation):
+            self.database.set_formation(user_id, "Attack")
+
+    def test_legacy_lineups_migrate_additively_without_touching_ownership_or_balances(self) -> None:
+        user_id = "legacy-team-user"
+        for name in ("XavierCapone9", "Hala", "Dan", "Licha", "Fadi"):
+            self.database.add_inventory(user_id, name)
+        self.database.set_balance(user_id, 12345)
+        original_inventory = [
+            (entry.player.id, entry.quantity)
+            for entry in self.database.get_inventory(user_id)
+        ]
+        cards = {player.name: player for player in self.database.get_players()}
+        with self.database._transaction() as connection:
+            connection.execute(
+                "INSERT INTO team_settings(user_id, formation) VALUES (?, 'Attack')",
+                (user_id,),
+            )
+            connection.executemany(
+                "INSERT INTO lineup_slots(user_id, position, player_id) VALUES (?, ?, ?)",
+                (
+                    (user_id, "LW", cards["XavierCapone9"].id),
+                    (user_id, "RW", cards["Hala"].id),
+                    (user_id, "GK", cards["Licha"].id),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO center_slots(user_id, position, player_id) VALUES (?, 'C', ?)",
+                (user_id, cards["Dan"].id),
+            )
+            connection.execute(
+                "INSERT INTO substitute_slots(user_id, position, player_id) VALUES (?, 'SUB1', ?)",
+                (user_id, cards["Fadi"].id),
+            )
+            connection.execute("DELETE FROM team_data_migrations")
+
+        self.database._migrate_legacy_team_data()
+        self.assertEqual(self.database.get_formation(user_id), "Offensive")
+        lineup = self.database.get_lineup(user_id)
+        self.assertEqual(
+            {slot: player.name for slot, player in lineup.items()},
+            {"WING1": "XavierCapone9", "GK": "Licha", "SUB1": "Fadi"},
+        )
+        notices = self.database.get_lineup_migration_notices(user_id)
+        self.assertTrue(any("Hala" in notice and "incompatible" in notice for notice in notices))
+        self.assertTrue(any("Dan" in notice and "no additional CM" in notice for notice in notices))
+        self.assertEqual(self.database.get_balance(user_id), 12345)
+        self.assertEqual(
+            [(entry.player.id, entry.quantity) for entry in self.database.get_inventory(user_id)],
+            original_inventory,
+        )
+        with self.database._read_connection() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM lineup_slots WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()[0],
+                3,
+            )
 
     def test_insufficient_funds_do_not_charge_or_award(self) -> None:
         self.database.set_balance("poor-user", GOLD_PACK_COST - 1)
