@@ -127,6 +127,9 @@ class DatabaseTests(unittest.TestCase):
                 "HHH",
                 "Apex",
                 "R4ze",
+                "Chicken",
+                "Sluckz",
+                "Frozend",
             },
         )
 
@@ -279,6 +282,21 @@ class DatabaseTests(unittest.TestCase):
             ("HHH", ("WING1", "WING2"), ("GK", "CM1", "SUB1", "SUB2")),
             ("Apex", ("WING1", "WING2"), ("GK", "CM1", "SUB1", "SUB2")),
             ("R4ze", ("GK",), ("WING1", "CM1", "SUB1", "SUB2")),
+            (
+                "Chicken",
+                ("CM1", "CM2"),
+                ("WING1", "WING2", "GK", "SUB1", "SUB2"),
+            ),
+            (
+                "Sluckz",
+                ("WING1", "WING2"),
+                ("CM1", "CM2", "GK", "SUB1", "SUB2"),
+            ),
+            (
+                "Frozend",
+                ("GK",),
+                ("WING1", "WING2", "CM1", "CM2", "SUB1", "SUB2"),
+            ),
         ):
             user_id = f"lineup-rule-invalid-{name.lower()}"
             self.database.add_inventory(user_id, name)
@@ -289,7 +307,8 @@ class DatabaseTests(unittest.TestCase):
             for index, allowed in enumerate(allowed_positions):
                 allowed_user_id = f"lineup-rule-valid-{name.lower()}-{index}"
                 self.database.add_inventory(allowed_user_id, name)
-                self.database.set_formation(allowed_user_id, "Offensive")
+                formation = "Defensive" if allowed in {"CM1", "CM2"} else "Offensive"
+                self.database.set_formation(allowed_user_id, formation)
                 self.assertEqual(
                     self.database.set_lineup_position(
                         allowed_user_id,
@@ -298,6 +317,62 @@ class DatabaseTests(unittest.TestCase):
                     ).name,
                     name,
                 )
+
+    def test_chicken_sluckz_and_frozend_have_exact_seed_data(self) -> None:
+        expected = {
+            "Chicken": (
+                84,
+                "C",
+                "Czech Republic 🇨🇿",
+                "Florida Panthers",
+                500_000,
+                {"SHO": 85, "DRI": 83, "SAV": 86, "PAS": 85, "DEF": 84, "ACT": 86},
+                "cards/chicken_gold_supplied.png",
+                ("CM1", "CM2"),
+            ),
+            "Sluckz": (
+                83,
+                "WI",
+                "Sweden 🇸🇪",
+                "Anaheim Ducks",
+                430_000,
+                {"SHO": 84, "DRI": 85, "SAV": 78, "PAS": 84, "DEF": 79, "ACT": 82},
+                "cards/sluckz_gold_supplied.png",
+                ("WING1", "WING2"),
+            ),
+            "Frozend": (
+                90,
+                "GK",
+                "United States 🇺🇸",
+                "Colorado Avalanche",
+                1_200_000,
+                {"SAV": 91, "DIV": 91, "PAS": 86, "CLE": 88, "SWE": 90, "ACT": 91},
+                "cards/frozend_gold_supplied.png",
+                ("GK",),
+            ),
+        }
+        gold_cards = self.database.get_players(rarity="GOLD")
+        for name, details in expected.items():
+            with self.subTest(card=name):
+                card = self.database.get_player(name)
+                self.assertIsNotNone(card)
+                assert card is not None
+                self.assertEqual(
+                    (
+                        card.overall,
+                        card.position,
+                        card.country,
+                        card.team,
+                        card.rarity,
+                        card.value,
+                        card.stats,
+                        card.image_path,
+                        card.allowed_lineup_positions,
+                    ),
+                    (*details[:4], "GOLD", *details[4:]),
+                )
+                self.assertIn(card, gold_cards)
+                self.assertTrue(Path(card.image_path).is_file())
 
     def test_mr_p_dark_and_road_seed_cards_have_exact_gold_data(self) -> None:
         expected = {
@@ -573,6 +648,9 @@ class DatabaseTests(unittest.TestCase):
                 "Megan",
                 "Jaycob",
                 "Karuwrld",
+                "Chicken",
+                "Sluckz",
+                "Frozend",
             )
         ):
             with self.subTest(card=name):
@@ -707,9 +785,12 @@ class DatabaseTests(unittest.TestCase):
         by_name = {card.name: odds_before[card.id] for card in gold_cards}
         self.assertGreater(by_name["Fadi"], by_name["Hala (Gold 90)"])
         self.assertEqual(by_name["Dan"], by_name["Dryboomrun"])
-        self.assertAlmostEqual(by_name["Needy"], 2 / 61 * 100)
-        self.assertAlmostEqual(by_name["Megan"], 4 / 61 * 100)
-        self.assertAlmostEqual(by_name["Hala (Gold 90)"], 1 / 61 * 100)
+        self.assertAlmostEqual(by_name["Needy"], 2 / 70 * 100)
+        self.assertAlmostEqual(by_name["Megan"], 4 / 70 * 100)
+        self.assertAlmostEqual(by_name["Hala (Gold 90)"], 1 / 70 * 100)
+        self.assertAlmostEqual(by_name["Chicken"], 4 / 70 * 100)
+        self.assertAlmostEqual(by_name["Sluckz"], 4 / 70 * 100)
+        self.assertAlmostEqual(by_name["Frozend"], 1 / 70 * 100)
 
         totw_cards = self.database.get_players(rarity="TOTW")
         totw_odds = calculate_pack_odds(totw_cards)
@@ -1225,6 +1306,19 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(proceeds, 1_100_000)
         self.assertEqual(balance, 1_100_000)
         self.assertEqual(self.database.get_inventory("seller")[0].quantity, 1)
+
+    def test_new_gold_card_sales_credit_the_exact_listed_value(self) -> None:
+        for name, value in (
+            ("Chicken", 500_000),
+            ("Sluckz", 430_000),
+            ("Frozend", 1_200_000),
+        ):
+            with self.subTest(card=name):
+                user_id = f"new-card-seller-{name.casefold()}"
+                self.database.add_inventory(user_id, name)
+                proceeds, balance = self.database.sell_card(user_id, name)
+                self.assertEqual((proceeds, balance), (value, value))
+                self.assertEqual(self.database.get_inventory(user_id), [])
 
     def test_each_totw_card_sells_for_twelve_million(self) -> None:
         for card_name in ("Licha", "Hala"):

@@ -495,7 +495,7 @@
     "name": "Chicken",
     "overall": 84,
     "position": "C",
-    "country": "Czech Republic",
+    "country": "Czech Republic 🇨🇿",
     "team": "Florida Panthers",
     "rarity": "GOLD",
     "value": 500000,
@@ -507,14 +507,14 @@
       "DEF": 84,
       "ACT": 86
     },
-    "image_path": "cards/chicken_gold.png",
+    "image_path": "cards/chicken_gold_supplied.png",
     "allowed_lineup_positions": ["CM1", "CM2"]
   },
   {
     "name": "Sluckz",
     "overall": 83,
     "position": "WI",
-    "country": "Sweden",
+    "country": "Sweden 🇸🇪",
     "team": "Anaheim Ducks",
     "rarity": "GOLD",
     "value": 430000,
@@ -526,14 +526,14 @@
       "DEF": 79,
       "ACT": 82
     },
-    "image_path": "cards/sluckz_gold.png",
+    "image_path": "cards/sluckz_gold_supplied.png",
     "allowed_lineup_positions": ["WING1", "WING2"]
   },
   {
     "name": "Frozend",
     "overall": 90,
     "position": "GK",
-    "country": "United States",
+    "country": "United States 🇺🇸",
     "team": "Colorado Avalanche",
     "rarity": "GOLD",
     "value": 1200000,
@@ -545,7 +545,7 @@
       "SWE": 90,
       "ACT": 91
     },
-    "image_path": "cards/frozend_gold.png",
+    "image_path": "cards/frozend_gold_supplied.png",
     "allowed_lineup_positions": ["GK"]
   }
 ]

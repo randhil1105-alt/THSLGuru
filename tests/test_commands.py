@@ -434,6 +434,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Ebs",
             "Cam",
             "Licha (Gold 90)",
+            "Chicken",
+            "Sluckz",
+            "Frozend",
         ):
             with self.subTest(name=name):
                 player = self.database.get_player(name)
@@ -1415,7 +1418,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(team_image.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         team_image.close()
 
-    async def test_needy_card_is_displayed_in_all_requested_flows(self) -> None:
+    async def test_needy_card_seed_data_and_artwork(self) -> None:
         card = self.database.get_player("Needy")
         self.assertIsNotNone(card)
         assert card is not None
@@ -1449,6 +1452,171 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
         self.assertIn(card, self.database.get_players(rarity="GOLD"))
 
+    async def test_chicken_sluckz_and_frozend_work_in_card_inventory_sell_set_and_team(self) -> None:
+        expected = {
+            "Chicken": (
+                84,
+                "C",
+                "Czech Republic 🇨🇿",
+                {"SHO": 85, "DRI": 83, "SAV": 86, "PAS": 85, "DEF": 84, "ACT": 86},
+                500_000,
+                "cards/chicken_gold_supplied.png",
+                "attached_assets/Firefly_-_2026-10-09T135533.430_1793976312048.png",
+                "CM1",
+            ),
+            "Sluckz": (
+                83,
+                "WI",
+                "Sweden 🇸🇪",
+                {"SHO": 84, "DRI": 85, "SAV": 78, "PAS": 84, "DEF": 79, "ACT": 82},
+                430_000,
+                "cards/sluckz_gold_supplied.png",
+                "attached_assets/Firefly_-_2026-11-06T152319.060_1793976311979.png",
+                "WING1",
+            ),
+            "Frozend": (
+                90,
+                "GK",
+                "United States 🇺🇸",
+                {"SAV": 91, "DIV": 91, "PAS": 86, "CLE": 88, "SWE": 90, "ACT": 91},
+                1_200_000,
+                "cards/frozend_gold_supplied.png",
+                "attached_assets/Firefly_-_2026-10-09T135940.009_1793976312031.png",
+                "GK",
+            ),
+        }
+        player_cog = PlayerCommands(self.database)
+        inventory_cog = InventoryCommands(self.database)
+        team_cog = TeamCommands(self.database)
+        gold_pack_cards = PackCommands(self.database)._pack_cards()["GOLD"]
+
+        for index, (name, details) in enumerate(expected.items()):
+            (
+                rating,
+                position,
+                country,
+                stats,
+                value,
+                image_name,
+                supplied_image,
+                lineup_position,
+            ) = details
+            label = f"{rating} {name} (Gold)"
+            with self.subTest(card=name):
+                player = self.database.get_player(name)
+                self.assertIsNotNone(player)
+                assert player is not None
+                self.assertEqual(
+                    (
+                        player.overall,
+                        player.position,
+                        player.country,
+                        player.rarity,
+                        player.value,
+                        player.stats,
+                        player.image_path,
+                    ),
+                    (rating, position, country, "GOLD", value, stats, image_name),
+                )
+                self.assertIn(player, gold_pack_cards)
+
+                choices = await PlayerCommands.card_player_autocomplete(
+                    player_cog,
+                    SimpleNamespace(),
+                    name,
+                )
+                self.assertIn((label, name), [(choice.name, choice.value) for choice in choices])
+
+                card_response = FakeResponse()
+                await PlayerCommands.card.callback(
+                    player_cog,
+                    SimpleNamespace(response=card_response),
+                    name,
+                )
+                card_message = card_response.messages[0]
+                self.assertEqual(card_message["embed"].title, label)
+                card_fields = {
+                    field.name: field.value for field in card_message["embed"].fields
+                }
+                self.assertEqual(card_fields["Position"], position)
+                self.assertEqual(card_fields["Country"], country)
+                self.assertEqual(card_fields["Card Type"], "Gold")
+                for stat, score in stats.items():
+                    self.assertIn(f"**{stat}** {score}", card_fields["Stats"])
+                artwork = Path(image_name)
+                self.assertEqual(artwork.read_bytes(), Path(supplied_image).read_bytes())
+                self.assertEqual(card_message["file"].fp.read(), artwork.read_bytes())
+                card_message["file"].close()
+
+                inventory_user = f"new-card-inventory-{index}"
+                self.database.add_inventory(inventory_user, name)
+                inventory_response = FakeResponse()
+                await InventoryCommands.inventory.callback(
+                    inventory_cog,
+                    SimpleNamespace(
+                        user=SimpleNamespace(id=inventory_user),
+                        response=inventory_response,
+                    ),
+                )
+                self.assertIn(
+                    label,
+                    inventory_response.messages[0]["embed"].description,
+                )
+
+                sell_response = FakeResponse()
+                await InventoryCommands.sell.callback(
+                    inventory_cog,
+                    SimpleNamespace(
+                        user=SimpleNamespace(id=inventory_user),
+                        response=sell_response,
+                    ),
+                    name,
+                    1,
+                )
+                self.assertIn(
+                    f"Sold **1× {label}** for {value:,} coins",
+                    sell_response.messages[0]["content"],
+                )
+                self.assertEqual(self.database.get_balance(inventory_user), value)
+
+        team_user = "new-gold-cards-team"
+        for name, details in expected.items():
+            lineup_position = details[-1]
+            self.database.add_inventory(team_user, name)
+            response = FakeResponse()
+            await TeamCommands.set_position.callback(
+                team_cog,
+                SimpleNamespace(
+                    user=SimpleNamespace(id=team_user),
+                    response=response,
+                ),
+                discord.app_commands.Choice(
+                    name=lineup_position,
+                    value=lineup_position,
+                ),
+                name,
+            )
+            self.assertIn(f"{details[0]} {name} (Gold)", response.messages[0]["content"])
+
+        lineup = self.database.get_lineup(team_user)
+        team_svg = build_lineup_svg(lineup, "Balanced", "three new Gold cards")
+        for name, details in expected.items():
+            player = self.database.get_player(name)
+            assert player is not None
+            self.assertIn(_player_image_uri(player), team_svg)
+
+        team_interaction = SimpleNamespace(
+            user=SimpleNamespace(id=team_user, display_name="New Gold Cards"),
+            response=FakeResponse(),
+            followup=FakeFollowup(),
+        )
+        await TeamCommands.team.callback(team_cog, team_interaction)
+        team_message = team_interaction.followup.messages[0]
+        self.assertTrue(team_message["file"].fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
+        team_message["file"].close()
+
+    async def test_needy_card_is_displayed_in_all_requested_flows(self) -> None:
+        label = "85 Needy (Gold)"
         for command_name in ("card",):
             response = FakeResponse()
             await getattr(PlayerCommands, command_name).callback(
@@ -2955,7 +3123,17 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_gold_cards_are_available_in_minigame_with_type_and_original_art(self) -> None:
         for index, name in enumerate(
-            ("Megan", "Jaycob", "Karuwrld", "HHH", "Apex", "R4ze")
+            (
+                "Megan",
+                "Jaycob",
+                "Karuwrld",
+                "HHH",
+                "Apex",
+                "R4ze",
+                "Chicken",
+                "Sluckz",
+                "Frozend",
+            )
         ):
             with self.subTest(card=name):
                 player = self.database.get_player(name)
