@@ -97,7 +97,7 @@ class TeamCommands(discord_commands.Cog):
         value_text = format_coins(total_value)
         embed.add_field(
             name="Team value",
-            value=f"**{value_text}** · 3 starters and up to 2 substitutes",
+            value=f"**{value_text}** · 3 starter slots and 2 substitute slots",
             inline=False,
         )
         embed.add_field(

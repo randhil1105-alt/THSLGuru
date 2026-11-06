@@ -1812,7 +1812,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         fields = {field.name: field.value for field in embed.fields}
         self.assertIn("89 OVR", fields["Starting lineup OVR"])
         self.assertIn("Defensive", fields["Formation"])
-        self.assertEqual(fields["Team value"], "**15,680,000 coins** · 3 starters and up to 2 substitutes")
+        self.assertEqual(
+            fields["Team value"],
+            "**15,680,000 coins** · 3 starter slots and 2 substitute slots",
+        )
         self.assertEqual(
             {name.split(" · ", 1)[0] for name in fields if " · " in name},
             set(FORMATION_STARTERS["Defensive"] + SUBSTITUTE_POSITIONS),
@@ -1826,12 +1829,38 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(struct.unpack(">II", image_bytes[16:24]), (1600, 1640))
         svg = build_lineup_svg(self.database.get_lineup(user_id), "Defensive", "89 OVR")
         self.assertEqual(svg.count("<image href="), 5)
-        for position in FORMATION_STARTERS["Defensive"]:
-            layout = STARTER_SLOT_LAYOUTS[position]
-            self.assertGreaterEqual(layout.x, 76)
-            self.assertGreaterEqual(layout.y, 163)
-            self.assertLessEqual(layout.x + layout.width, 1524)
-            self.assertLessEqual(layout.y + layout.height, 1027)
+        for formation, positions in FORMATION_STARTERS.items():
+            with self.subTest(formation=formation):
+                formation_svg = build_lineup_svg({}, formation, "Not rated yet")
+                starter_slots = [
+                    STARTER_SLOT_LAYOUTS[position] for position in positions
+                ]
+                self.assertEqual(len(starter_slots), 3)
+                self.assertEqual(
+                    len(
+                        {
+                            (slot.x, slot.y, slot.width, slot.height)
+                            for slot in starter_slots
+                        }
+                    ),
+                    3,
+                )
+                for index, layout in enumerate(starter_slots):
+                    self.assertGreaterEqual(layout.x, 76)
+                    self.assertGreaterEqual(layout.y, 163)
+                    self.assertLessEqual(layout.x + layout.width, 1524)
+                    self.assertLessEqual(layout.y + layout.height, 1027)
+                    for other in starter_slots[index + 1 :]:
+                        overlaps = (
+                            layout.x < other.x + other.width
+                            and layout.x + layout.width > other.x
+                            and layout.y < other.y + other.height
+                            and layout.y + layout.height > other.y
+                        )
+                        self.assertFalse(overlaps)
+                self.assertEqual(formation_svg.count('id="slot-'), 5)
+                self.assertIn('cx="800" cy="575" r="112"', formation_svg)
+                self.assertEqual(formation_svg.count('r="68" fill="none"'), 6)
         for layout in SUBSTITUTE_SLOT_LAYOUTS:
             self.assertGreater(layout.y, 1045)
 
