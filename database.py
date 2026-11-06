@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, Sequence
 
-CLAIM_COOLDOWN_SECONDS = 24 * 60 * 60
+CLAIM_COOLDOWN_SECONDS = 30 * 60
 GOLD_PACK_COST = 5_000_000
 TOTW_PACK_COST = 20_000_000
 MAX_PACK_QUANTITY = 10
@@ -1051,7 +1051,7 @@ class Database:
         now: int | None = None,
         rng: Any | None = None,
     ) -> tuple[Player, int]:
-        """Atomically award a weighted GOLD card and enforce the daily cooldown."""
+        """Atomically award a weighted GOLD card and enforce a 30-minute cooldown."""
         normalized_id = self._validate_user_id(user_id)
         current_time = int(time.time() if now is None else now)
         chooser = rng if rng is not None else random.SystemRandom()

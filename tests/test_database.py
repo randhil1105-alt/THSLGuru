@@ -899,6 +899,7 @@ class DatabaseTests(unittest.TestCase):
             )
 
     def test_claim_awards_weighted_gold_without_coins_and_enforces_cooldown(self) -> None:
+        self.assertEqual(CLAIM_COOLDOWN_SECONDS, 30 * 60)
         initial_balance = 123_456
         self.database.set_balance("test-user", initial_balance)
         player, next_claim = self.database.claim_gold_card(

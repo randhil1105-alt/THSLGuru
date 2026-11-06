@@ -10,7 +10,7 @@ persistent SQLite database.
 | --- | --- |
 | `/card player` | Choose a catalog card using autocomplete and view its full image |
 | `/cards` | Browse the full player card catalog |
-| `/claim` | Claim a weighted GOLD player card once every 24 hours |
+| `/claim` | Claim a weighted GOLD player card once every 30 minutes |
 | `/minigame mode` | Choose Guess Who or Draft |
 | `/balance` | Check your balance |
 | `/leaderboard` | Show the ten largest balances |

@@ -1,4 +1,4 @@
-"""Currency balance, daily card claim, and leaderboard slash commands."""
+"""Currency balance, timed card claim, and leaderboard slash commands."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class EconomyCommands(discord_commands.Cog):
 
     @app_commands.command(
         name="claim",
-        description="Claim one GOLD player card once every 24 hours.",
+        description="Claim one GOLD player card once every 30 minutes.",
     )
     async def claim(self, interaction: discord.Interaction) -> None:
         try:

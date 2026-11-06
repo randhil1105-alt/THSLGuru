@@ -58,6 +58,27 @@ class GuruBot(discord_commands.Bot):
                 len(global_commands),
                 ", ".join(global_command_names) or "(none)",
             )
+            minigame_command = next(
+                (command for command in global_commands if command.name == "minigame"),
+                None,
+            )
+            if minigame_command is not None:
+                mode_option = next(
+                    (
+                        option
+                        for option in (minigame_command.options or [])
+                        if option.name == "mode"
+                    ),
+                    None,
+                )
+                mode_choices = [
+                    choice.name
+                    for choice in (mode_option.choices or [])
+                ] if mode_option is not None else []
+                LOGGER.info(
+                    "Synced /minigame mode choices: %s",
+                    ", ".join(mode_choices) or "(none)",
+                )
 
             restricted_commands = sorted(
                 command.name
