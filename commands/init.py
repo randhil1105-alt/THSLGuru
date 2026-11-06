@@ -7,6 +7,8 @@ from typing import Any
 COMMAND_MODULES = (
     "commands.player",
     "commands.economy",
+    "commands.duplicate_sales",
+    "commands.cooldowns",
     "commands.auction",
     "commands.inventory",
     "commands.packs",

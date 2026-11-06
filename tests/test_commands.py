@@ -60,6 +60,8 @@ EXPECTED_COMMANDS = {
     "card",
     "cards",
     "claim",
+    "cooldowns",
+    "sellduplicates",
     "balance",
     "leaderboard",
     "inventory",
@@ -218,7 +220,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(command.default_permissions)
                     self.assertFalse(command.checks)
 
-        for name in ("claim", "minigame"):
+        for name in ("claim", "minigame", "cooldowns", "sellduplicates"):
             with self.subTest(public_command=name):
                 self.assertIsNone(commands[name].default_permissions)
                 self.assertFalse(commands[name].checks)

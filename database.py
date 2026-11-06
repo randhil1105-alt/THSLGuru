@@ -116,6 +116,18 @@ class InvalidAmount(EconomyError):
     pass
 
 
+class DuplicateSaleError(EconomyError):
+    """Base class for confirmed duplicate-card sales."""
+
+
+class DuplicateSalePreviewChanged(DuplicateSaleError):
+    pass
+
+
+class DuplicateSaleAlreadyProcessed(DuplicateSaleError):
+    pass
+
+
 class AuctionError(EconomyError):
     """Base class for auction operation errors."""
 
@@ -238,6 +250,58 @@ class StartingLineup:
 class InventoryEntry:
     player: Player
     quantity: int
+
+
+@dataclass(frozen=True)
+class DuplicateSaleItem:
+    player_id: int
+    player_name: str
+    overall: int
+    rarity: str
+    quantity: int
+    unit_value: int
+    total_value: int
+
+
+@dataclass(frozen=True)
+class ProtectedDuplicate:
+    player_name: str
+    overall: int
+    rarity: str
+    extra_copies: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class DuplicateSalePreview:
+    items: tuple[DuplicateSaleItem, ...]
+    protected: tuple[ProtectedDuplicate, ...]
+
+    @property
+    def total_cards(self) -> int:
+        return sum(item.quantity for item in self.items)
+
+    @property
+    def total_earnings(self) -> int:
+        return sum(item.total_value for item in self.items)
+
+
+@dataclass(frozen=True)
+class DuplicateSaleResult:
+    items: tuple[DuplicateSaleItem, ...]
+    total_cards: int
+    total_earnings: int
+    new_balance: int
+    already_processed: bool = False
+
+
+@dataclass(frozen=True)
+class CooldownStatus:
+    claim_last_used_at: int | None
+    draft_last_started_at: int | None
+    claim_remaining_seconds: int
+    draft_remaining_seconds: int
+    draft_active: bool
 
 
 @dataclass(frozen=True)
@@ -440,6 +504,16 @@ class Database:
                     player_id INTEGER NOT NULL REFERENCES players(id),
                     rarity TEXT NOT NULL CHECK (rarity IN ('GOLD', 'TOTW')),
                     cost INTEGER NOT NULL CHECK (cost > 0),
+                    balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS duplicate_sale_receipts (
+                    sale_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(user_id),
+                    sold_items_json TEXT NOT NULL,
+                    card_count INTEGER NOT NULL CHECK (card_count > 0),
+                    total_earned INTEGER NOT NULL CHECK (total_earned >= 0),
                     balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
                     created_at INTEGER NOT NULL
                 );
@@ -1240,6 +1314,61 @@ class Database:
                 self._player_from_row(selected),
                 current_time + CLAIM_COOLDOWN_SECONDS,
             )
+
+    def get_cooldown_status(
+        self,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> CooldownStatus:
+        """Read saved claim and Draft cooldown timestamps without creating a user."""
+        normalized_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        with self._read_connection() as connection:
+            user = connection.execute(
+                "SELECT last_claim_at FROM users WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            draft = connection.execute(
+                "SELECT last_started_at FROM draft_cooldowns WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            active_draft = connection.execute(
+                """
+                SELECT 1 FROM draft_sessions
+                WHERE user_id = ? AND status = 'ACTIVE'
+                LIMIT 1
+                """,
+                (normalized_id,),
+            ).fetchone()
+
+        claim_last_used = (
+            int(user["last_claim_at"])
+            if user is not None and user["last_claim_at"] is not None
+            else None
+        )
+        draft_last_started = (
+            int(draft["last_started_at"])
+            if draft is not None
+            else None
+        )
+        claim_remaining = (
+            max(0, claim_last_used + CLAIM_COOLDOWN_SECONDS - current_time)
+            if claim_last_used is not None
+            else 0
+        )
+        draft_remaining = (
+            max(0, draft_last_started + DRAFT_COOLDOWN_SECONDS - current_time)
+            if draft_last_started is not None
+            else 0
+        )
+        return CooldownStatus(
+            claim_last_used_at=claim_last_used,
+            draft_last_started_at=draft_last_started,
+            claim_remaining_seconds=claim_remaining,
+            draft_remaining_seconds=draft_remaining,
+            draft_active=active_draft is not None,
+        )
 
     # Atomic auction settlement and bid operations.
     def _finish_auction_locked(
@@ -3299,3 +3428,266 @@ class Database:
                 (proceeds, normalized_id),
             )
             return proceeds, balance + proceeds
+
+    @staticmethod
+    def _duplicate_sale_preview_locked(
+        connection: sqlite3.Connection,
+        user_id: str,
+    ) -> DuplicateSalePreview:
+        duplicates = connection.execute(
+            """
+            SELECT p.id, p.name, p.overall, p.rarity, p.value, i.quantity
+            FROM inventory AS i
+            JOIN players AS p ON p.id = i.player_id
+            WHERE i.user_id = ? AND i.quantity > 1
+            ORDER BY p.name COLLATE NOCASE, p.id
+            """,
+            (user_id,),
+        ).fetchall()
+        assigned_ids = {
+            int(row["player_id"])
+            for row in connection.execute(
+                """
+                SELECT player_id FROM team_starters WHERE user_id = ?
+                UNION SELECT player_id FROM substitute_slots WHERE user_id = ?
+                UNION SELECT player_id FROM lineup_slots WHERE user_id = ?
+                UNION SELECT player_id FROM center_slots WHERE user_id = ?
+                """,
+                (user_id, user_id, user_id, user_id),
+            ).fetchall()
+        }
+        auction_ids = {
+            int(row["player_id"])
+            for row in connection.execute(
+                """
+                SELECT DISTINCT player_id FROM auctions
+                WHERE seller_id = ? AND status = 'ACTIVE'
+                """,
+                (user_id,),
+            ).fetchall()
+        }
+
+        items: list[DuplicateSaleItem] = []
+        protected: list[ProtectedDuplicate] = []
+        for row in duplicates:
+            player_id = int(row["id"])
+            extra_copies = int(row["quantity"]) - 1
+            reasons: list[str] = []
+            if player_id in assigned_ids:
+                reasons.append("assigned to /team")
+            if player_id in auction_ids:
+                reasons.append("listed in an active auction")
+            if reasons:
+                protected.append(
+                    ProtectedDuplicate(
+                        player_name=str(row["name"]),
+                        overall=int(row["overall"]),
+                        rarity=str(row["rarity"]),
+                        extra_copies=extra_copies,
+                        reason=" and ".join(reasons),
+                    )
+                )
+                continue
+
+            unit_value = int(row["value"])
+            total_value = unit_value * extra_copies
+            if total_value > SQLITE_INT_MAX:
+                raise InvalidAmount(
+                    f"The duplicate sale for {row['name']} exceeds the supported maximum."
+                )
+            items.append(
+                DuplicateSaleItem(
+                    player_id=player_id,
+                    player_name=str(row["name"]),
+                    overall=int(row["overall"]),
+                    rarity=str(row["rarity"]),
+                    quantity=extra_copies,
+                    unit_value=unit_value,
+                    total_value=total_value,
+                )
+            )
+
+        if sum(item.total_value for item in items) > SQLITE_INT_MAX:
+            raise InvalidAmount(
+                "The duplicate sale exceeds the supported maximum."
+            )
+        return DuplicateSalePreview(tuple(items), tuple(protected))
+
+    def get_duplicate_sale_preview(
+        self,
+        user_id: str | int,
+    ) -> DuplicateSalePreview:
+        normalized_id = self._validate_user_id(user_id)
+        with self._read_connection() as connection:
+            return self._duplicate_sale_preview_locked(connection, normalized_id)
+
+    @staticmethod
+    def _duplicate_sale_items_json(items: Sequence[DuplicateSaleItem]) -> str:
+        return json.dumps(
+            [
+                {
+                    "player_id": item.player_id,
+                    "player_name": item.player_name,
+                    "overall": item.overall,
+                    "rarity": item.rarity,
+                    "quantity": item.quantity,
+                    "unit_value": item.unit_value,
+                    "total_value": item.total_value,
+                }
+                for item in items
+            ],
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _duplicate_sale_items_from_json(value: str) -> tuple[DuplicateSaleItem, ...]:
+        records = json.loads(value)
+        return tuple(
+            DuplicateSaleItem(
+                player_id=int(record["player_id"]),
+                player_name=str(record["player_name"]),
+                overall=int(record["overall"]),
+                rarity=str(record["rarity"]),
+                quantity=int(record["quantity"]),
+                unit_value=int(record["unit_value"]),
+                total_value=int(record["total_value"]),
+            )
+            for record in records
+        )
+
+    def sell_duplicate_cards(
+        self,
+        user_id: str | int,
+        sale_id: str | int,
+        expected_items: Sequence[DuplicateSaleItem],
+        *,
+        now: int | None = None,
+    ) -> DuplicateSaleResult:
+        """Confirm the exact preview and sell all eligible extras atomically."""
+        normalized_id = self._validate_user_id(user_id)
+        normalized_sale_id = str(sale_id).strip()
+        if not normalized_sale_id or len(normalized_sale_id) > 128:
+            raise InvalidAmount("That duplicate sale request is invalid.")
+        expected_signature = tuple(
+            (
+                item.player_id,
+                item.player_name,
+                item.overall,
+                item.rarity,
+                item.quantity,
+                item.unit_value,
+                item.total_value,
+            )
+            for item in expected_items
+        )
+        current_time = int(time.time() if now is None else now)
+
+        with self._transaction() as connection:
+            receipt = connection.execute(
+                """
+                SELECT user_id, sold_items_json, card_count, total_earned,
+                       balance_after
+                FROM duplicate_sale_receipts
+                WHERE sale_id = ?
+                """,
+                (normalized_sale_id,),
+            ).fetchone()
+            if receipt is not None:
+                if str(receipt["user_id"]) != normalized_id:
+                    raise DuplicateSaleAlreadyProcessed(
+                        "That sale confirmation has already been used."
+                    )
+                items = self._duplicate_sale_items_from_json(
+                    str(receipt["sold_items_json"])
+                )
+                user = connection.execute(
+                    "SELECT balance FROM users WHERE user_id = ?",
+                    (normalized_id,),
+                ).fetchone()
+                return DuplicateSaleResult(
+                    items=items,
+                    total_cards=int(receipt["card_count"]),
+                    total_earnings=int(receipt["total_earned"]),
+                    new_balance=int(user["balance"]) if user is not None else 0,
+                    already_processed=True,
+                )
+
+            preview = self._duplicate_sale_preview_locked(
+                connection,
+                normalized_id,
+            )
+            actual_signature = tuple(
+                (
+                    item.player_id,
+                    item.player_name,
+                    item.overall,
+                    item.rarity,
+                    item.quantity,
+                    item.unit_value,
+                    item.total_value,
+                )
+                for item in preview.items
+            )
+            if actual_signature != expected_signature or not preview.items:
+                raise DuplicateSalePreviewChanged(
+                    "Your duplicate cards changed after the preview. Run "
+                    "/sellduplicates again to review the current sale."
+                )
+
+            user = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            if user is None:
+                raise InvalidAmount("Your coin account could not be found.")
+            current_balance = int(user["balance"])
+            total_earned = preview.total_earnings
+            if current_balance + total_earned > SQLITE_INT_MAX:
+                raise InvalidAmount(
+                    "The sale would exceed the supported balance."
+                )
+
+            for item in preview.items:
+                updated = connection.execute(
+                    """
+                    UPDATE inventory SET quantity = 1
+                    WHERE user_id = ? AND player_id = ? AND quantity = ?
+                    """,
+                    (
+                        normalized_id,
+                        item.player_id,
+                        item.quantity + 1,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise DuplicateSalePreviewChanged(
+                        "Your inventory changed during the sale. Run "
+                        "/sellduplicates again to review it."
+                    )
+            connection.execute(
+                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                (total_earned, normalized_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO duplicate_sale_receipts
+                    (sale_id, user_id, sold_items_json, card_count,
+                     total_earned, balance_after, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_sale_id,
+                    normalized_id,
+                    self._duplicate_sale_items_json(preview.items),
+                    preview.total_cards,
+                    total_earned,
+                    current_balance + total_earned,
+                    current_time,
+                ),
+            )
+            return DuplicateSaleResult(
+                items=preview.items,
+                total_cards=preview.total_cards,
+                total_earnings=total_earned,
+                new_balance=current_balance + total_earned,
+            )

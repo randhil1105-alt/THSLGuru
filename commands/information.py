@@ -23,6 +23,7 @@ class InformationCommands(discord_commands.Cog):
                 "`/inventory` · View cards you own\n"
                 "`/collection` · Browse the catalog\n"
                 "`/minigame mode` · Play Guess Who or start Draft\n"
+                "`/cooldowns` · Check your personal timers\n"
                 "`/auction browse` · Browse and bid on other players' cards\n"
                 "`/auction sell` · List one of your cards for auction\n"
                 "`/auction myauctions` · View your active and completed auctions\n"
@@ -42,7 +43,8 @@ class InformationCommands(discord_commands.Cog):
                 "`/leaderboard` · See top balances\n"
                 "`/pack pack_type` · Choose GOLD or TOTW, then confirm purchase\n"
                 "`/packs quantity` · View packs and buy up to 10 at once\n"
-                "`/sell player quantity` · Sell cards at listed value"
+                "`/sell player quantity` · Sell cards at listed value\n"
+                "`/sellduplicates` · Review and sell extra copies"
             ),
             inline=False,
         )

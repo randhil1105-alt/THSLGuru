@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import math
 import random
 import re
+import time
 import uuid
 from collections.abc import Callable
 
@@ -62,6 +64,7 @@ class IndividualMinigameView(discord.ui.View):
         self.player = player
         self.channel = channel
         self.duration_seconds = float(duration_seconds)
+        self._deadline_monotonic: float | None = None
         self.game_id = str(game_id) if game_id is not None else f"{self.owner_id}:{id(self)}"
         self.on_finished = on_finished
         self.attempted_user_game_ids: set[tuple[str, int]] = set()
@@ -79,7 +82,16 @@ class IndividualMinigameView(discord.ui.View):
 
     def start_deadline(self) -> None:
         if self._deadline_task is None:
+            self._deadline_monotonic = time.monotonic() + self.duration_seconds
             self._deadline_task = asyncio.create_task(self._expire_after_deadline())
+
+    @property
+    def remaining_seconds(self) -> int:
+        if self.finished:
+            return 0
+        if self._deadline_monotonic is None:
+            return math.ceil(self.duration_seconds)
+        return max(0, math.ceil(self._deadline_monotonic - time.monotonic()))
 
     def cancel_deadline(self) -> None:
         task = self._deadline_task
