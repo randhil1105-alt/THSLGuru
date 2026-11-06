@@ -109,6 +109,7 @@ class Player:
     value: int
     stats: dict[str, int]
     image_path: str | None
+    allowed_lineup_positions: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -276,7 +277,8 @@ class Database:
                     rarity TEXT NOT NULL,
                     value INTEGER NOT NULL CHECK (value >= 0),
                     stats_json TEXT NOT NULL DEFAULT '{}',
-                    image_path TEXT
+                    image_path TEXT,
+                    allowed_lineup_positions_json TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS users (
@@ -364,6 +366,14 @@ class Database:
                     ON users(balance DESC);
                 """
             )
+            player_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(players)")
+            }
+            if "allowed_lineup_positions_json" not in player_columns:
+                connection.execute(
+                    "ALTER TABLE players ADD COLUMN allowed_lineup_positions_json TEXT"
+                )
         finally:
             connection.close()
 
@@ -578,6 +588,29 @@ class Database:
                     raise ValueError(f"{stat_name} must be between 0 and 99.")
                 normalized_stats[stat_name] = stat_number
             image_path = Database._validate_image_path(player.get("image_path"))
+            allowed_positions = player.get("allowed_lineup_positions")
+            if allowed_positions is None:
+                normalized_allowed_positions = None
+            else:
+                if not isinstance(allowed_positions, (list, tuple)):
+                    raise TypeError("allowed_lineup_positions must be a list")
+                normalized_allowed_positions = tuple(
+                    dict.fromkeys(str(slot).strip().upper() for slot in allowed_positions)
+                )
+                if (
+                    not normalized_allowed_positions
+                    or any(slot not in LINEUP_POSITIONS for slot in normalized_allowed_positions)
+                ):
+                    raise ValueError("allowed_lineup_positions contains an invalid slot")
+                if any(
+                    slot in POSITION_ROLE_BY_SLOT
+                    and card_position_role(position)
+                    != POSITION_ROLE_BY_SLOT[slot]
+                    for slot in normalized_allowed_positions
+                ):
+                    raise ValueError(
+                        "allowed_lineup_positions must match the card's position"
+                    )
         except (KeyError, TypeError, ValueError) as exc:
             raise InvalidPlayer(f"Invalid player record: {exc}") from exc
 
@@ -602,6 +635,7 @@ class Database:
             "value": value,
             "stats": normalized_stats,
             "image_path": image_path,
+            "allowed_lineup_positions": normalized_allowed_positions,
         }
 
     @staticmethod
@@ -617,6 +651,11 @@ class Database:
             value=int(row["value"]),
             stats=json.loads(row["stats_json"]),
             image_path=row["image_path"],
+            allowed_lineup_positions=(
+                tuple(json.loads(row["allowed_lineup_positions_json"]))
+                if row["allowed_lineup_positions_json"] is not None
+                else None
+            ),
         )
 
     @staticmethod
@@ -634,8 +673,9 @@ class Database:
                 cursor = connection.execute(
                     """
                     INSERT INTO players
-                        (name, overall, position, country, team, rarity, value, stats_json, image_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (name, overall, position, country, team, rarity, value,
+                         stats_json, image_path, allowed_lineup_positions_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         normalized["name"],
@@ -647,6 +687,11 @@ class Database:
                         normalized["value"],
                         json.dumps(normalized["stats"], separators=(",", ":")),
                         normalized["image_path"],
+                        (
+                            json.dumps(normalized["allowed_lineup_positions"])
+                            if normalized["allowed_lineup_positions"] is not None
+                            else None
+                        ),
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -905,10 +950,19 @@ class Database:
         for row in rows:
             position = str(row["lineup_position"])
             player = self._player_from_row(row)
-            if position in SUBSTITUTE_POSITIONS or (
+            if position in SUBSTITUTE_POSITIONS and (
+                player.allowed_lineup_positions is None
+                or position in player.allowed_lineup_positions
+            ):
+                result[position] = player
+            elif (
                 position in active_positions
                 and card_position_role(player.position)
                 == POSITION_ROLE_BY_SLOT.get(position)
+                and (
+                    player.allowed_lineup_positions is None
+                    or position in player.allowed_lineup_positions
+                )
             ):
                 result[position] = player
         return result
@@ -973,6 +1027,20 @@ class Database:
                 raise PlayerNotFound(lookup)
 
             player_id = int(player["id"])
+            if player["allowed_lineup_positions_json"] is not None:
+                allowed_positions = tuple(
+                    json.loads(player["allowed_lineup_positions_json"])
+                )
+                if normalized_position not in allowed_positions:
+                    label = format_card_label(
+                        player["name"],
+                        player["overall"],
+                        player["rarity"],
+                    )
+                    raise InvalidLineupPosition(
+                        f"**{label}** can only be assigned to "
+                        f"{', '.join(allowed_positions)}."
+                    )
             if normalized_position in STARTING_LINEUP_POSITIONS:
                 expected_role = POSITION_ROLE_BY_SLOT[normalized_position]
                 actual_role = card_position_role(str(player["position"]))

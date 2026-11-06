@@ -376,5 +376,62 @@
       "ACT": 84
     },
     "image_path": "cards/criss_gold.png"
+  },
+  {
+    "name": "Megan",
+    "overall": 84,
+    "position": "GK",
+    "country": "Canada",
+    "team": "Colorado Avalanche",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SAV": 85,
+      "DIV": 85,
+      "PAS": 82,
+      "CLE": 82,
+      "SWE": 83,
+      "ACT": 85
+    },
+    "image_path": "cards/megan_gold.png",
+    "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Jaycob",
+    "overall": 89,
+    "position": "GK",
+    "country": "England",
+    "team": "New York Rangers",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SAV": 90,
+      "DIV": 90,
+      "PAS": 85,
+      "CLE": 85,
+      "SWE": 87,
+      "ACT": 89
+    },
+    "image_path": "cards/jaycob_gold.png",
+    "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Karuwrld",
+    "overall": 82,
+    "position": "WI",
+    "country": "Scotland",
+    "team": "Colorado Avalanche",
+    "rarity": "GOLD",
+    "value": 2600000,
+    "stats": {
+      "SHO": 84,
+      "DRI": 78,
+      "SAV": 77,
+      "PAS": 80,
+      "DEF": 82,
+      "ACT": 76
+    },
+    "image_path": "cards/karuwrld_gold.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
   }
 ]

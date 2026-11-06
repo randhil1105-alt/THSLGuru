@@ -11,7 +11,7 @@ persistent SQLite database.
 | `/card player` | Choose a catalog card using autocomplete and view its full image |
 | `/cards` | Browse the full player card catalog |
 | `/claim` | Claim a weighted GOLD player card once every 24 hours |
-| `/minigame` | Guess a player's nationality, rating, and position for coins |
+| `/minigame` | Guess a player's nationality, rating, position, and card type for coins |
 | `/balance` | Check your balance |
 | `/leaderboard` | Show the ten largest balances |
 | `/inventory` | Show cards you own |
@@ -38,8 +38,9 @@ Administrator-only commands:
 - `/grantcoins` grants coins.
 - `/grantcard` grants one or more card copies.
 
-The seeded catalog includes 19 GOLD cards, including Ryuko, Rj, Criss, Ebs,
-Cam, and Gold Licha, plus the existing Licha and Hala TOTW cards. Card names display as
+The seeded catalog includes 22 GOLD cards, including Megan, Jaycob, Karuwrld,
+Ryuko, Rj, Criss, Ebs, Cam, and Gold Licha, plus the existing Licha and Hala
+TOTW cards. Card names display as
 `<overall> <player> (<card type>)` throughout player-facing lists and details.
 If a catalog has no cards of a requested pack rarity, the pack command explains
 that none are available and does not charge.
@@ -135,7 +136,8 @@ workers before relying on it for the live economy.
 
 ## Card images
 
-The catalog uses `cards/dan.png`, `cards/licha.webp`, `cards/hala.webp`,
+The catalog uses `cards/dan.png`, `cards/megan_gold.png`,
+`cards/jaycob_gold.png`, `cards/karuwrld_gold.png`, `cards/licha.webp`, `cards/hala.webp`,
 `cards/hala.png`, `cards/xaviercapone9.png`, `cards/gamer.png`,
 `cards/dryboomrun.png`, `cards/needy.png`, `cards/fadi.png`, `cards/mason.png`,
 `cards/demox.png`, and `cards/cheddar.png`. These are the supplied card images

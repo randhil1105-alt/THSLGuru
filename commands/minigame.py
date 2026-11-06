@@ -19,7 +19,7 @@ from commands.common import (
     player_embed,
     resolve_card_image,
 )
-from database import Database, Player
+from database import Database, Player, format_card_type
 
 LOGGER = logging.getLogger("thsl_guru.minigame")
 
@@ -296,7 +296,7 @@ class MinigameCommands(discord_commands.Cog):
 
     @app_commands.command(
         name="minigame",
-        description="Guess a hockey player from three clues.",
+        description="Guess a hockey player from four clues.",
     )
     @app_commands.describe(
         answer="Enter your one guess for a game you started.",
@@ -361,7 +361,7 @@ class MinigameCommands(discord_commands.Cog):
         embed = discord.Embed(
             title="🏒 GUESS WHO?",
             description=(
-                "Guess the player using the clues below. "
+                "Guess the player using the clues below, including the card type. "
                 "Only you can answer this game. "
                 "You get one attempt. "
                 f"You have {int(self.duration_seconds)} seconds. "
@@ -380,6 +380,10 @@ class MinigameCommands(discord_commands.Cog):
         embed.add_field(
             name="🏒 Position",
             value=player.position,
+        )
+        embed.add_field(
+            name="Card Type",
+            value=format_card_type(player.rarity),
         )
 
         try:

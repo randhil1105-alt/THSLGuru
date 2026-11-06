@@ -49,9 +49,7 @@ FORMATION_STYLES = {
 
 def lineup_card_label(player: Player) -> str:
     """Show a catalog card's display name with its exact OVR and rarity."""
-    label = player_card_label(player)
-    display_name = label.split(" ", 1)[1].rsplit(" (", 1)[0]
-    return f"{display_name} — {player.overall} OVR ({player.rarity.upper()})"
+    return f"{player_card_label(player)} — {player.overall} OVR"
 
 
 class TeamCommands(discord_commands.Cog):
@@ -219,6 +217,17 @@ class TeamCommands(discord_commands.Cog):
         current: str,
     ) -> list[app_commands.Choice[str]]:
         query = current.strip().casefold()
+        selected_position = getattr(
+            getattr(interaction, "namespace", None),
+            "position",
+            None,
+        )
+        selected_position = getattr(selected_position, "value", selected_position)
+        selected_position = (
+            str(selected_position).strip().upper()
+            if selected_position is not None
+            else None
+        )
         choices: list[app_commands.Choice[str]] = []
         if not query or "clear".startswith(query) or query in "clear":
             choices.append(
@@ -226,6 +235,12 @@ class TeamCommands(discord_commands.Cog):
             )
         for entry in self.database.get_inventory(interaction.user.id):
             player = entry.player
+            if (
+                selected_position
+                and player.allowed_lineup_positions is not None
+                and selected_position not in player.allowed_lineup_positions
+            ):
+                continue
             label = lineup_card_label(player)
             if entry.quantity > 1:
                 label += f" ×{entry.quantity}"

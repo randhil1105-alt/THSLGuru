@@ -121,8 +121,91 @@ class DatabaseTests(unittest.TestCase):
                 "Ryuko",
                 "Rj",
                 "Criss",
+                "Megan",
+                "Jaycob",
+                "Karuwrld",
             },
         )
+
+    def test_megan_jaycob_and_karuwrld_have_exact_gold_data_and_slot_rules(self) -> None:
+        expected = {
+            "Megan": (
+                84,
+                "GK",
+                "Canada",
+                "Colorado Avalanche",
+                {"SAV": 85, "DIV": 85, "PAS": 82, "CLE": 82, "SWE": 83, "ACT": 85},
+                "cards/megan_gold.png",
+                ("GK",),
+            ),
+            "Jaycob": (
+                89,
+                "GK",
+                "England",
+                "New York Rangers",
+                {"SAV": 90, "DIV": 90, "PAS": 85, "CLE": 85, "SWE": 87, "ACT": 89},
+                "cards/jaycob_gold.png",
+                ("GK",),
+            ),
+            "Karuwrld": (
+                82,
+                "WI",
+                "Scotland",
+                "Colorado Avalanche",
+                {"SHO": 84, "DRI": 78, "SAV": 77, "PAS": 80, "DEF": 82, "ACT": 76},
+                "cards/karuwrld_gold.png",
+                ("WING1", "WING2"),
+            ),
+        }
+        gold_cards = self.database.get_players(rarity="GOLD")
+        for name, details in expected.items():
+            with self.subTest(card=name):
+                player = self.database.get_player(name)
+                self.assertIsNotNone(player)
+                assert player is not None
+                overall, position, country, team, stats, image_path, allowed_slots = details
+                self.assertEqual(
+                    (
+                        player.overall,
+                        player.position,
+                        player.country,
+                        player.team,
+                        player.rarity,
+                        player.value,
+                        player.stats,
+                        player.image_path,
+                        player.allowed_lineup_positions,
+                    ),
+                    (
+                        overall,
+                        position,
+                        country,
+                        team,
+                        "GOLD",
+                        2_600_000,
+                        stats,
+                        image_path,
+                        allowed_slots,
+                    ),
+                )
+                self.assertIn(player, gold_cards)
+
+    def test_new_gold_cards_only_assign_to_their_allowed_lineup_positions(self) -> None:
+        for name, allowed, forbidden in (
+            ("Megan", "GK", ("WING1", "CM1", "SUB1", "SUB2")),
+            ("Jaycob", "GK", ("WING1", "CM1", "SUB1", "SUB2")),
+            ("Karuwrld", "WING1", ("GK", "CM1", "SUB1", "SUB2")),
+        ):
+            user_id = f"lineup-rule-{name.lower()}"
+            self.database.add_inventory(user_id, name)
+            for position in forbidden:
+                with self.subTest(card=name, position=position):
+                    with self.assertRaises(InvalidLineupPosition):
+                        self.database.set_lineup_position(user_id, position, name)
+            self.assertEqual(
+                self.database.set_lineup_position(user_id, allowed, name).name,
+                name,
+            )
 
     def test_mr_p_dark_and_road_seed_cards_have_exact_gold_data(self) -> None:
         expected = {
@@ -325,6 +408,9 @@ class DatabaseTests(unittest.TestCase):
                 "Ryuko",
                 "Rj",
                 "Criss",
+                "Megan",
+                "Jaycob",
+                "Karuwrld",
             }
         ]
         legacy_database.initialize(old_catalog)
@@ -337,7 +423,7 @@ class DatabaseTests(unittest.TestCase):
         legacy_database.initialize(load_player_seed())
         legacy_database.initialize(load_player_seed())
 
-        self.assertEqual(len(legacy_database.get_players()), len(original_players) + 9)
+        self.assertEqual(len(legacy_database.get_players()), len(original_players) + 12)
         self.assertTrue(
             all(
                 legacy_database.get_player(name).id == player_id
@@ -357,6 +443,9 @@ class DatabaseTests(unittest.TestCase):
             "Ryuko",
             "Rj",
             "Criss",
+            "Megan",
+            "Jaycob",
+            "Karuwrld",
         ):
             self.assertEqual(
                 len(
@@ -389,6 +478,9 @@ class DatabaseTests(unittest.TestCase):
                 "Ryuko",
                 "Rj",
                 "Criss",
+                "Megan",
+                "Jaycob",
+                "Karuwrld",
             )
         ):
             with self.subTest(card=name):

@@ -642,7 +642,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 expected[name]["label"].split(" ", 1)[1].rsplit(" (", 1)[0]
             )
             self.assertIn(
-                f"{display_name} — 90 OVR (GOLD)",
+                f"{expected[name]['label']} — 90 OVR",
                 team_fields[f"{position} · {position_labels[position]}"],
             )
         team_file = team_message["file"]
@@ -1032,8 +1032,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in team_interaction.followup.messages[0]["embed"].fields
         }
-        self.assertIn("Mason — 84 OVR (GOLD)", team_fields["WING1 · Wing 1"])
-        self.assertIn("Demox — 84 OVR (GOLD)", team_fields["WING2 · Wing 2"])
+        self.assertIn("84 Mason (Gold) — 84 OVR", team_fields["WING1 · Wing 1"])
+        self.assertIn("84 Demox (Gold) — 84 OVR", team_fields["WING2 · Wing 2"])
         team_file = team_interaction.followup.messages[0]["file"]
         self.assertTrue(team_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         team_file.close()
@@ -1048,7 +1048,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in cheddar_interaction.followup.messages[0]["embed"].fields
         }
-        self.assertIn("Cheddar — 84 OVR (GOLD)", cheddar_fields["WING1 · Wing 1"])
+        self.assertIn("84 Cheddar (Gold) — 84 OVR", cheddar_fields["WING1 · Wing 1"])
         cheddar_interaction.followup.messages[0]["file"].close()
 
     async def test_card_command_autocompletes_partial_names_and_shows_full_card(self) -> None:
@@ -1153,7 +1153,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Fadi",
         )
         self.assertIn(
-            "Assigned **Fadi — 86 OVR (GOLD)** to **CM1**",
+            "Assigned **86 Fadi (Gold) — 86 OVR** to **CM1**",
             set_response.messages[0]["content"],
         )
         team_interaction = SimpleNamespace(
@@ -1166,7 +1166,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         team_fields = {
             field.name: field.value for field in team_message["embed"].fields
         }
-        self.assertIn("Fadi — 86 OVR (GOLD)", team_fields["CM1 · CM 1"])
+        self.assertIn("86 Fadi (Gold) — 86 OVR", team_fields["CM1 · CM 1"])
         self.assertTrue(
             team_message["file"].fp.read().startswith(b"\x89PNG\r\n\x1a\n")
         )
@@ -1357,7 +1357,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Dryboomrun",
         )
         self.assertIn(
-            "Dryboomrun — 87 OVR (GOLD)",
+            "87 Dryboomrun (Gold) — 87 OVR",
             assign_response.messages[0]["content"],
         )
         lineup = self.database.get_lineup(user_id)
@@ -1382,7 +1382,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         fields = {field.name: field.value for field in team_message["embed"].fields}
-        self.assertIn("Dryboomrun — 87 OVR (GOLD)", fields["CM1 · CM 1"])
+        self.assertIn("87 Dryboomrun (Gold) — 87 OVR", fields["CM1 · CM 1"])
         team_image = team_message["file"]
         self.assertTrue(team_image.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         team_image.close()
@@ -1481,7 +1481,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
         self.assertIn(label, gold_field)
-        self.assertIn("5.71%", gold_field)
+        self.assertIn("3.92%", gold_field)
 
         set_response = FakeResponse()
         team_cog = TeamCommands(self.database)
@@ -1491,7 +1491,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             discord.app_commands.Choice(name="CM1", value="CM1"),
             "Needy",
         )
-        self.assertIn("Needy — 85 OVR (GOLD)", set_response.messages[0]["content"])
+        self.assertIn("85 Needy (Gold) — 85 OVR", set_response.messages[0]["content"])
 
         team_interaction = SimpleNamespace(
             user=SimpleNamespace(id=user_id, display_name="Needy"),
@@ -1501,7 +1501,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         fields = {field.name: field.value for field in team_message["embed"].fields}
-        self.assertIn("Needy — 85 OVR (GOLD)", fields["CM1 · CM 1"])
+        self.assertIn("85 Needy (Gold) — 85 OVR", fields["CM1 · CM 1"])
         team_file = team_message["file"]
         self.assertTrue(team_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         team_file.close()
@@ -1639,7 +1639,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         self.assertIn(
-            "Gamer — 89 OVR (GOLD)",
+            "89 Gamer (Gold) — 89 OVR",
             {field.name: field.value for field in team_message["embed"].fields}[
                 "WING2 · Wing 2"
             ],
@@ -1761,7 +1761,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         self.assertIn(
-            "Hala — 90 OVR (GOLD)",
+            "90 Hala (Gold) — 90 OVR",
             {field.name: field.value for field in team_message["embed"].fields}[
                 "WING2 · Wing 2"
             ],
@@ -1880,7 +1880,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "XavierCapone9",
             )
             self.assertIn(
-                "Assigned **XavierCapone9 — 91 OVR (GOLD)**",
+                "Assigned **91 XavierCapone9 (Gold) — 91 OVR**",
                 response.messages[0]["content"],
             )
             self.assertEqual(self.database.get_lineup(user_id)[position].name, "XavierCapone9")
@@ -1903,7 +1903,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await TeamCommands.team.callback(team_cog, team_interaction)
         team_message = team_interaction.followup.messages[0]
         self.assertIn(
-            "XavierCapone9 — 91 OVR (GOLD)",
+            "91 XavierCapone9 (Gold) — 91 OVR",
             {field.name: field.value for field in team_message["embed"].fields}[
                 "WING2 · Wing 2"
             ],
@@ -2001,11 +2001,14 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "90 Ebs (Gold)",
             "90 Cam (Gold)",
             "90 Licha (Gold)",
+            "84 Megan (Gold)",
+            "89 Jaycob (Gold)",
+            "82 Karuwrld (Gold)",
         ):
             self.assertIn(label, field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("11.43%", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("5.71%", field_values["GOLD · 5,000,000 coins"])
-        self.assertIn("2.86%", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("7.84%", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("3.92%", field_values["GOLD · 5,000,000 coins"])
+        self.assertIn("1.96%", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Very rare ×0.25", menu["embed"].description)
         self.assertIn("93 Licha (TOTW)", field_values["TOTW · 20,000,000 coins"])
         self.assertIn("93 Hala (TOTW)", field_values["TOTW · 20,000,000 coins"])
@@ -2094,8 +2097,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "Ebs",
                     "Cam",
                     "90 Licha (Gold)",
+                    "84 Megan (Gold)",
+                    "89 Jaycob (Gold)",
+                    "82 Karuwrld (Gold)",
                 },
-                "11.43%",
+                "7.84%",
             ),
             ("TOTW", TOTW_PACK_COST, {"Licha", "Hala"}, "50.00%"),
         )
@@ -2227,8 +2233,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(choice.name, choice.value) for choice in choices],
             [
-                ("Hala — 90 OVR (GOLD)", str(gold_hala.id)),
-                ("Hala — 93 OVR (TOTW)", str(totw_hala.id)),
+                ("90 Hala (Gold) — 90 OVR", str(gold_hala.id)),
+                ("93 Hala (TOTW) — 93 OVR", str(totw_hala.id)),
             ],
         )
 
@@ -2500,6 +2506,195 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                         empty_svg[slot_start:slot_end],
                     )
 
+    async def test_new_gold_cards_work_across_card_inventory_packs_set_and_team(self) -> None:
+        expected = {
+            "Megan": {
+                "label": "84 Megan (Gold)",
+                "position": "GK",
+                "country": "Canada",
+                "team": "Colorado Avalanche",
+                "allowed": ("GK",),
+                "forbidden": ("WING1", "CM1", "SUB1", "SUB2"),
+                "image": "cards/megan_gold.png",
+                "stats": {"SAV": 85, "DIV": 85, "PAS": 82, "CLE": 82, "SWE": 83, "ACT": 85},
+            },
+            "Jaycob": {
+                "label": "89 Jaycob (Gold)",
+                "position": "GK",
+                "country": "England",
+                "team": "New York Rangers",
+                "allowed": ("GK",),
+                "forbidden": ("WING1", "CM1", "SUB1", "SUB2"),
+                "image": "cards/jaycob_gold.png",
+                "stats": {"SAV": 90, "DIV": 90, "PAS": 85, "CLE": 85, "SWE": 87, "ACT": 89},
+            },
+            "Karuwrld": {
+                "label": "82 Karuwrld (Gold)",
+                "position": "WI",
+                "country": "Scotland",
+                "team": "Colorado Avalanche",
+                "allowed": ("WING1", "WING2"),
+                "forbidden": ("GK", "CM1", "SUB1", "SUB2"),
+                "image": "cards/karuwrld_gold.png",
+                "stats": {"SHO": 84, "DRI": 78, "SAV": 77, "PAS": 80, "DEF": 82, "ACT": 76},
+            },
+        }
+        player_cog = PlayerCommands(self.database)
+        for name, details in expected.items():
+            with self.subTest(card=name):
+                player = self.database.get_player(name)
+                self.assertIsNotNone(player)
+                assert player is not None
+                image_path = resolve_card_image(player)
+                self.assertIsNotNone(image_path)
+                assert image_path is not None
+                self.assertEqual(image_path.as_posix().split("/")[-2:], ["cards", details["image"].split("/")[-1]])
+
+                card_response = FakeResponse()
+                await PlayerCommands.card.callback(
+                    player_cog,
+                    SimpleNamespace(response=card_response),
+                    name,
+                )
+                card_message = card_response.messages[0]
+                self.assertEqual(card_message["embed"].title, details["label"])
+                fields = {
+                    field.name: field.value for field in card_message["embed"].fields
+                }
+                self.assertEqual(fields["Position"], details["position"])
+                self.assertEqual(fields["Country"], details["country"])
+                self.assertEqual(fields["Team"], details["team"])
+                self.assertEqual(fields["Card Type"], "Gold")
+                self.assertEqual(fields["Value"], "2,600,000 coins")
+                self.assertEqual(
+                    fields["Stats"],
+                    " · ".join(
+                        f"**{stat}** {value}"
+                        for stat, value in details["stats"].items()
+                    ),
+                )
+                card_file = card_message["file"]
+                self.assertEqual(card_file.filename, image_path.name)
+                self.assertEqual(card_file.fp.read(), image_path.read_bytes())
+                card_file.close()
+
+        owner_id = "new-gold-cards-inventory"
+        for name in expected:
+            self.database.add_inventory(owner_id, name)
+        inventory_response = FakeResponse()
+        await InventoryCommands.inventory.callback(
+            InventoryCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=owner_id),
+                response=inventory_response,
+            ),
+        )
+        inventory_text = inventory_response.messages[0]["embed"].description
+        for details in expected.values():
+            self.assertIn(f"**{details['label']}** ×1", inventory_text)
+
+        packs_response = FakeResponse()
+        await PackCommands.packs.callback(
+            PackCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=owner_id),
+                response=packs_response,
+            ),
+        )
+        gold_pack_text = {
+            field.name: field.value
+            for field in packs_response.messages[0]["embed"].fields
+        }["GOLD · 5,000,000 coins"]
+        for details in expected.values():
+            self.assertIn(details["label"], gold_pack_text)
+
+        team_cog = TeamCommands(self.database)
+        for index, (name, details) in enumerate(expected.items()):
+            user_id = f"new-gold-card-team-{index}"
+            self.database.add_inventory(user_id, name)
+            player = self.database.get_player(name)
+            assert player is not None
+            for position in details["forbidden"]:
+                with self.subTest(card=name, forbidden_position=position):
+                    response = FakeResponse()
+                    await TeamCommands.set_position.callback(
+                        team_cog,
+                        SimpleNamespace(
+                            user=SimpleNamespace(id=user_id),
+                            response=response,
+                        ),
+                        discord.app_commands.Choice(name=position, value=position),
+                        name,
+                    )
+                    self.assertIn(
+                        "can only be assigned to",
+                        response.messages[0]["content"],
+                    )
+
+            autocomplete = await TeamCommands.set_player_autocomplete(
+                team_cog,
+                SimpleNamespace(
+                    user=SimpleNamespace(id=owner_id),
+                    namespace=SimpleNamespace(position=details["allowed"][0]),
+                ),
+                "",
+            )
+            choice_ids = {choice.value for choice in autocomplete}
+            self.assertIn(str(player.id), choice_ids)
+            for other_name in expected:
+                other = self.database.get_player(other_name)
+                assert other is not None
+                if (
+                    other.allowed_lineup_positions is not None
+                    and details["allowed"][0] not in other.allowed_lineup_positions
+                ):
+                    self.assertNotIn(str(other.id), choice_ids)
+
+            response = FakeResponse()
+            await TeamCommands.set_position.callback(
+                team_cog,
+                SimpleNamespace(
+                    user=SimpleNamespace(id=user_id),
+                    response=response,
+                ),
+                discord.app_commands.Choice(
+                    name=details["allowed"][0],
+                    value=details["allowed"][0],
+                ),
+                name,
+            )
+            self.assertIn(details["label"], response.messages[0]["content"])
+            svg = build_lineup_svg(
+                self.database.get_lineup(user_id),
+                "Balanced",
+                f"{player.overall} OVR",
+            )
+            image_uri = _player_image_uri(player)
+            self.assertIsNotNone(image_uri)
+            assert image_uri is not None
+            self.assertIn(image_uri, svg)
+            self.assertNotIn("ART UNAVAILABLE", svg)
+
+            team_response = FakeResponse()
+            team_interaction = SimpleNamespace(
+                user=SimpleNamespace(id=user_id, display_name=name),
+                response=team_response,
+                followup=FakeFollowup(),
+            )
+            await TeamCommands.team.callback(team_cog, team_interaction)
+            team_message = team_interaction.followup.messages[0]
+            slot_label = {
+                "GK": "GK · Goalie",
+                "WING1": "WING1 · Wing 1",
+            }[details["allowed"][0]]
+            self.assertIn(details["label"], {
+                field.name: field.value
+                for field in team_message["embed"].fields
+            }[slot_label])
+            team_file = team_message["file"]
+            self.assertTrue(team_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
+            team_file.close()
+
     async def test_team_renderer_handles_missing_card_art_without_failing(self) -> None:
         self.database.add_player(
             {
@@ -2696,7 +2891,7 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(modal, GuessAnswerModal)
         return modal
 
-    async def test_start_is_public_and_shows_three_clues_with_answer_button(self) -> None:
+    async def test_start_is_public_and_shows_four_clues_with_answer_button(self) -> None:
         interaction, _, player, view = await self.start_game()
         response = interaction.response.messages[0]
         self.assertFalse(response["ephemeral"])
@@ -2707,14 +2902,51 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(embed.title, "🏒 GUESS WHO?")
         self.assertEqual(
             [field.name for field in embed.fields],
-            ["🌍 Nationality", "⭐ Rating", "🏒 Position"],
+            ["🌍 Nationality", "⭐ Rating", "🏒 Position", "Card Type"],
         )
         self.assertEqual(embed.fields[0].value, player.country)
         self.assertEqual(embed.fields[1].value, f"{player.overall} OVR")
         self.assertEqual(embed.fields[2].value, player.position)
+        self.assertEqual(embed.fields[3].value, format_card_type(player.rarity))
         self.assertNotIn(player.name.casefold(), embed.description.casefold())
         self.assertIsNone(embed.image.url)
         self.assertEqual(view.owner_id, interaction.user.id)
+
+    async def test_new_gold_cards_are_available_in_minigame_with_type_and_original_art(self) -> None:
+        for index, name in enumerate(("Megan", "Jaycob", "Karuwrld")):
+            with self.subTest(card=name):
+                player = self.database.get_player(name)
+                self.assertIsNotNone(player)
+                assert player is not None
+                self.assertIn(player, self.database.get_players())
+
+                interaction, channel, _, view = await self.start_game(
+                    user_id=6000 + index,
+                    username=f"GoldPlayer{index}",
+                    selected=player,
+                )
+                prompt = interaction.response.messages[0]["embed"]
+                self.assertEqual(prompt.fields[-1].name, "Card Type")
+                self.assertEqual(prompt.fields[-1].value, "Gold")
+                self.assertEqual(prompt.fields[0].value, player.country)
+
+                await view.on_timeout()
+                reveal_message = channel.messages[0]
+                reveal = reveal_message["embed"]
+                self.assertEqual(
+                    reveal.title,
+                    f"🏒 The player was {player_card_label(player)}",
+                )
+                self.assertEqual(
+                    {field.name: field.value for field in reveal.fields}["Card Type"],
+                    "Gold",
+                )
+                reveal_file = reveal_message["file"]
+                image_path = resolve_card_image(player)
+                self.assertIsNotNone(image_path)
+                assert image_path is not None
+                self.assertEqual(reveal_file.fp.read(), image_path.read_bytes())
+                reveal_file.close()
 
     async def test_two_members_get_independent_games_and_player_selections(self) -> None:
         players = self.database.get_players()
@@ -2822,7 +3054,7 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_balance(1202), 0)
         self.assertEqual(channel.messages, [])
 
-    async def test_incorrect_answer_is_private_and_owner_can_retry(self) -> None:
+    async def test_incorrect_answer_is_private_and_uses_the_attempt(self) -> None:
         _, channel, player, view = await self.start_game(
             user_id=1301,
             username="RetryPlayer",
@@ -2835,13 +3067,13 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_balance(1301), 0)
         self.assertEqual(channel.messages, [])
 
-        modal = await self.open_answer_modal(view, owner)
-        modal.player_name._value = f"  {player.name.swapcase()}   "
         response = FakeResponse()
-        await modal.on_submit(SimpleNamespace(user=owner, response=response))
-        self.assertTrue(response.messages[0]["ephemeral"])
-        self.assertIn("Correct", response.messages[0]["content"])
-        self.assertEqual(self.database.get_balance(1301), MINIGAME_REWARD)
+        await view.answer_button.callback(
+            SimpleNamespace(user=owner, response=response)
+        )
+        self.assertEqual(response.messages[0]["content"], "You have already used your one attempt for this game.")
+        self.assertEqual(response.modals, [])
+        self.assertEqual(self.database.get_balance(1301), 0)
 
     async def test_correct_answer_pays_exactly_once_and_reveals_full_card(self) -> None:
         _, channel, player, view = await self.start_game(
@@ -2898,7 +3130,7 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(response.messages[0]["ephemeral"] for response in responses))
 
     async def test_timeout_expires_game_without_reward_and_reveals_card(self) -> None:
-        self.assertEqual(MINIGAME_DURATION_SECONDS, 60)
+        self.assertEqual(MINIGAME_DURATION_SECONDS, 180)
         self.cog.duration_seconds = 0.01
         _, channel, player, view = await self.start_game(
             user_id=1601,
