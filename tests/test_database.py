@@ -127,6 +127,7 @@ class DatabaseTests(unittest.TestCase):
                 "New York Rangers",
                 {"SHO": 89, "DRI": 84, "SAV": 81, "PAS": 85, "DEF": 87, "ACT": 86},
                 "cards/mr_p_gold.png",
+                650_000,
             ),
             "Dark": (
                 84,
@@ -135,6 +136,7 @@ class DatabaseTests(unittest.TestCase):
                 "New York Rangers",
                 {"SHO": 86, "DRI": 84, "SAV": 78, "PAS": 85, "DEF": 80, "ACT": 83},
                 "cards/dark_gold.png",
+                400_000,
             ),
             "Road": (
                 86,
@@ -143,6 +145,7 @@ class DatabaseTests(unittest.TestCase):
                 "Anaheim Ducks",
                 {"SAV": 89, "DIV": 87, "PAS": 83, "CLE": 83, "SWE": 88, "ACT": 85},
                 "cards/road_gold.png",
+                650_000,
             ),
         }
         gold_cards = self.database.get_players(rarity="GOLD")
@@ -151,7 +154,7 @@ class DatabaseTests(unittest.TestCase):
                 card = self.database.get_player(name)
                 self.assertIsNotNone(card)
                 assert card is not None
-                overall, position, country, team, stats, image_path = details
+                overall, position, country, team, stats, image_path, value = details
                 self.assertEqual(
                     (
                         card.overall,
@@ -169,7 +172,7 @@ class DatabaseTests(unittest.TestCase):
                         country,
                         team,
                         "GOLD",
-                        400_000,
+                        value,
                         stats,
                         image_path,
                     ),

@@ -439,6 +439,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "New York Rangers",
                 {"SHO": 89, "DRI": 84, "SAV": 81, "PAS": 85, "DEF": 87, "ACT": 86},
                 "mr_p_gold.png",
+                650_000,
             ),
             "Dark": (
                 84,
@@ -447,6 +448,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "New York Rangers",
                 {"SHO": 86, "DRI": 84, "SAV": 78, "PAS": 85, "DEF": 80, "ACT": 83},
                 "dark_gold.png",
+                400_000,
             ),
             "Road": (
                 86,
@@ -455,6 +457,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "Anaheim Ducks",
                 {"SAV": 89, "DIV": 87, "PAS": 83, "CLE": 83, "SWE": 88, "ACT": 85},
                 "road_gold.png",
+                650_000,
             ),
         }
         user_id = "mr-p-dark-road-flow-user"
@@ -462,7 +465,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
 
         for name, details in expected.items():
             with self.subTest(card=name):
-                overall, position, country, team, stats, image_name = details
+                overall, position, country, team, stats, image_name, value = details
                 player = self.database.get_player(name)
                 self.assertIsNotNone(player)
                 assert player is not None
@@ -483,7 +486,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                         country,
                         team,
                         "GOLD",
-                        400_000,
+                        value,
                         stats,
                         f"cards/{image_name}",
                     ),
@@ -523,7 +526,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(card_fields["Country"], country)
                 self.assertEqual(card_fields["Team"], team)
                 self.assertEqual(card_fields["Card Type"], "Gold")
-                self.assertEqual(card_fields["Value"], "400,000 coins")
+                self.assertEqual(card_fields["Value"], f"{value:,} coins")
                 for stat, value in stats.items():
                     self.assertIn(f"**{stat}** {value}", card_fields["Stats"])
                 card_message["file"].close()
@@ -642,7 +645,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(team_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         team_file.close()
 
-        for index, (name, (overall, *_details)) in enumerate(expected.items()):
+        for index, (name, (overall, *_details, value)) in enumerate(expected.items()):
             seller_id = f"new-gold-seller-{index}"
             self.database.add_inventory(seller_id, name)
             sale_response = FakeResponse()
@@ -656,10 +659,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 1,
             )
             self.assertIn(
-                f"Sold **1× {overall} {name} (Gold)** for 400,000 coins",
+                f"Sold **1× {overall} {name} (Gold)** for {value:,} coins",
                 sale_response.messages[0]["content"],
             )
-            self.assertEqual(self.database.get_balance(seller_id), 400_000)
+            self.assertEqual(self.database.get_balance(seller_id), value)
 
     async def test_mason_demox_and_cheddar_work_across_card_and_lineup_commands(self) -> None:
         expected = {
