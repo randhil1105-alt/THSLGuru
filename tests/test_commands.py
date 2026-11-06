@@ -21,8 +21,14 @@ from commands.common import (
 )
 from commands.inventory import InventoryCommands
 from commands.lineup_image import (
+    FORMATION_SLOT_LAYOUTS,
+    IMAGE_HEIGHT,
+    IMAGE_WIDTH,
     OUTPUT_FILENAME,
-    STARTER_SLOT_LAYOUTS,
+    RINK_BOTTOM,
+    RINK_LEFT,
+    RINK_RIGHT,
+    RINK_TOP,
     SUBSTITUTE_SLOT_LAYOUTS,
     build_lineup_svg,
 )
@@ -1160,7 +1166,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         lineup_bytes = lineup_file.fp.read()
         lineup_file.close()
         self.assertTrue(lineup_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1640))
+        self.assertEqual(
+            struct.unpack(">II", lineup_bytes[16:24]),
+            (IMAGE_WIDTH, IMAGE_HEIGHT),
+        )
 
     async def test_hala_gold_card_is_catalogued_grantable_and_lineup_ready(self) -> None:
         player = self.database.get_player("Hala (Gold 90)")
@@ -1279,7 +1288,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         lineup_bytes = lineup_file.fp.read()
         lineup_file.close()
         self.assertTrue(lineup_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1640))
+        self.assertEqual(
+            struct.unpack(">II", lineup_bytes[16:24]),
+            (IMAGE_WIDTH, IMAGE_HEIGHT),
+        )
 
     async def test_xavier_card_is_lookup_grant_inventory_and_team_ready(self) -> None:
         player = self.database.get_player("XavierCapone9")
@@ -1418,29 +1430,59 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         lineup_bytes = lineup_file.fp.read()
         lineup_file.close()
         self.assertTrue(lineup_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertEqual(struct.unpack(">II", lineup_bytes[16:24]), (1600, 1640))
+        self.assertEqual(
+            struct.unpack(">II", lineup_bytes[16:24]),
+            (IMAGE_WIDTH, IMAGE_HEIGHT),
+        )
 
     async def test_lineup_rink_svg_uses_ice_and_hockey_markings(self) -> None:
         svg = build_lineup_svg({}, "Balanced", "Not rated yet")
 
-        self.assertIn('stop-color="#f7fafc"', svg)
-        self.assertIn('stop-color="#e5edf2"', svg)
+        self.assertIn('stop-color="#ffffff"', svg)
+        self.assertIn('stop-color="#edf5f9"', svg)
         self.assertIn('stroke="#d52b3e"', svg)
         self.assertEqual(svg.count('stroke="#2867a6"'), 2)
-        self.assertIn('x1="800" y1="165" x2="800" y2="1025"', svg)
-        self.assertIn('cx="800" cy="575" r="112"', svg)
-        self.assertEqual(svg.count('r="68" fill="none"'), 6)
-        self.assertIn('cx="360" cy="380" r="68"', svg)
-        self.assertIn('cx="1240" cy="740" r="68"', svg)
-        self.assertIn('x1="152" y1="165" x2="152" y2="1025"', svg)
+        self.assertIn(f'width="{IMAGE_WIDTH}" height="{IMAGE_HEIGHT}"', svg)
+        self.assertIn('x1="155" y1="815" x2="1045" y2="815"', svg)
+        self.assertIn('cx="600" cy="815" r="115"', svg)
+        self.assertEqual(svg.count('r="58" fill="none"'), 4)
+        self.assertIn('cx="410" cy="520" r="58"', svg)
+        self.assertIn('cx="790" cy="1220" r="58"', svg)
+        self.assertIn('x1="155" y1="610" x2="1045" y2="610"', svg)
         self.assertIn('fill-opacity="0.12" stroke="#d52b3e"', svg)
-        self.assertIn('width="1484" height="900" rx="90"', svg)
+        self.assertIn('height="1420" rx="160"', svg)
+        self.assertIn('viewBox="0 0 1200 1980"', svg)
         self.assertIn(">THSL STARTING LINEUP<", svg)
-        self.assertIn('fill="#fff" stroke="#d52b3e"', svg)
+        self.assertIn('fill="#ffffff" fill-opacity="0.3" stroke="#d52b3e"', svg)
+        self.assertIn(">SUBSTITUTES<", svg)
         for position in FORMATION_STARTERS["Balanced"]:
-            layout = STARTER_SLOT_LAYOUTS[position]
-            self.assertGreaterEqual(layout.y, 163)
-            self.assertLessEqual(layout.y + layout.height, 1027)
+            layout = FORMATION_SLOT_LAYOUTS["Balanced"][position]
+            self.assertGreaterEqual(layout.x, RINK_LEFT)
+            self.assertGreaterEqual(layout.y, RINK_TOP)
+            self.assertLessEqual(layout.x + layout.width, RINK_RIGHT)
+            self.assertLessEqual(layout.y + layout.height, RINK_BOTTOM)
+        balanced = FORMATION_SLOT_LAYOUTS["Balanced"]
+        offensive = FORMATION_SLOT_LAYOUTS["Offensive"]
+        defensive = FORMATION_SLOT_LAYOUTS["Defensive"]
+        rink_center_x = (RINK_LEFT + RINK_RIGHT) // 2
+        self.assertLess(balanced["WING1"].x, rink_center_x)
+        self.assertEqual(
+            offensive["WING1"].x + offensive["WING1"].width // 2,
+            rink_center_x - 340,
+        )
+        self.assertGreater(offensive["WING2"].x, rink_center_x)
+        self.assertLess(
+            defensive["CM1"].x + defensive["CM1"].width // 2,
+            rink_center_x,
+        )
+        self.assertGreater(
+            defensive["CM2"].x + defensive["CM2"].width // 2,
+            rink_center_x,
+        )
+        for formation in (balanced, offensive, defensive):
+            self.assertGreater(formation["GK"].y, min(
+                slot.y for key, slot in formation.items() if key != "GK"
+            ))
 
     async def test_packs_menu_shows_odds_and_confirms_once(self) -> None:
         user_id = "packs-menu-user"
@@ -1826,14 +1868,18 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         image_bytes = attachment.fp.read()
         attachment.close()
         self.assertTrue(image_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertEqual(struct.unpack(">II", image_bytes[16:24]), (1600, 1640))
+        self.assertEqual(
+            struct.unpack(">II", image_bytes[16:24]),
+            (IMAGE_WIDTH, IMAGE_HEIGHT),
+        )
         svg = build_lineup_svg(self.database.get_lineup(user_id), "Defensive", "89 OVR")
         self.assertEqual(svg.count("<image href="), 5)
         for formation, positions in FORMATION_STARTERS.items():
             with self.subTest(formation=formation):
                 formation_svg = build_lineup_svg({}, formation, "Not rated yet")
                 starter_slots = [
-                    STARTER_SLOT_LAYOUTS[position] for position in positions
+                    FORMATION_SLOT_LAYOUTS[formation][position]
+                    for position in positions
                 ]
                 self.assertEqual(len(starter_slots), 3)
                 self.assertEqual(
@@ -1846,10 +1892,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     3,
                 )
                 for index, layout in enumerate(starter_slots):
-                    self.assertGreaterEqual(layout.x, 76)
-                    self.assertGreaterEqual(layout.y, 163)
-                    self.assertLessEqual(layout.x + layout.width, 1524)
-                    self.assertLessEqual(layout.y + layout.height, 1027)
+                    self.assertGreaterEqual(layout.x, RINK_LEFT)
+                    self.assertGreaterEqual(layout.y, RINK_TOP)
+                    self.assertLessEqual(layout.x + layout.width, RINK_RIGHT)
+                    self.assertLessEqual(layout.y + layout.height, RINK_BOTTOM)
                     for other in starter_slots[index + 1 :]:
                         overlaps = (
                             layout.x < other.x + other.width
@@ -1859,10 +1905,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                         )
                         self.assertFalse(overlaps)
                 self.assertEqual(formation_svg.count('id="slot-'), 5)
-                self.assertIn('cx="800" cy="575" r="112"', formation_svg)
-                self.assertEqual(formation_svg.count('r="68" fill="none"'), 6)
+                self.assertIn('cx="600" cy="815" r="115"', formation_svg)
+                self.assertEqual(formation_svg.count('r="58" fill="none"'), 4)
         for layout in SUBSTITUTE_SLOT_LAYOUTS:
-            self.assertGreater(layout.y, 1045)
+            self.assertGreater(layout.y, RINK_BOTTOM)
 
     async def test_team_image_renders_empty_starting_substitute_and_mixed_lineups(self) -> None:
         self.database.add_player(
@@ -1917,7 +1963,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 image_bytes = attachment.fp.read()
                 attachment.close()
                 self.assertTrue(image_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-                self.assertEqual(struct.unpack(">II", image_bytes[16:24]), (1600, 1640))
+                self.assertEqual(
+                    struct.unpack(">II", image_bytes[16:24]),
+                    (IMAGE_WIDTH, IMAGE_HEIGHT),
+                )
                 image_outputs[case_name] = image_bytes
 
                 fields = {field.name: field.value for field in message["embed"].fields}
@@ -1935,12 +1984,17 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     }[position]])
 
         self.assertEqual(len(set(image_outputs.values())), len(assignments_by_case))
-        empty_svg = build_lineup_svg({}, "Balanced", "Not rated yet")
-        self.assertEqual(empty_svg.count('id="slot-'), 5)
-        for position in FORMATION_STARTERS["Balanced"] + SUBSTITUTE_POSITIONS:
-            slot_start = empty_svg.index(f'id="slot-{position.lower()}"')
-            slot_end = empty_svg.index("</g>", slot_start)
-            self.assertIn('fill="none" stroke="#8b9ba3"', empty_svg[slot_start:slot_end])
+        for formation, positions in FORMATION_STARTERS.items():
+            with self.subTest(empty_formation=formation):
+                empty_svg = build_lineup_svg({}, formation, "Not rated yet")
+                self.assertEqual(empty_svg.count('id="slot-'), 5)
+                for position in positions + SUBSTITUTE_POSITIONS:
+                    slot_start = empty_svg.index(f'id="slot-{position.lower()}"')
+                    slot_end = empty_svg.index("</g>", slot_start)
+                    self.assertIn(
+                        "stroke-dasharray=",
+                        empty_svg[slot_start:slot_end],
+                    )
 
     async def test_team_renderer_handles_missing_card_art_without_failing(self) -> None:
         self.database.add_player(
@@ -1964,7 +2018,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Balanced",
             "75 OVR average",
         )
-        self.assertIn("NO ART", svg)
+        self.assertIn("ART UNAVAILABLE", svg)
 
         interaction = SimpleNamespace(
             user=SimpleNamespace(id=user_id, display_name="Missing Art User"),

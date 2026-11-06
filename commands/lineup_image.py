@@ -10,13 +10,21 @@ from functools import lru_cache
 from xml.sax.saxutils import escape
 
 from database import FORMATION_STARTERS, Player
-from commands.common import player_card_label, resolve_card_image
+from commands.common import resolve_card_image
 
 logger = logging.getLogger(__name__)
 
-IMAGE_WIDTH = 1600
-IMAGE_HEIGHT = 1640
+IMAGE_WIDTH = 1200
+IMAGE_HEIGHT = 1980
 OUTPUT_FILENAME = "thsl-lineup.png"
+
+RINK_LEFT = 145
+RINK_TOP = 125
+RINK_RIGHT = 1055
+RINK_BOTTOM = 1545
+STARTER_CARD_WIDTH = 190
+STARTER_CARD_HEIGHT = 260
+STARTER_SLOT_HEIGHT = 320
 
 
 @dataclass(frozen=True)
@@ -30,17 +38,54 @@ class SlotLayout:
     accent: str
 
 
-STARTER_SLOT_LAYOUTS = {
-    "WING1": SlotLayout("WING1", "WING 1", 172, 835, 298, 170, "#b23a48"),
-    "WING2": SlotLayout("WING2", "WING 2", 500, 835, 285, 170, "#b23a48"),
-    "CM1": SlotLayout("CM1", "CM 1", 500, 835, 285, 170, "#b23a48"),
-    "CM2": SlotLayout("CM2", "CM 2", 172, 835, 298, 170, "#b23a48"),
-    "GK": SlotLayout("GK", "GOALIE", 815, 835, 285, 170, "#b23a48"),
+FORMATION_SLOT_LAYOUTS = {
+    "Balanced": {
+        "WING1": SlotLayout(
+            "WING1", "LEFT WING", 165, 270, STARTER_CARD_WIDTH,
+            STARTER_SLOT_HEIGHT, "#b23a48",
+        ),
+        "CM1": SlotLayout(
+            "CM1", "CENTER", 505, 650, STARTER_CARD_WIDTH,
+            STARTER_SLOT_HEIGHT, "#b23a48",
+        ),
+        "GK": SlotLayout(
+            "GK", "GOALIE", 505, 1065, STARTER_CARD_WIDTH,
+            STARTER_SLOT_HEIGHT, "#b23a48",
+        ),
+    },
+    "Offensive": {
+        "WING1": SlotLayout(
+            "WING1", "LEFT WING", 165, 270, STARTER_CARD_WIDTH,
+            STARTER_SLOT_HEIGHT, "#b23a48",
+        ),
+        "WING2": SlotLayout(
+            "WING2", "RIGHT WING", 845, 270, STARTER_CARD_WIDTH,
+            STARTER_SLOT_HEIGHT, "#b23a48",
+        ),
+        "GK": SlotLayout(
+            "GK", "GOALIE", 505, 1065, STARTER_CARD_WIDTH,
+            STARTER_SLOT_HEIGHT, "#b23a48",
+        ),
+    },
+    "Defensive": {
+        "CM1": SlotLayout(
+            "CM1", "CENTER 1", 375, 650, STARTER_CARD_WIDTH,
+            STARTER_SLOT_HEIGHT, "#b23a48",
+        ),
+        "CM2": SlotLayout(
+            "CM2", "CENTER 2", 635, 650, STARTER_CARD_WIDTH,
+            STARTER_SLOT_HEIGHT, "#b23a48",
+        ),
+        "GK": SlotLayout(
+            "GK", "GOALIE", 505, 1065, STARTER_CARD_WIDTH,
+            STARTER_SLOT_HEIGHT, "#b23a48",
+        ),
+    },
 }
 
 SUBSTITUTE_SLOT_LAYOUTS = (
-    SlotLayout("SUB1", "SUBSTITUTE 1", 300, 1215, 430, 350, "#607d8b"),
-    SlotLayout("SUB2", "SUBSTITUTE 2", 870, 1215, 430, 350, "#607d8b"),
+    SlotLayout("SUB1", "SUBSTITUTE 1", 230, 1650, 320, 300, "#607d8b"),
+    SlotLayout("SUB2", "SUBSTITUTE 2", 650, 1650, 320, 300, "#607d8b"),
 )
 
 
@@ -84,50 +129,60 @@ def _player_image_uri(player: Player) -> str | None:
     return _card_png_data_uri(str(image_path), modified)
 
 
+def _short_label(value: str, limit: int = 19) -> str:
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
 def _starter_slot_markup(layout: SlotLayout, player: Player | None) -> str:
     x, y, width, height = layout.x, layout.y, layout.width, layout.height
+    center_x = x + width // 2
+    image_y = y
+    image_height = STARTER_CARD_HEIGHT
     markup = (
         f'<g id="slot-{layout.position.lower()}">'
-        f'<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="13" '
-        'fill="#f9fcfd" fill-opacity="0.97" '
-        f'stroke="{layout.accent}" stroke-width="3"/>'
-        f'<text x="{x + width // 2}" y="{y + 24}" class="slot-title" '
+        f'<text x="{center_x}" y="{y - 16}" class="position-label" '
         f'text-anchor="middle">{escape(layout.label)}</text>'
     )
     if player is None:
-        center_x = x + width // 2
-        center_y = y + 92
+        center_y = y + image_height // 2
         markup += (
-            f'<circle cx="{center_x}" cy="{center_y}" r="38" fill="none" '
-            'stroke="#8b9ba3" stroke-width="4"/>'
-            f'<text x="{center_x}" y="{y + 151}" class="empty-label" '
-            'text-anchor="middle">EMPTY</text>'
+            f'<circle cx="{center_x}" cy="{center_y}" r="58" '
+            'fill="#fafdff" fill-opacity="0.76" '
+            f'stroke="{layout.accent}" stroke-width="5" stroke-dasharray="12 10"/>'
+            f'<circle cx="{center_x}" cy="{center_y}" r="8" '
+            f'fill="{layout.accent}" fill-opacity="0.7"/>'
+            f'<text x="{center_x}" y="{y + 294}" class="empty-label" '
+            'text-anchor="middle">OPEN POSITION</text>'
         )
         return markup + "</g>"
 
     image_uri = _player_image_uri(player)
-    image_x, image_y = x + 12, y + 38
-    image_width, image_height = 82, 118
     if image_uri is None:
+        center_y = image_y + image_height // 2
         markup += (
-            f'<circle cx="{image_x + image_width // 2}" '
-            f'cy="{image_y + image_height // 2}" r="32" fill="none" '
-            'stroke="#8b9ba3" stroke-width="4"/>'
-            f'<text x="{image_x + image_width // 2}" y="{image_y + image_height + 15}" '
-            'class="empty-label" text-anchor="middle">NO ART</text>'
+            f'<circle cx="{center_x}" cy="{center_y}" r="58" '
+            'fill="#fafdff" fill-opacity="0.82" '
+            f'stroke="{layout.accent}" stroke-width="5"/>'
+            f'<text x="{center_x}" y="{center_y + 6}" class="empty-label" '
+            'text-anchor="middle">ART UNAVAILABLE</text>'
         )
     else:
         markup += (
-            f'<image href="{image_uri}" x="{image_x}" y="{image_y}" '
-            f'width="{image_width}" height="{image_height}" '
+            f'<image href="{image_uri}" x="{x}" y="{image_y}" '
+            f'width="{width}" height="{image_height}" '
             'preserveAspectRatio="xMidYMid meet"/>'
         )
 
-    display_name = player.name if len(player.name) <= 17 else player.name[:16] + "…"
     markup += (
-        f'<text x="{x + 108}" y="{y + 86}" class="starter-name">'
-        f'{escape(display_name)}</text>'
-        f'<text x="{x + 108}" y="{y + 117}" class="starter-meta">'
+        f'<rect x="{x - 8}" y="{y + image_height + 5}" '
+        f'width="{width + 16}" height="52" rx="12" '
+        'fill="#102b3a" fill-opacity="0.92" '
+        'stroke="#ffffff" stroke-opacity="0.55" stroke-width="2"/>'
+        f'<text x="{center_x}" y="{y + image_height + 26}" '
+        'class="starter-name" text-anchor="middle">'
+        f'{escape(_short_label(player.name))}</text>'
+        f'<text x="{center_x}" y="{y + image_height + 46}" '
+        'class="starter-meta" text-anchor="middle">'
         f'{player.overall} OVR · {escape(player.rarity.upper())}</text>'
     )
     return markup + "</g>"
@@ -135,33 +190,34 @@ def _starter_slot_markup(layout: SlotLayout, player: Player | None) -> str:
 
 def _substitute_slot_markup(layout: SlotLayout, player: Player | None) -> str:
     x, y, width, height = layout.x, layout.y, layout.width, layout.height
+    center_x = x + width // 2
     markup = (
         f'<g id="slot-{layout.position.lower()}">'
-        f'<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="22" '
-        'fill="#f9fcfd" stroke="#c7d6e3" stroke-width="3"/>'
-        f'<text x="{x + width // 2}" y="{y + 42}" class="slot-title-dark" '
+        f'<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="24" '
+        'fill="#102b3a" fill-opacity="0.96" stroke="#b9d4df" stroke-width="3"/>'
+        f'<text x="{center_x}" y="{y + 30}" class="sub-position" '
         f'text-anchor="middle">{escape(layout.label)}</text>'
     )
     if player is None:
-        center_x, center_y = x + width // 2, y + 190
+        center_y = y + 154
         markup += (
-            f'<circle cx="{center_x}" cy="{center_y}" r="68" fill="none" '
-            'stroke="#8b9ba3" stroke-width="6"/>'
-            f'<text x="{center_x}" y="{center_y + 105}" class="empty-label" '
+            f'<circle cx="{center_x}" cy="{center_y}" r="54" fill="none" '
+            'stroke="#b8d3df" stroke-width="5" stroke-dasharray="12 10"/>'
+            f'<text x="{center_x}" y="{center_y + 88}" class="empty-label" '
             'text-anchor="middle">EMPTY</text>'
         )
         return markup + "</g>"
 
     image_uri = _player_image_uri(player)
-    image_x, image_y = x + 24, y + 72
-    image_width, image_height = 160, 252
+    image_width, image_height = 145, 200
+    image_x, image_y = x + (width - image_width) // 2, y + 42
     if image_uri is None:
+        center_y = image_y + image_height // 2
         markup += (
-            f'<circle cx="{image_x + image_width // 2}" '
-            f'cy="{image_y + image_height // 2}" r="56" fill="none" '
-            'stroke="#8b9ba3" stroke-width="5"/>'
-            f'<text x="{image_x + image_width // 2}" y="{image_y + image_height + 23}" '
-            'class="empty-label" text-anchor="middle">IMAGE UNAVAILABLE</text>'
+            f'<circle cx="{center_x}" cy="{center_y}" r="48" fill="none" '
+            'stroke="#b8d3df" stroke-width="5"/>'
+            f'<text x="{center_x}" y="{center_y + 6}" class="empty-label" '
+            'text-anchor="middle">NO ART</text>'
         )
     else:
         markup += (
@@ -170,12 +226,11 @@ def _substitute_slot_markup(layout: SlotLayout, player: Player | None) -> str:
             'preserveAspectRatio="xMidYMid meet"/>'
         )
     markup += (
-        f'<text x="{x + 210}" y="{y + 150}" class="sub-name">'
-        f'{escape(player.name[:24])}</text>'
-        f'<text x="{x + 210}" y="{y + 190}" class="sub-meta">'
+        f'<text x="{center_x}" y="{y + 270}" class="sub-name" '
+        f'text-anchor="middle">{escape(_short_label(player.name, 24))}</text>'
+        f'<text x="{center_x}" y="{y + 292}" class="sub-meta" '
+        'text-anchor="middle">'
         f'{player.overall} OVR · {escape(player.rarity.upper())}</text>'
-        f'<text x="{x + 210}" y="{y + 230}" class="sub-meta">'
-        f'{escape(player.position)}</text>'
     )
     return markup + "</g>"
 
@@ -195,7 +250,7 @@ def build_lineup_svg(
         f"Team value: {value_text}"
     )
     starter_markup = "".join(
-        _starter_slot_markup(STARTER_SLOT_LAYOUTS[position], lineup.get(position))
+        _starter_slot_markup(FORMATION_SLOT_LAYOUTS[formation][position], lineup.get(position))
         for position in FORMATION_STARTERS[formation]
     )
     substitute_markup = "".join(
@@ -210,89 +265,106 @@ def build_lineup_svg(
         viewBox="0 0 {IMAGE_WIDTH} {IMAGE_HEIGHT}">
       <defs>
         <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#101b23"/>
-          <stop offset="1" stop-color="#07110f"/>
+          <stop offset="0" stop-color="#0b1c28"/>
+          <stop offset="1" stop-color="#102b39"/>
         </linearGradient>
-        <linearGradient id="rink" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#f7fafc"/>
-          <stop offset="1" stop-color="#e5edf2"/>
+        <linearGradient id="ice" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffffff"/>
+          <stop offset="0.52" stop-color="#f7fbfd"/>
+          <stop offset="1" stop-color="#edf5f9"/>
         </linearGradient>
+        <pattern id="ice-grain" width="34" height="34" patternUnits="userSpaceOnUse">
+          <path d="M0 33.5H34" stroke="#c9dce6" stroke-opacity="0.16" stroke-width="1"/>
+          <circle cx="8" cy="10" r="1" fill="#a8c4d2" fill-opacity="0.14"/>
+          <circle cx="26" cy="25" r="1" fill="#a8c4d2" fill-opacity="0.1"/>
+        </pattern>
         <clipPath id="ice-boundary">
-          <rect x="78" y="165" width="1444" height="860" rx="72"/>
+          <rect x="{RINK_LEFT}" y="{RINK_TOP}" width="{RINK_RIGHT - RINK_LEFT}"
+            height="{RINK_BOTTOM - RINK_TOP}" rx="160"/>
         </clipPath>
         <style>
           text {{ font-family: 'DejaVu Sans', Arial, sans-serif; }}
-          .title {{ fill: #f5fbff; font-size: 43px; font-weight: 700; letter-spacing: 1px; }}
-          .subtitle {{ fill: #a9bfca; font-size: 18px; }}
-          .badge {{ fill: #e5f5ff; font-size: 22px; font-weight: 700; }}
-          .slot-title {{ fill: #243e4a; font-size: 15px; font-weight: 700; letter-spacing: 1px; }}
-          .slot-title-dark {{ fill: #243e4a; font-size: 22px; font-weight: 700; letter-spacing: 1px; }}
-          .starter-name {{ fill: #18303b; font-size: 18px; font-weight: 700; }}
-          .starter-meta {{ fill: #46606b; font-size: 16px; font-weight: 600; }}
-          .sub-name {{ fill: #18303b; font-size: 23px; font-weight: 700; }}
-          .sub-meta {{ fill: #46606b; font-size: 19px; font-weight: 600; }}
-          .empty-label {{ fill: #91a9a6; font-size: 16px; font-weight: 700; letter-spacing: 1px; }}
-          .section {{ fill: #f2f7fa; font-size: 25px; font-weight: 700; letter-spacing: 2px; }}
+          .title {{ fill: #f5fbff; font-size: 39px; font-weight: 700; letter-spacing: 1.5px; }}
+          .subtitle {{ fill: #bdd0d9; font-size: 18px; }}
+          .badge {{ fill: #e5f5ff; font-size: 20px; font-weight: 700; }}
+          .position-label {{ fill: #234251; font-size: 17px; font-weight: 800; letter-spacing: 1.4px; }}
+          .starter-name {{ fill: #ffffff; font-size: 16px; font-weight: 700; }}
+          .starter-meta {{ fill: #d1e2e9; font-size: 15px; font-weight: 700; }}
+          .sub-position {{ fill: #eaf6fb; font-size: 19px; font-weight: 800; letter-spacing: 1.2px; }}
+          .sub-name {{ fill: #ffffff; font-size: 18px; font-weight: 700; }}
+          .sub-meta {{ fill: #c5d9e1; font-size: 16px; font-weight: 600; }}
+          .empty-label {{ fill: #597681; font-size: 15px; font-weight: 800; letter-spacing: 1px; }}
+          .section {{ fill: #f2f7fa; font-size: 25px; font-weight: 800; letter-spacing: 2px; }}
+          .ice-line {{ fill: none; stroke: #d52b3e; stroke-width: 5; }}
         </style>
       </defs>
       <rect width="100%" height="100%" fill="url(#background)"/>
-      <text x="66" y="69" class="title">THSL STARTING LINEUP</text>
-      <text x="68" y="111" class="subtitle">{subtitle}</text>
-      <rect x="1100" y="33" width="440" height="54" rx="27"
-        fill="#183b4a" stroke="#7ed4f5" stroke-width="2"/>
-      <text x="1320" y="68" class="badge" text-anchor="middle">{formation_badge}</text>
+      <text x="600" y="57" class="title" text-anchor="middle">THSL STARTING LINEUP</text>
+      <text x="600" y="91" class="subtitle" text-anchor="middle">{subtitle}</text>
+      <rect x="420" y="103" width="360" height="40" rx="20"
+        fill="#173b4b" stroke="#75c9e8" stroke-width="2"/>
+      <text x="600" y="130" class="badge" text-anchor="middle">{formation_badge}</text>
 
-      <rect x="58" y="145" width="1484" height="900" rx="90"
-        fill="#f8fbfc" stroke="#eef3f6" stroke-width="8"/>
-      <rect x="76" y="163" width="1448" height="864" rx="76"
-        fill="url(#rink)" stroke="#c6d4dc" stroke-width="3"/>
+      <rect x="130" y="110" width="940" height="1460" rx="180"
+        fill="#eef4f7" stroke="#d8e5eb" stroke-width="7"/>
+      <rect x="{RINK_LEFT}" y="{RINK_TOP}" width="{RINK_RIGHT - RINK_LEFT}"
+        height="{RINK_BOTTOM - RINK_TOP}" rx="160"
+        fill="url(#ice)" stroke="#367fa8" stroke-width="4"/>
       <g clip-path="url(#ice-boundary)">
-        <line x1="800" y1="165" x2="800" y2="1025"
-          stroke="#d52b3e" stroke-width="7"/>
-        <line x1="485" y1="165" x2="485" y2="1025"
-          stroke="#2867a6" stroke-width="8"/>
-        <line x1="1115" y1="165" x2="1115" y2="1025"
-          stroke="#2867a6" stroke-width="8"/>
-        <path d="M 152 420 A 115 115 0 0 1 152 650 L 152 420 Z"
-          fill="#e83d50" fill-opacity="0.12" stroke="#d52b3e" stroke-width="5"/>
-        <path d="M 1448 420 A 115 115 0 0 0 1448 650 L 1448 420 Z"
-          fill="#e83d50" fill-opacity="0.12" stroke="#d52b3e" stroke-width="5"/>
-        <line x1="152" y1="165" x2="152" y2="1025"
-          stroke="#d52b3e" stroke-width="6"/>
-        <line x1="1448" y1="165" x2="1448" y2="1025"
-          stroke="#d52b3e" stroke-width="6"/>
-        <circle cx="800" cy="575" r="112" fill="none"
-          stroke="#d52b3e" stroke-width="5"/>
-        <circle cx="800" cy="575" r="10" fill="#d52b3e" stroke="#fff" stroke-width="3"/>
-        <circle cx="360" cy="380" r="68" fill="none"
-          stroke="#d52b3e" stroke-width="4"/>
-        <circle cx="1240" cy="380" r="68" fill="none"
-          stroke="#d52b3e" stroke-width="4"/>
-        <circle cx="360" cy="740" r="68" fill="none"
-          stroke="#d52b3e" stroke-width="4"/>
-        <circle cx="1240" cy="740" r="68" fill="none"
-          stroke="#d52b3e" stroke-width="4"/>
-        <circle cx="360" cy="380" r="8" fill="#d52b3e" stroke="#fff" stroke-width="3"/>
-        <circle cx="1240" cy="380" r="8" fill="#d52b3e" stroke="#fff" stroke-width="3"/>
-        <circle cx="360" cy="740" r="8" fill="#d52b3e" stroke="#fff" stroke-width="3"/>
-        <circle cx="1240" cy="740" r="8" fill="#d52b3e" stroke="#fff" stroke-width="3"/>
-        <circle cx="610" cy="380" r="8" fill="#d52b3e" stroke="#fff" stroke-width="3"/>
-        <circle cx="990" cy="380" r="8" fill="#d52b3e" stroke="#fff" stroke-width="3"/>
-        <circle cx="610" cy="740" r="8" fill="#d52b3e" stroke="#fff" stroke-width="3"/>
-        <circle cx="990" cy="740" r="8" fill="#d52b3e" stroke="#fff" stroke-width="3"/>
-      </g>
-      <rect x="84" y="522" width="68" height="75" rx="8"
-        fill="#fff" stroke="#d52b3e" stroke-width="5"/>
-      <rect x="1448" y="522" width="68" height="75" rx="8"
-        fill="#fff" stroke="#d52b3e" stroke-width="5"/>
+        <rect x="{RINK_LEFT}" y="{RINK_TOP}" width="{RINK_RIGHT - RINK_LEFT}"
+          height="{RINK_BOTTOM - RINK_TOP}" fill="url(#ice-grain)"/>
 
-      <text x="800" y="817" class="section" text-anchor="middle">STARTING LINEUP · THREE POSITIONS</text>
+        <line x1="155" y1="610" x2="1045" y2="610"
+          stroke="#2867a6" stroke-width="8"/>
+        <line x1="155" y1="1020" x2="1045" y2="1020"
+          stroke="#2867a6" stroke-width="8"/>
+        <line x1="155" y1="815" x2="1045" y2="815"
+          stroke="#d52b3e" stroke-width="7"/>
+        <line x1="155" y1="230" x2="1045" y2="230"
+          stroke="#d52b3e" stroke-width="6"/>
+        <line x1="155" y1="1475" x2="1045" y2="1475"
+          stroke="#d52b3e" stroke-width="6"/>
+
+        <circle cx="600" cy="815" r="115" fill="#ffffff" fill-opacity="0.18"
+          stroke="#d52b3e" stroke-width="5"/>
+        <circle cx="600" cy="815" r="10" fill="#d52b3e" stroke="#ffffff" stroke-width="3"/>
+
+        <circle cx="410" cy="520" r="58" fill="none"
+          stroke="#d52b3e" stroke-width="5"/>
+        <circle cx="790" cy="520" r="58" fill="none"
+          stroke="#d52b3e" stroke-width="5"/>
+        <circle cx="410" cy="1220" r="58" fill="none"
+          stroke="#d52b3e" stroke-width="5"/>
+        <circle cx="790" cy="1220" r="58" fill="none"
+          stroke="#d52b3e" stroke-width="5"/>
+        <circle cx="410" cy="520" r="9" fill="#d52b3e" stroke="#ffffff" stroke-width="3"/>
+        <circle cx="790" cy="520" r="9" fill="#d52b3e" stroke="#ffffff" stroke-width="3"/>
+        <circle cx="410" cy="1220" r="9" fill="#d52b3e" stroke="#ffffff" stroke-width="3"/>
+        <circle cx="790" cy="1220" r="9" fill="#d52b3e" stroke="#ffffff" stroke-width="3"/>
+
+        <circle cx="470" cy="610" r="8" fill="#d52b3e" stroke="#ffffff" stroke-width="3"/>
+        <circle cx="730" cy="610" r="8" fill="#d52b3e" stroke="#ffffff" stroke-width="3"/>
+        <circle cx="470" cy="1030" r="8" fill="#d52b3e" stroke="#ffffff" stroke-width="3"/>
+        <circle cx="730" cy="1030" r="8" fill="#d52b3e" stroke="#ffffff" stroke-width="3"/>
+
+        <path d="M 510 230 A 90 90 0 0 1 690 230"
+          fill="#74bce3" fill-opacity="0.12" stroke="#d52b3e" stroke-width="5"/>
+        <path d="M 510 1475 A 90 90 0 0 0 690 1475"
+          fill="#74bce3" fill-opacity="0.12" stroke="#d52b3e" stroke-width="5"/>
+      </g>
+
+      <rect x="555" y="135" width="90" height="95" rx="10"
+        fill="#ffffff" fill-opacity="0.28" stroke="#d52b3e" stroke-width="5"/>
+      <line x1="555" y1="160" x2="645" y2="160" stroke="#d52b3e" stroke-width="4"/>
+      <rect x="555" y="1475" width="90" height="58" rx="8"
+        fill="#ffffff" fill-opacity="0.3" stroke="#d52b3e" stroke-width="5"/>
+      <line x1="555" y1="1490" x2="645" y2="1490" stroke="#d52b3e" stroke-width="4"/>
 
       {slot_markup}
 
-      <text x="800" y="1100" class="section" text-anchor="middle">SUBSTITUTES</text>
-      <text x="800" y="1142" class="subtitle" text-anchor="middle">
-        Two bench positions · value included in team worth
+      <text x="600" y="1600" class="section" text-anchor="middle">SUBSTITUTES</text>
+      <text x="600" y="1632" class="subtitle" text-anchor="middle">
+        Two bench positions · available in every formation
       </text>
     </svg>"""
 
