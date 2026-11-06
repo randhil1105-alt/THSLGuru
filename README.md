@@ -38,12 +38,11 @@ Administrator-only commands:
 - `/grantcoins` grants coins.
 - `/grantcard` grants one or more card copies.
 
-The initial catalog contains Dan, XavierCapone9, Gamer, Hala (Gold 90),
-Dryboomrun, Needy, and Fadi as GOLD cards, plus Licha and the original Hala card as TOTW. Card
-names display as `<overall> <player> (<card type>)` throughout player-facing
-lists and details. If a future catalog
-has no cards of a requested pack rarity, the pack command explains that none are
-available and does not charge.
+The seeded catalog includes 13 GOLD cards, including Mr P, Dark, and Road, plus
+Licha and the original Hala card as TOTW. Card names display as
+`<overall> <player> (<card type>)` throughout player-facing lists and details.
+If a catalog has no cards of a requested pack rarity, the pack command explains
+that none are available and does not charge.
 
 ## Run locally or on Replit
 

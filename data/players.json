@@ -214,5 +214,59 @@
       "ACT": 80
     },
     "image_path": "cards/cheddar.png"
+  },
+  {
+    "name": "Mr P",
+    "overall": 86,
+    "position": "WI",
+    "country": "USA",
+    "team": "New York Rangers",
+    "rarity": "GOLD",
+    "value": 400000,
+    "stats": {
+      "SHO": 89,
+      "DRI": 84,
+      "SAV": 81,
+      "PAS": 85,
+      "DEF": 87,
+      "ACT": 86
+    },
+    "image_path": "cards/mr_p_gold.png"
+  },
+  {
+    "name": "Dark",
+    "overall": 84,
+    "position": "WI",
+    "country": "Canada",
+    "team": "New York Rangers",
+    "rarity": "GOLD",
+    "value": 400000,
+    "stats": {
+      "SHO": 86,
+      "DRI": 84,
+      "SAV": 78,
+      "PAS": 85,
+      "DEF": 80,
+      "ACT": 83
+    },
+    "image_path": "cards/dark_gold.png"
+  },
+  {
+    "name": "Road",
+    "overall": 86,
+    "position": "GK",
+    "country": "Malta",
+    "team": "Anaheim Ducks",
+    "rarity": "GOLD",
+    "value": 400000,
+    "stats": {
+      "SAV": 89,
+      "DIV": 87,
+      "PAS": 83,
+      "CLE": 83,
+      "SWE": 88,
+      "ACT": 85
+    },
+    "image_path": "cards/road_gold.png"
   }
 ]

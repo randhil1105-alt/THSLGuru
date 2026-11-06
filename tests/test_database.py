@@ -112,8 +112,127 @@ class DatabaseTests(unittest.TestCase):
                 "Mason",
                 "Demox",
                 "Cheddar",
+                "Mr P",
+                "Dark",
+                "Road",
             },
         )
+
+    def test_mr_p_dark_and_road_seed_cards_have_exact_gold_data(self) -> None:
+        expected = {
+            "Mr P": (
+                86,
+                "WI",
+                "USA",
+                "New York Rangers",
+                {"SHO": 89, "DRI": 84, "SAV": 81, "PAS": 85, "DEF": 87, "ACT": 86},
+                "cards/mr_p_gold.png",
+            ),
+            "Dark": (
+                84,
+                "WI",
+                "Canada",
+                "New York Rangers",
+                {"SHO": 86, "DRI": 84, "SAV": 78, "PAS": 85, "DEF": 80, "ACT": 83},
+                "cards/dark_gold.png",
+            ),
+            "Road": (
+                86,
+                "GK",
+                "Malta",
+                "Anaheim Ducks",
+                {"SAV": 89, "DIV": 87, "PAS": 83, "CLE": 83, "SWE": 88, "ACT": 85},
+                "cards/road_gold.png",
+            ),
+        }
+        gold_cards = self.database.get_players(rarity="GOLD")
+        for name, details in expected.items():
+            with self.subTest(card=name):
+                card = self.database.get_player(name)
+                self.assertIsNotNone(card)
+                assert card is not None
+                overall, position, country, team, stats, image_path = details
+                self.assertEqual(
+                    (
+                        card.overall,
+                        card.position,
+                        card.country,
+                        card.team,
+                        card.rarity,
+                        card.value,
+                        card.stats,
+                        card.image_path,
+                    ),
+                    (
+                        overall,
+                        position,
+                        country,
+                        team,
+                        "GOLD",
+                        400_000,
+                        stats,
+                        image_path,
+                    ),
+                )
+                self.assertIn(card, gold_cards)
+
+    def test_new_seed_cards_are_added_without_overwriting_existing_user_data(self) -> None:
+        legacy_database = Database(Path(self.temp_dir.name) / "legacy.sqlite3")
+        old_catalog = [
+            record
+            for record in load_player_seed()
+            if record["name"] not in {"Mr P", "Dark", "Road"}
+        ]
+        legacy_database.initialize(old_catalog)
+        original_players = {
+            player.name: player.id for player in legacy_database.get_players()
+        }
+        legacy_database.set_balance("preserved-user", 123_456)
+        legacy_database.add_inventory("preserved-user", "Dan", 2)
+
+        legacy_database.initialize(load_player_seed())
+        legacy_database.initialize(load_player_seed())
+
+        self.assertEqual(len(legacy_database.get_players()), len(original_players) + 3)
+        self.assertTrue(
+            all(
+                legacy_database.get_player(name).id == player_id
+                for name, player_id in original_players.items()
+            )
+        )
+        self.assertEqual(legacy_database.get_balance("preserved-user"), 123_456)
+        inventory = legacy_database.get_inventory("preserved-user")
+        self.assertEqual([(entry.player.name, entry.quantity) for entry in inventory], [("Dan", 2)])
+        self.assertEqual(
+            len([player for player in legacy_database.get_players() if player.name == "Mr P"]),
+            1,
+        )
+
+    def test_each_new_gold_card_can_be_selected_from_a_gold_pack(self) -> None:
+        class SelectNamedCard:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def choices(self, population: list[sqlite3.Row], weights: list[float], k: int):
+                del weights, k
+                return [next(card for card in population if card["name"] == self.name)]
+
+        for index, name in enumerate(("Mr P", "Dark", "Road")):
+            with self.subTest(card=name):
+                user_id = f"gold-pack-card-{index}"
+                self.database.set_balance(user_id, GOLD_PACK_COST)
+                awarded, balance = self.database.open_pack(
+                    user_id,
+                    "GOLD",
+                    GOLD_PACK_COST,
+                    rng=SelectNamedCard(name),
+                )
+                self.assertEqual(awarded.name, name)
+                self.assertEqual(balance, 0)
+                self.assertEqual(
+                    [(entry.player.name, entry.quantity) for entry in self.database.get_inventory(user_id)],
+                    [(name, 1)],
+                )
 
     def test_hala_gold_seed_preserves_the_original_totw_card(self) -> None:
         hala_gold = self.database.get_player("Hala (Gold 90)")
