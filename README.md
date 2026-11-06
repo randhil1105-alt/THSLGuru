@@ -12,6 +12,10 @@ persistent SQLite database.
 | `/cards` | Browse the full player card catalog |
 | `/claim` | Claim a weighted GOLD player card once every 30 minutes |
 | `/minigame mode` | Choose Guess Who or Draft |
+| `/auction sell` | List one owned card for 30 minutes, 1 hour, 6 hours, or 24 hours |
+| `/auction browse` | Browse and bid on other players' active auctions |
+| `/auction myauctions` | View your active and completed auctions |
+| `/auction cancel` | Cancel your active auction if it has no bids |
 | `/balance` | Check your balance |
 | `/leaderboard` | Show the ten largest balances |
 | `/inventory` | Show cards you own |
@@ -75,6 +79,13 @@ chance of winning. A win awards 200,000 coins; losses award nothing. Each user
 has a separate, persistent 10-minute Draft cooldown. Draft choices and results
 show original card artwork when it is available. Message Content Intent is not
 needed because Guess Who answers arrive through the interaction modal.
+
+Auction listings remove one available card copy from the seller's inventory
+until the auction is cancelled or settled. Bids are held by deducting them from
+the bidder's spendable SQLite balance; outbidding releases the previous bid,
+and a winner pays the seller when the auction expires. A no-bid auction returns
+its card to the seller. Active listings, bids, and settlement state survive bot
+restarts, and expired auctions are processed automatically.
 
 ## SQLite persistence
 

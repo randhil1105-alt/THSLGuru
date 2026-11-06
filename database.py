@@ -1265,7 +1265,8 @@ class Database:
                 """
                 UPDATE auctions
                 SET status = 'UNSOLD', completed_at = ?,
-                    seller_notified = 0, bidder_notified = 1
+                    seller_notification_attempted = 0,
+                    bidder_notification_attempted = 1
                 WHERE auction_id = ? AND status = 'ACTIVE'
                 """,
                 (completed_at, auction_id),
@@ -1302,7 +1303,8 @@ class Database:
                 """
                 UPDATE auctions
                 SET status = 'COMPLETED', completed_at = ?,
-                    seller_notified = 0, bidder_notified = 0
+                    seller_notification_attempted = 0,
+                    bidder_notification_attempted = 0
                 WHERE auction_id = ? AND status = 'ACTIVE'
                 """,
                 (completed_at, auction_id),
@@ -1515,9 +1517,11 @@ class Database:
             rows = connection.execute(
                 AUCTION_JOIN_SQL
                 + """
-                WHERE (a.status = 'UNSOLD' AND a.seller_notified = 0)
+                WHERE (a.status = 'UNSOLD'
+                       AND a.seller_notification_attempted = 0)
                    OR (a.status = 'COMPLETED'
-                       AND (a.seller_notified = 0 OR a.bidder_notified = 0))
+                       AND (a.seller_notification_attempted = 0
+                            OR a.bidder_notification_attempted = 0))
                 ORDER BY a.completed_at ASC
                 """
             ).fetchall()
@@ -1529,8 +1533,8 @@ class Database:
         recipient: str,
     ) -> None:
         column = {
-            "seller": "seller_notified",
-            "bidder": "bidder_notified",
+            "seller": "seller_notification_attempted",
+            "bidder": "bidder_notification_attempted",
         }.get(recipient)
         if column is None:
             raise InvalidAmount("Unknown auction notification recipient.")
@@ -3202,6 +3206,7 @@ class Database:
         normalized_id = str(auction_id).strip()
         normalized_seller_id = self._validate_user_id(seller_id)
         current_time = int(time.time() if now is None else now)
+        expired = False
         with self._transaction() as connection:
             auction = connection.execute(
                 "SELECT * FROM auctions WHERE auction_id = ?",
@@ -3213,29 +3218,36 @@ class Database:
                 raise AuctionNotSeller("Only the seller can cancel this auction.")
             if str(auction["status"]) != "ACTIVE":
                 raise AuctionNotActive("This auction is no longer active.")
-            if auction["highest_bid"] is not None:
+            if current_time >= int(auction["end_time"]):
+                self._finish_auction_locked(connection, auction, current_time)
+                expired = True
+            elif auction["highest_bid"] is not None:
                 raise AuctionHasBids(
                     "Auctions cannot be cancelled after the first bid."
                 )
-
-            self._add_inventory_copy(
-                connection,
-                normalized_seller_id,
-                int(auction["player_id"]),
-            )
-            connection.execute(
-                """
-                UPDATE auctions
-                SET status = 'CANCELLED', completed_at = ?,
-                    seller_notified = 1, bidder_notified = 1
-                WHERE auction_id = ? AND status = 'ACTIVE'
-                """,
-                (current_time, normalized_id),
-            )
-            row = self._auction_row(connection, normalized_id)
-            if row is None:
-                raise AuctionNotFound(normalized_id)
-            return self._auction_from_row(row)
+            else:
+                self._add_inventory_copy(
+                    connection,
+                    normalized_seller_id,
+                    int(auction["player_id"]),
+                )
+                connection.execute(
+                    """
+                    UPDATE auctions
+                    SET status = 'CANCELLED', completed_at = ?,
+                        seller_notification_attempted = 1,
+                        bidder_notification_attempted = 1
+                    WHERE auction_id = ? AND status = 'ACTIVE'
+                    """,
+                    (current_time, normalized_id),
+                )
+                row = self._auction_row(connection, normalized_id)
+                if row is None:
+                    raise AuctionNotFound(normalized_id)
+                result = self._auction_from_row(row)
+        if expired:
+            raise AuctionExpired("This auction expired and has been settled.")
+        return result
     def sell_card(
         self, user_id: str | int, player_name: str, quantity: int = 1
     ) -> tuple[int, int]:

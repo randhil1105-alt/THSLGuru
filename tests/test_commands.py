@@ -78,6 +78,7 @@ EXPECTED_COMMANDS = {
     "grantcard",
     "minigame",
     "match",
+    "auction",
 }
 
 
@@ -211,9 +212,43 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                         discord.Permissions(administrator=True).value,
                     )
                     self.assertTrue(command.checks)
+                elif isinstance(command, discord.app_commands.Group):
+                    self.assertIsNone(command.default_permissions)
                 else:
                     self.assertIsNone(command.default_permissions)
                     self.assertFalse(command.checks)
+
+        for name in ("claim", "minigame"):
+            with self.subTest(public_command=name):
+                self.assertIsNone(commands[name].default_permissions)
+                self.assertFalse(commands[name].checks)
+
+        auction_group = commands["auction"]
+        self.assertIsNone(auction_group.default_permissions)
+        self.assertEqual(
+            {command.name for command in auction_group.commands},
+            {"sell", "browse", "myauctions", "cancel"},
+        )
+        for command in auction_group.commands:
+            with self.subTest(auction_subcommand=command.name):
+                self.assertIsNone(command.default_permissions)
+        auction_commands = {command.name: command for command in auction_group.commands}
+        sell_parameters = {
+            parameter.name: parameter
+            for parameter in auction_commands["sell"].parameters
+        }
+        self.assertEqual(
+            [choice.value for choice in sell_parameters["duration"].choices],
+            [1_800, 3_600, 21_600, 86_400],
+        )
+
+        minigame_parameters = {
+            parameter.name: parameter for parameter in commands["minigame"].parameters
+        }
+        self.assertEqual(
+            [choice.value for choice in minigame_parameters["mode"].choices],
+            ["guess", "draft"],
+        )
 
         set_parameters = {
             parameter.name: parameter for parameter in commands["set"].parameters
