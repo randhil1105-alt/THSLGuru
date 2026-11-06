@@ -2516,6 +2516,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "allowed": ("GK",),
                 "forbidden": ("WING1", "CM1", "SUB1", "SUB2"),
                 "image": "cards/megan_gold.png",
+                "value": 560_000,
                 "stats": {"SAV": 85, "DIV": 85, "PAS": 82, "CLE": 82, "SWE": 83, "ACT": 85},
             },
             "Jaycob": {
@@ -2526,6 +2527,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "allowed": ("GK",),
                 "forbidden": ("WING1", "CM1", "SUB1", "SUB2"),
                 "image": "cards/jaycob_gold.png",
+                "value": 1_300_000,
                 "stats": {"SAV": 90, "DIV": 90, "PAS": 85, "CLE": 85, "SWE": 87, "ACT": 89},
             },
             "Karuwrld": {
@@ -2536,6 +2538,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "allowed": ("WING1", "WING2"),
                 "forbidden": ("GK", "CM1", "SUB1", "SUB2"),
                 "image": "cards/karuwrld_gold.png",
+                "value": 460_000,
                 "stats": {"SHO": 84, "DRI": 78, "SAV": 77, "PAS": 80, "DEF": 82, "ACT": 76},
             },
         }
@@ -2565,7 +2568,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(fields["Country"], details["country"])
                 self.assertEqual(fields["Team"], details["team"])
                 self.assertEqual(fields["Card Type"], "Gold")
-                self.assertEqual(fields["Value"], "2,600,000 coins")
+                self.assertEqual(fields["Value"], f"{details['value']:,} coins")
                 self.assertEqual(
                     fields["Stats"],
                     " · ".join(
@@ -2691,10 +2694,37 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 field.name: field.value
                 for field in team_message["embed"].fields
             }[slot_label])
+            self.assertIn(
+                f"Value: {details['value']:,} coins",
+                {
+                    field.name: field.value
+                    for field in team_message["embed"].fields
+                }[slot_label],
+            )
             team_file = team_message["file"]
             self.assertTrue(team_file.fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
             team_file.close()
 
+            seller_id = f"new-gold-card-seller-{index}"
+            self.database.add_inventory(seller_id, name)
+            sale_response = FakeResponse()
+            await InventoryCommands.sell.callback(
+                InventoryCommands(self.database),
+                SimpleNamespace(
+                    user=SimpleNamespace(id=seller_id),
+                    response=sale_response,
+                ),
+                name,
+                1,
+            )
+            self.assertIn(
+                f"for {details['value']:,} coins",
+                sale_response.messages[0]["content"],
+            )
+            self.assertEqual(
+                self.database.get_balance(seller_id),
+                details["value"],
+            )
     async def test_team_renderer_handles_missing_card_art_without_failing(self) -> None:
         self.database.add_player(
             {

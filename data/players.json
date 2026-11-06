@@ -384,7 +384,7 @@
     "country": "Canada",
     "team": "Colorado Avalanche",
     "rarity": "GOLD",
-    "value": 2600000,
+    "value": 560000,
     "stats": {
       "SAV": 85,
       "DIV": 85,
@@ -403,7 +403,7 @@
     "country": "England",
     "team": "New York Rangers",
     "rarity": "GOLD",
-    "value": 2600000,
+    "value": 1300000,
     "stats": {
       "SAV": 90,
       "DIV": 90,
@@ -422,7 +422,7 @@
     "country": "Scotland",
     "team": "Colorado Avalanche",
     "rarity": "GOLD",
-    "value": 2600000,
+    "value": 460000,
     "stats": {
       "SHO": 84,
       "DRI": 78,
