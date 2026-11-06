@@ -19,6 +19,7 @@ MATCH_REWARD = 5_000_000
 MATCH_INVITATION_SECONDS = 60
 DRAFT_COOLDOWN_SECONDS = 10 * 60
 DRAFT_WIN_REWARD = 200_000
+AUCTION_DURATIONS_SECONDS = (30 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60)
 SQLITE_INT_MAX = (1 << 63) - 1
 SUPPORTED_STATS = ("SHO", "DRI", "SAV", "PAS", "DEF", "ACT", "DIV", "CLE", "SWE")
 FORMATION_STARTERS = {
@@ -26,6 +27,23 @@ FORMATION_STARTERS = {
     "Offensive": ("WING1", "WING2", "GK"),
     "Defensive": ("CM1", "CM2", "GK"),
 }
+AUCTION_JOIN_SQL = """
+    SELECT a.*,
+           p.id AS card_id,
+           p.name AS card_name,
+           p.overall AS card_overall,
+           p.position AS card_position,
+           p.country AS card_country,
+           p.team AS card_team,
+           p.rarity AS card_rarity,
+           p.value AS card_value,
+           p.stats_json AS card_stats_json,
+           p.image_path AS card_image_path,
+           p.allowed_lineup_positions_json AS card_allowed_positions_json
+    FROM auctions AS a
+    JOIN players AS p ON p.id = a.player_id
+"""
+
 STARTING_LINEUP_POSITIONS = ("WING1", "WING2", "CM1", "CM2", "GK")
 SUBSTITUTE_POSITIONS = ("SUB1", "SUB2")
 LINEUP_POSITIONS = STARTING_LINEUP_POSITIONS + SUBSTITUTE_POSITIONS
@@ -95,6 +113,44 @@ class NoEligibleCards(EconomyError):
 
 
 class InvalidAmount(EconomyError):
+    pass
+
+
+class AuctionError(EconomyError):
+    """Base class for auction operation errors."""
+
+
+class AuctionNotFound(AuctionError):
+    pass
+
+
+class AuctionNotActive(AuctionError):
+    pass
+
+
+class AuctionNotSeller(AuctionError):
+    pass
+
+
+class AuctionHasBids(AuctionError):
+    pass
+
+
+class AuctionSelfBid(AuctionError):
+    pass
+
+
+class AuctionBidTooLow(AuctionError):
+    def __init__(self, minimum: int) -> None:
+        self.minimum = int(minimum)
+        super().__init__(self.minimum)
+
+
+class AuctionDuplicateBid(AuctionError):
+    pass
+
+
+class AuctionExpired(AuctionError):
     pass
 
 
@@ -182,6 +238,31 @@ class StartingLineup:
 class InventoryEntry:
     player: Player
     quantity: int
+
+
+@dataclass(frozen=True)
+class Auction:
+    auction_id: str
+    seller_id: str
+    seller_name: str
+    player: Player
+    starting_price: int
+    duration_seconds: int
+    end_time: int
+    status: str
+    highest_bid: int | None
+    highest_bidder_id: str | None
+    highest_bidder_name: str | None
+    channel_id: str | None
+    message_id: str | None
+    created_at: int
+    completed_at: int | None
+    seller_notification_attempted: bool
+    bidder_notification_attempted: bool
+
+    @property
+    def current_price(self) -> int:
+        return self.highest_bid or self.starting_price
 
 
 def card_position_role(position: str) -> str | None:
@@ -469,6 +550,56 @@ class Database:
                     result_json TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS auctions (
+                    auction_id TEXT PRIMARY KEY,
+                    seller_id TEXT NOT NULL REFERENCES users(user_id),
+                    seller_name TEXT NOT NULL,
+                    player_id INTEGER NOT NULL REFERENCES players(id),
+                    starting_price INTEGER NOT NULL CHECK (starting_price > 0),
+                    duration_seconds INTEGER NOT NULL CHECK (
+                        duration_seconds IN (1800, 3600, 21600, 86400)
+                    ),
+                    end_time INTEGER NOT NULL,
+                    status TEXT NOT NULL CHECK (
+                        status IN ('ACTIVE', 'COMPLETED', 'UNSOLD', 'CANCELLED')
+                    ),
+                    highest_bid INTEGER CHECK (
+                        highest_bid IS NULL OR highest_bid > 0
+                    ),
+                    highest_bidder_id TEXT REFERENCES users(user_id),
+                    highest_bidder_name TEXT,
+                    channel_id TEXT,
+                    message_id TEXT,
+                    created_at INTEGER NOT NULL,
+                    completed_at INTEGER,
+                    seller_notification_attempted INTEGER NOT NULL DEFAULT 0 CHECK (
+                        seller_notification_attempted IN (0, 1)
+                    ),
+                    bidder_notification_attempted INTEGER NOT NULL DEFAULT 0 CHECK (
+                        bidder_notification_attempted IN (0, 1)
+                    ),
+                    CHECK (
+                        (highest_bid IS NULL AND highest_bidder_id IS NULL
+                         AND highest_bidder_name IS NULL)
+                        OR
+                        (highest_bid IS NOT NULL AND highest_bidder_id IS NOT NULL
+                         AND highest_bidder_name IS NOT NULL)
+                    )
+                );
+
+                CREATE TABLE IF NOT EXISTS auction_bids (
+                    bid_id TEXT PRIMARY KEY,
+                    auction_id TEXT NOT NULL REFERENCES auctions(auction_id),
+                    interaction_id TEXT NOT NULL UNIQUE,
+                    bidder_id TEXT NOT NULL REFERENCES users(user_id),
+                    bidder_name TEXT NOT NULL,
+                    amount INTEGER NOT NULL CHECK (amount > 0),
+                    status TEXT NOT NULL CHECK (
+                        status IN ('HELD', 'OUTBID', 'SUPERSEDED', 'WON')
+                    ),
+                    created_at INTEGER NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_players_rarity_name
                     ON players(rarity, name);
                 CREATE INDEX IF NOT EXISTS idx_users_balance
@@ -477,6 +608,12 @@ class Database:
                     ON matches(status, expires_at);
                 CREATE INDEX IF NOT EXISTS idx_draft_sessions_user_status
                     ON draft_sessions(user_id, status);
+                CREATE INDEX IF NOT EXISTS idx_auctions_status_end
+                    ON auctions(status, end_time);
+                CREATE INDEX IF NOT EXISTS idx_auctions_seller_created
+                    ON auctions(seller_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_auction_bids_auction_status
+                    ON auction_bids(auction_id, status);
                 """
             )
             player_columns = {
@@ -1102,6 +1239,306 @@ class Database:
             return (
                 self._player_from_row(selected),
                 current_time + CLAIM_COOLDOWN_SECONDS,
+            )
+
+    # Atomic auction settlement and bid operations.
+    def _finish_auction_locked(
+        self,
+        connection: sqlite3.Connection,
+        auction: sqlite3.Row,
+        completed_at: int,
+    ) -> Auction:
+        auction_id = str(auction["auction_id"])
+        seller_id = str(auction["seller_id"])
+        player_id = int(auction["player_id"])
+        held_bid = connection.execute(
+            """
+            SELECT * FROM auction_bids
+            WHERE auction_id = ? AND status = 'HELD'
+            """,
+            (auction_id,),
+        ).fetchone()
+
+        if held_bid is None:
+            self._add_inventory_copy(connection, seller_id, player_id)
+            connection.execute(
+                """
+                UPDATE auctions
+                SET status = 'UNSOLD', completed_at = ?,
+                    seller_notified = 0, bidder_notified = 1
+                WHERE auction_id = ? AND status = 'ACTIVE'
+                """,
+                (completed_at, auction_id),
+            )
+        else:
+            amount = int(held_bid["amount"])
+            bidder_id = str(held_bid["bidder_id"])
+            if (
+                auction["highest_bid"] is None
+                or int(auction["highest_bid"]) != amount
+                or str(auction["highest_bidder_id"]) != bidder_id
+            ):
+                raise RuntimeError(f"Auction {auction_id} has inconsistent held bid.")
+            seller = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (seller_id,),
+            ).fetchone()
+            if seller is None:
+                raise RuntimeError(f"Auction {auction_id} seller account is missing.")
+            seller_balance = int(seller["balance"])
+            if seller_balance + amount > SQLITE_INT_MAX:
+                raise InvalidAmount("The auction proceeds exceed the supported balance.")
+
+            self._add_inventory_copy(connection, bidder_id, player_id)
+            connection.execute(
+                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                (amount, seller_id),
+            )
+            connection.execute(
+                "UPDATE auction_bids SET status = 'WON' WHERE bid_id = ?",
+                (str(held_bid["bid_id"]),),
+            )
+            connection.execute(
+                """
+                UPDATE auctions
+                SET status = 'COMPLETED', completed_at = ?,
+                    seller_notified = 0, bidder_notified = 0
+                WHERE auction_id = ? AND status = 'ACTIVE'
+                """,
+                (completed_at, auction_id),
+            )
+
+        row = self._auction_row(connection, auction_id)
+        if row is None:
+            raise AuctionNotFound(auction_id)
+        return self._auction_from_row(row)
+
+    def place_auction_bid(
+        self,
+        auction_id: str,
+        bidder_id: str | int,
+        bidder_name: str,
+        amount: int,
+        interaction_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> Auction:
+        normalized_auction_id = str(auction_id).strip()
+        normalized_bidder_id = self._validate_user_id(bidder_id)
+        normalized_bidder_name = str(bidder_name).strip()[:80] or normalized_bidder_id
+        normalized_interaction_id = str(interaction_id).strip()
+        amount = self._validate_amount(amount)
+        current_time = int(time.time() if now is None else now)
+        if (
+            not normalized_auction_id
+            or not normalized_interaction_id
+            or len(normalized_interaction_id) > 128
+        ):
+            raise InvalidAmount("That bid request is invalid.")
+
+        expired = False
+        result: Auction | None = None
+        with self._transaction() as connection:
+            duplicate = connection.execute(
+                "SELECT 1 FROM auction_bids WHERE interaction_id = ?",
+                (normalized_interaction_id,),
+            ).fetchone()
+            if duplicate:
+                raise AuctionDuplicateBid("That bid has already been processed.")
+
+            auction = connection.execute(
+                "SELECT * FROM auctions WHERE auction_id = ?",
+                (normalized_auction_id,),
+            ).fetchone()
+            if auction is None:
+                raise AuctionNotFound(normalized_auction_id)
+            if str(auction["status"]) != "ACTIVE":
+                raise AuctionNotActive("This auction is no longer active.")
+            if current_time >= int(auction["end_time"]):
+                self._finish_auction_locked(connection, auction, current_time)
+                expired = True
+            else:
+                if str(auction["seller_id"]) == normalized_bidder_id:
+                    raise AuctionSelfBid("You cannot bid on your own auction.")
+
+                current_high = (
+                    int(auction["highest_bid"])
+                    if auction["highest_bid"] is not None
+                    else None
+                )
+                minimum = (
+                    current_high + 1
+                    if current_high is not None
+                    else int(auction["starting_price"])
+                )
+                if amount < minimum:
+                    raise AuctionBidTooLow(minimum)
+
+                held_bid = connection.execute(
+                    """
+                    SELECT * FROM auction_bids
+                    WHERE auction_id = ? AND status = 'HELD'
+                    """,
+                    (normalized_auction_id,),
+                ).fetchone()
+                same_high_bidder = (
+                    held_bid is not None
+                    and str(held_bid["bidder_id"]) == normalized_bidder_id
+                )
+                if held_bid is not None and current_high is None:
+                    raise RuntimeError(
+                        f"Auction {normalized_auction_id} has a held bid without a price."
+                    )
+                debit_amount = (
+                    amount - current_high
+                    if same_high_bidder and current_high is not None
+                    else amount
+                )
+                self._ensure_user(connection, normalized_bidder_id)
+                bidder = connection.execute(
+                    "SELECT balance FROM users WHERE user_id = ?",
+                    (normalized_bidder_id,),
+                ).fetchone()
+                available = int(bidder["balance"])
+                if available < debit_amount:
+                    raise InsufficientFunds(
+                        f"Need {debit_amount:,} available coins; "
+                        f"you have {available:,}."
+                    )
+                updated = connection.execute(
+                    """
+                    UPDATE users SET balance = balance - ?
+                    WHERE user_id = ? AND balance >= ?
+                    """,
+                    (debit_amount, normalized_bidder_id, debit_amount),
+                )
+                if updated.rowcount != 1:
+                    raise InsufficientFunds(
+                        "Your available balance changed before the bid was placed."
+                    )
+
+                if held_bid is not None:
+                    previous_bidder_id = str(held_bid["bidder_id"])
+                    previous_amount = int(held_bid["amount"])
+                    if same_high_bidder:
+                        connection.execute(
+                            "UPDATE auction_bids SET status = 'SUPERSEDED' "
+                            "WHERE bid_id = ? AND status = 'HELD'",
+                            (str(held_bid["bid_id"]),),
+                        )
+                    else:
+                        previous_user = connection.execute(
+                            "SELECT balance FROM users WHERE user_id = ?",
+                            (previous_bidder_id,),
+                        ).fetchone()
+                        if previous_user is None:
+                            raise RuntimeError(
+                                f"Auction {normalized_auction_id} bidder account is missing."
+                            )
+                        previous_balance = int(previous_user["balance"])
+                        if previous_balance + previous_amount > SQLITE_INT_MAX:
+                            raise InvalidAmount(
+                                "The outbid funds cannot be returned safely right now."
+                            )
+                        connection.execute(
+                            "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                            (previous_amount, previous_bidder_id),
+                        )
+                        connection.execute(
+                            "UPDATE auction_bids SET status = 'OUTBID' "
+                            "WHERE bid_id = ? AND status = 'HELD'",
+                            (str(held_bid["bid_id"]),),
+                        )
+
+                connection.execute(
+                    """
+                    INSERT INTO auction_bids
+                        (bid_id, auction_id, interaction_id, bidder_id,
+                         bidder_name, amount, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'HELD', ?)
+                    """,
+                    (
+                        normalized_interaction_id,
+                        normalized_auction_id,
+                        normalized_interaction_id,
+                        normalized_bidder_id,
+                        normalized_bidder_name,
+                        amount,
+                        current_time,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE auctions
+                    SET highest_bid = ?, highest_bidder_id = ?,
+                        highest_bidder_name = ?
+                    WHERE auction_id = ? AND status = 'ACTIVE'
+                    """,
+                    (
+                        amount,
+                        normalized_bidder_id,
+                        normalized_bidder_name,
+                        normalized_auction_id,
+                    ),
+                )
+                row = self._auction_row(connection, normalized_auction_id)
+                if row is None:
+                    raise AuctionNotFound(normalized_auction_id)
+                result = self._auction_from_row(row)
+
+        if expired:
+            raise AuctionExpired("This auction has expired and has been settled.")
+        if result is None:
+            raise RuntimeError("The bid was not recorded.")
+        return result
+
+    def finalize_expired_auctions(self, *, now: int | None = None) -> list[Auction]:
+        current_time = int(time.time() if now is None else now)
+        completed: list[Auction] = []
+        with self._transaction() as connection:
+            expired = connection.execute(
+                """
+                SELECT * FROM auctions
+                WHERE status = 'ACTIVE' AND end_time <= ?
+                ORDER BY end_time ASC
+                """,
+                (current_time,),
+            ).fetchall()
+            for auction in expired:
+                completed.append(
+                    self._finish_auction_locked(connection, auction, current_time)
+                )
+        return completed
+
+    def list_auctions_pending_notification(self) -> list[Auction]:
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                AUCTION_JOIN_SQL
+                + """
+                WHERE (a.status = 'UNSOLD' AND a.seller_notified = 0)
+                   OR (a.status = 'COMPLETED'
+                       AND (a.seller_notified = 0 OR a.bidder_notified = 0))
+                ORDER BY a.completed_at ASC
+                """
+            ).fetchall()
+        return [self._auction_from_row(row) for row in rows]
+
+    def mark_auction_notification_attempted(
+        self,
+        auction_id: str,
+        recipient: str,
+    ) -> None:
+        column = {
+            "seller": "seller_notified",
+            "bidder": "bidder_notified",
+        }.get(recipient)
+        if column is None:
+            raise InvalidAmount("Unknown auction notification recipient.")
+        with self._transaction() as connection:
+            connection.execute(
+                f"UPDATE auctions SET {column} = 1 "
+                "WHERE auction_id = ? AND status IN ('COMPLETED', 'UNSOLD')",
+                (str(auction_id).strip(),),
             )
 
     def add_inventory(
@@ -2493,6 +2930,312 @@ class Database:
                 balance - total_cost,
             )
 
+    @staticmethod
+    def _auction_from_row(row: sqlite3.Row) -> Auction:
+        allowed_json = row["card_allowed_positions_json"]
+        player = Player(
+            id=int(row["card_id"]),
+            name=str(row["card_name"]),
+            overall=int(row["card_overall"]),
+            position=str(row["card_position"]),
+            country=str(row["card_country"]),
+            team=str(row["card_team"]),
+            rarity=str(row["card_rarity"]),
+            value=int(row["card_value"]),
+            stats=json.loads(row["card_stats_json"]),
+            image_path=row["card_image_path"],
+            allowed_lineup_positions=(
+                tuple(json.loads(allowed_json)) if allowed_json is not None else None
+            ),
+        )
+        return Auction(
+            auction_id=str(row["auction_id"]),
+            seller_id=str(row["seller_id"]),
+            seller_name=str(row["seller_name"]),
+            player=player,
+            starting_price=int(row["starting_price"]),
+            duration_seconds=int(row["duration_seconds"]),
+            end_time=int(row["end_time"]),
+            status=str(row["status"]),
+            highest_bid=(
+                int(row["highest_bid"]) if row["highest_bid"] is not None else None
+            ),
+            highest_bidder_id=(
+                str(row["highest_bidder_id"])
+                if row["highest_bidder_id"] is not None
+                else None
+            ),
+            highest_bidder_name=(
+                str(row["highest_bidder_name"])
+                if row["highest_bidder_name"] is not None
+                else None
+            ),
+            channel_id=str(row["channel_id"]) if row["channel_id"] else None,
+            message_id=str(row["message_id"]) if row["message_id"] else None,
+            created_at=int(row["created_at"]),
+            completed_at=(
+                int(row["completed_at"]) if row["completed_at"] is not None else None
+            ),
+            seller_notification_attempted=bool(
+                row["seller_notification_attempted"]
+            ),
+            bidder_notification_attempted=bool(
+                row["bidder_notification_attempted"]
+            ),
+        )
+
+    @staticmethod
+    def _add_inventory_copy(
+        connection: sqlite3.Connection,
+        user_id: str,
+        player_id: int,
+    ) -> None:
+        owned = connection.execute(
+            "SELECT quantity FROM inventory WHERE user_id = ? AND player_id = ?",
+            (user_id, player_id),
+        ).fetchone()
+        if owned and int(owned["quantity"]) >= SQLITE_INT_MAX:
+            raise InvalidAmount("That inventory quantity is too large.")
+        connection.execute(
+            """
+            INSERT INTO inventory(user_id, player_id, quantity)
+            VALUES (?, ?, 1)
+            ON CONFLICT(user_id, player_id)
+            DO UPDATE SET quantity = inventory.quantity + 1
+            """,
+            (user_id, player_id),
+        )
+
+    @staticmethod
+    def _remove_inventory_copy(
+        connection: sqlite3.Connection,
+        user_id: str,
+        player_id: int,
+        quantity: int,
+    ) -> None:
+        if quantity <= 1:
+            connection.execute(
+                "DELETE FROM inventory WHERE user_id = ? AND player_id = ?",
+                (user_id, player_id),
+            )
+        else:
+            connection.execute(
+                "UPDATE inventory SET quantity = quantity - 1 "
+                "WHERE user_id = ? AND player_id = ?",
+                (user_id, player_id),
+            )
+
+    @staticmethod
+    def _auction_row(
+        connection: sqlite3.Connection,
+        auction_id: str,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            AUCTION_JOIN_SQL + " WHERE a.auction_id = ?",
+            (auction_id,),
+        ).fetchone()
+
+    def create_auction(
+        self,
+        seller_id: str | int,
+        seller_name: str,
+        player_id: int,
+        starting_price: int,
+        duration_seconds: int,
+        auction_id: str,
+        channel_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> Auction:
+        normalized_seller_id = self._validate_user_id(seller_id)
+        normalized_auction_id = str(auction_id).strip()
+        normalized_channel_id = str(channel_id).strip()
+        normalized_seller_name = str(seller_name).strip()[:80] or normalized_seller_id
+        starting_price = self._validate_amount(starting_price)
+        duration_seconds = int(duration_seconds)
+        current_time = int(time.time() if now is None else now)
+        try:
+            player_id = int(player_id)
+        except (TypeError, ValueError) as exc:
+            raise InvalidAmount("Choose a valid card from your inventory.") from exc
+        if (
+            not normalized_auction_id
+            or len(normalized_auction_id) > 100
+            or not normalized_channel_id
+            or duration_seconds not in AUCTION_DURATIONS_SECONDS
+            or current_time + duration_seconds > SQLITE_INT_MAX
+        ):
+            raise InvalidAmount("Auction details are invalid.")
+
+        with self._transaction() as connection:
+            self._ensure_user(connection, normalized_seller_id)
+            player = connection.execute(
+                "SELECT id FROM players WHERE id = ?",
+                (player_id,),
+            ).fetchone()
+            if player is None:
+                raise PlayerNotFound(str(player_id))
+            owned = connection.execute(
+                "SELECT quantity FROM inventory WHERE user_id = ? AND player_id = ?",
+                (normalized_seller_id, player_id),
+            ).fetchone()
+            quantity = int(owned["quantity"]) if owned else 0
+            if quantity < 1:
+                raise CardNotOwned("You do not own an available copy of that card.")
+
+            self._remove_inventory_copy(
+                connection,
+                normalized_seller_id,
+                player_id,
+                quantity,
+            )
+            connection.execute(
+                """
+                INSERT INTO auctions
+                    (auction_id, seller_id, seller_name, player_id,
+                     starting_price, duration_seconds, end_time, status,
+                     channel_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+                """,
+                (
+                    normalized_auction_id,
+                    normalized_seller_id,
+                    normalized_seller_name,
+                    player_id,
+                    starting_price,
+                    duration_seconds,
+                    current_time + duration_seconds,
+                    normalized_channel_id,
+                    current_time,
+                ),
+            )
+            row = self._auction_row(connection, normalized_auction_id)
+            if row is None:
+                raise RuntimeError("Created auction could not be loaded.")
+            return self._auction_from_row(row)
+
+    def get_auction(self, auction_id: str) -> Auction | None:
+        with self._read_connection() as connection:
+            row = self._auction_row(connection, str(auction_id).strip())
+        return self._auction_from_row(row) if row is not None else None
+
+    def list_active_auctions(
+        self,
+        *,
+        exclude_seller_id: str | int | None = None,
+    ) -> list[Auction]:
+        query = AUCTION_JOIN_SQL + " WHERE a.status = 'ACTIVE'"
+        parameters: tuple[object, ...] = ()
+        if exclude_seller_id is not None:
+            query += " AND a.seller_id != ?"
+            parameters = (self._validate_user_id(exclude_seller_id),)
+        query += " ORDER BY a.end_time ASC, a.created_at ASC"
+        with self._read_connection() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [self._auction_from_row(row) for row in rows]
+
+    def list_user_auctions(
+        self,
+        user_id: str | int,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Auction]:
+        normalized_id = self._validate_user_id(user_id)
+        limit = max(1, min(100, int(limit)))
+        offset = max(0, int(offset))
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                AUCTION_JOIN_SQL
+                + """
+                WHERE a.seller_id = ?
+                ORDER BY a.created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (normalized_id, limit, offset),
+            ).fetchall()
+        return [self._auction_from_row(row) for row in rows]
+
+    def list_unpublished_auctions(self) -> list[Auction]:
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                AUCTION_JOIN_SQL
+                + """
+                WHERE a.status = 'ACTIVE'
+                  AND a.channel_id IS NOT NULL
+                  AND a.message_id IS NULL
+                ORDER BY a.created_at ASC
+                """
+            ).fetchall()
+        return [self._auction_from_row(row) for row in rows]
+
+    def set_auction_message(
+        self,
+        auction_id: str,
+        channel_id: str | int,
+        message_id: str | int,
+    ) -> Auction:
+        normalized_id = str(auction_id).strip()
+        with self._transaction() as connection:
+            updated = connection.execute(
+                """
+                UPDATE auctions
+                SET channel_id = ?, message_id = ?
+                WHERE auction_id = ?
+                """,
+                (str(channel_id), str(message_id), normalized_id),
+            )
+            if updated.rowcount != 1:
+                raise AuctionNotFound(normalized_id)
+            row = self._auction_row(connection, normalized_id)
+            if row is None:
+                raise AuctionNotFound(normalized_id)
+            return self._auction_from_row(row)
+
+    def cancel_auction(
+        self,
+        auction_id: str,
+        seller_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> Auction:
+        normalized_id = str(auction_id).strip()
+        normalized_seller_id = self._validate_user_id(seller_id)
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            auction = connection.execute(
+                "SELECT * FROM auctions WHERE auction_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            if auction is None:
+                raise AuctionNotFound(normalized_id)
+            if str(auction["seller_id"]) != normalized_seller_id:
+                raise AuctionNotSeller("Only the seller can cancel this auction.")
+            if str(auction["status"]) != "ACTIVE":
+                raise AuctionNotActive("This auction is no longer active.")
+            if auction["highest_bid"] is not None:
+                raise AuctionHasBids(
+                    "Auctions cannot be cancelled after the first bid."
+                )
+
+            self._add_inventory_copy(
+                connection,
+                normalized_seller_id,
+                int(auction["player_id"]),
+            )
+            connection.execute(
+                """
+                UPDATE auctions
+                SET status = 'CANCELLED', completed_at = ?,
+                    seller_notified = 1, bidder_notified = 1
+                WHERE auction_id = ? AND status = 'ACTIVE'
+                """,
+                (current_time, normalized_id),
+            )
+            row = self._auction_row(connection, normalized_id)
+            if row is None:
+                raise AuctionNotFound(normalized_id)
+            return self._auction_from_row(row)
     def sell_card(
         self, user_id: str | int, player_name: str, quantity: int = 1
     ) -> tuple[int, int]:
