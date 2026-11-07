@@ -709,5 +709,62 @@
       "ACT": 88
     },
     "image_path": "cards/ebs_s1_tots_98.png"
+  },
+  {
+    "name": "Gamer (S1 TOTS 97)",
+    "overall": 97,
+    "position": "C",
+    "country": "United States 🇺🇸",
+    "team": "Buffalo Sabres",
+    "rarity": "S1 TOTS",
+    "value": 27000000,
+    "stats": {
+      "SHO": 96,
+      "DRI": 98,
+      "SAV": 76,
+      "PAS": 95,
+      "DEF": 93,
+      "ACT": 85
+    },
+    "image_path": "cards/gamer_s1_tots_97.png",
+    "allowed_lineup_positions": ["CM1", "CM2"]
+  },
+  {
+    "name": "Road (S1 TOTS 98)",
+    "overall": 98,
+    "position": "GK",
+    "country": "France 🇫🇷",
+    "team": "Pittsburgh Penguins",
+    "rarity": "S1 TOTS",
+    "value": 40000000,
+    "stats": {
+      "SAV": 97,
+      "DIV": 96,
+      "PAS": 93,
+      "CLE": 95,
+      "SWE": 99,
+      "ACT": 99
+    },
+    "image_path": "cards/road_s1_tots_98.png",
+    "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Lauren (S1 TOTS 97)",
+    "overall": 97,
+    "position": "GK",
+    "country": "England 🏴",
+    "team": "New York Rangers",
+    "rarity": "S1 TOTS",
+    "value": 35000000,
+    "stats": {
+      "SAV": 99,
+      "DIV": 98,
+      "PAS": 94,
+      "SWE": 95,
+      "CLE": 96,
+      "ACT": 95
+    },
+    "image_path": "cards/lauren_s1_tots_97.png",
+    "allowed_lineup_positions": ["GK"]
   }
 ]

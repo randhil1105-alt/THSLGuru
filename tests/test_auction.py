@@ -361,6 +361,9 @@ class AuctionCommandTests(unittest.IsolatedAsyncioTestCase):
             "Dan (S1 TOTS 96)",
             "Hala (S1 TOTS 99)",
             "Ebs (S1 TOTS 98)",
+            "Gamer (S1 TOTS 97)",
+            "Road (S1 TOTS 98)",
+            "Lauren (S1 TOTS 97)",
         )
         for index, name in enumerate(names):
             with self.subTest(card=name):
@@ -406,42 +409,54 @@ class AuctionCommandTests(unittest.IsolatedAsyncioTestCase):
                 published["file"].close()
 
     def test_s1_tots_auction_transfers_card_to_the_winning_bidder(self) -> None:
-        card = self.database.get_player("Hala (S1 TOTS 99)")
-        self.assertIsNotNone(card)
-        assert card is not None
-        self.database.add_inventory("s1-seller", card.name)
-        auction = self.database.create_auction(
-            "s1-seller",
-            "S1 Seller",
-            card.id,
-            100,
-            AUCTION_DURATIONS_SECONDS[0],
-            "s1-tots-transfer",
-            987654321,
-            now=2_000,
+        names = (
+            "Gamer (S1 TOTS 97)",
+            "Road (S1 TOTS 98)",
+            "Lauren (S1 TOTS 97)",
         )
-        self.database.set_balance("s1-buyer", 250)
-        highest_bid = self.database.place_auction_bid(
-            auction.auction_id,
-            "s1-buyer",
-            "S1 Buyer",
-            125,
-            "s1-tots-winning-bid",
-            now=2_001,
-        )
-        self.assertEqual(highest_bid.player.name, card.name)
-        completed = self.database.finalize_expired_auctions(
-            now=auction.end_time
-        )
-        self.assertEqual([item.status for item in completed], ["COMPLETED"])
-        self.assertEqual(
-            [(entry.player.name, entry.quantity)
-             for entry in self.database.get_inventory("s1-buyer")],
-            [(card.name, 1)],
-        )
-        self.assertEqual(self.database.get_inventory("s1-seller"), [])
-        self.assertEqual(self.database.get_balance("s1-seller"), 125)
-        self.assertEqual(self.database.get_balance("s1-buyer"), 125)
+        for index, name in enumerate(names):
+            with self.subTest(card=name):
+                card = self.database.get_player(name)
+                self.assertIsNotNone(card)
+                assert card is not None
+                seller = f"s1-seller-{index}"
+                buyer = f"s1-buyer-{index}"
+                now = 2_000 + index * 10_000
+                self.database.add_inventory(seller, card.name)
+                auction = self.database.create_auction(
+                    seller,
+                    f"S1 Seller {index}",
+                    card.id,
+                    100,
+                    AUCTION_DURATIONS_SECONDS[0],
+                    f"s1-tots-transfer-{index}",
+                    987654321,
+                    now=now,
+                )
+                self.database.set_balance(buyer, 250)
+                highest_bid = self.database.place_auction_bid(
+                    auction.auction_id,
+                    buyer,
+                    f"S1 Buyer {index}",
+                    125,
+                    f"s1-tots-winning-bid-{index}",
+                    now=now + 1,
+                )
+                self.assertEqual(highest_bid.player.name, card.name)
+                completed = self.database.finalize_expired_auctions(
+                    now=auction.end_time
+                )
+                self.assertEqual([item.status for item in completed], ["COMPLETED"])
+                self.assertEqual(
+                    [
+                        (entry.player.name, entry.quantity)
+                        for entry in self.database.get_inventory(buyer)
+                    ],
+                    [(card.name, 1)],
+                )
+                self.assertEqual(self.database.get_inventory(seller), [])
+                self.assertEqual(self.database.get_balance(seller), 125)
+                self.assertEqual(self.database.get_balance(buyer), 125)
 
     async def test_sell_command_publishes_artwork_and_removes_available_card(self) -> None:
         seller_id = 900

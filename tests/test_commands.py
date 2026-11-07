@@ -754,8 +754,43 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "WING1",
                 "CM1",
             ),
+            "Gamer (S1 TOTS 97)": (
+                97,
+                "C",
+                "United States 🇺🇸",
+                27_000_000,
+                {"SHO": 96, "DRI": 98, "SAV": 76, "PAS": 95, "DEF": 93, "ACT": 85},
+                "cards/gamer_s1_tots_97.png",
+                "CM1",
+                "WING1",
+            ),
+            "Road (S1 TOTS 98)": (
+                98,
+                "GK",
+                "France 🇫🇷",
+                40_000_000,
+                {"SAV": 97, "DIV": 96, "PAS": 93, "CLE": 95, "SWE": 99, "ACT": 99},
+                "cards/road_s1_tots_98.png",
+                "GK",
+                "CM1",
+            ),
+            "Lauren (S1 TOTS 97)": (
+                97,
+                "GK",
+                "England 🏴",
+                35_000_000,
+                {"SAV": 99, "DIV": 98, "PAS": 94, "SWE": 95, "CLE": 96, "ACT": 95},
+                "cards/lauren_s1_tots_97.png",
+                "GK",
+                "CM1",
+            ),
         }
-        originals = {"Dan": 87, "Hala": 93, "Ebs": 90}
+        originals = {"Dan": 87, "Hala": 93, "Ebs": 90, "Gamer": 89, "Road": 86}
+        position_restrictions = {
+            "Gamer (S1 TOTS 97)": ("CM1", "CM2"),
+            "Road (S1 TOTS 98)": ("GK",),
+            "Lauren (S1 TOTS 97)": ("GK",),
+        }
         for name, rating in originals.items():
             original = self.database.get_player(name)
             self.assertIsNotNone(original)
@@ -844,13 +879,90 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     self.database.get_lineup(lineup_user)[allowed_position].name,
                     name,
                 )
+                if name in position_restrictions:
+                    self.assertEqual(
+                        player.allowed_lineup_positions,
+                        position_restrictions[name],
+                    )
+                    testable_positions = ("WING1", "CM1", "GK", "SUB1", "SUB2")
+                    for forbidden in (
+                        slot
+                        for slot in testable_positions
+                        if slot not in position_restrictions[name]
+                    ):
+                        forbidden_response = FakeResponse()
+                        await TeamCommands.set_position.callback(
+                            TeamCommands(self.database),
+                            SimpleNamespace(
+                                id=820 + index,
+                                user=SimpleNamespace(id=lineup_user),
+                                response=forbidden_response,
+                            ),
+                            discord.app_commands.Choice(
+                                name=forbidden,
+                                value=forbidden,
+                            ),
+                            name,
+                        )
+                        self.assertIn(
+                            "can only be assigned to",
+                            forbidden_response.messages[0]["content"],
+                        )
+                    lineup = self.database.get_lineup(lineup_user)
+                    image_uri = _player_image_uri(lineup[allowed_position])
+                    self.assertIsNotNone(image_uri)
+                    self.assertIn(
+                        image_uri,
+                        build_lineup_svg(
+                            lineup,
+                            "Balanced",
+                            f"{player.overall} OVR",
+                        ),
+                    )
+                    team_response = FakeResponse()
+                    team_followup = FakeFollowup()
+                    await TeamCommands.team.callback(
+                        TeamCommands(self.database),
+                        SimpleNamespace(
+                            id=830 + index,
+                            user=SimpleNamespace(
+                                id=lineup_user,
+                                display_name=player.name,
+                            ),
+                            response=team_response,
+                            followup=team_followup,
+                        ),
+                    )
+                    team_message = team_followup.messages[0]
+                    team_slot = (
+                        "GK · Goalie"
+                        if allowed_position == "GK"
+                        else f"{allowed_position} · CM 1"
+                    )
+                    team_fields = {
+                        field.name: field.value
+                        for field in team_message["embed"].fields
+                    }
+                    self.assertIn(player_card_label(player), team_fields[team_slot])
+                    self.assertEqual(
+                        team_message["embed"].image.url,
+                        f"attachment://{OUTPUT_FILENAME}",
+                    )
+                    team_message["file"].close()
                 with self.assertRaises(InvalidLineupPosition) as error:
                     self.database.set_lineup_position(
                         lineup_user,
                         forbidden_position,
                         name,
                     )
-                self.assertIn("can occupy", str(error.exception))
+                self.assertIn(
+                    (
+                        "can only be assigned to"
+                        if name in position_restrictions
+                        else "can occupy"
+                    ),
+                    str(error.exception),
+                )
 
         inventory_response = FakeResponse()
         await InventoryCommands.inventory.callback(
@@ -915,22 +1027,26 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_balance(pack_user), 0)
         purchase_response.messages[0]["file"].close()
 
-        sell_name = "Dan (S1 TOTS 96)"
-        sell_user = "s1-sell-user"
-        self.database.add_inventory(sell_user, sell_name)
-        sell_response = FakeResponse()
-        await InventoryCommands.sell.callback(
-            InventoryCommands(self.database),
-            SimpleNamespace(
-                id=802,
-                user=SimpleNamespace(id=sell_user),
-                response=sell_response,
-            ),
-            sell_name,
-            1,
-        )
-        self.assertIn("25,000,000 coins", sell_response.messages[0]["content"])
-        self.assertEqual(self.database.get_balance(sell_user), 25_000_000)
+        for index, (sell_name, details) in enumerate(expected.items()):
+            sell_user = f"s1-sell-user-{index}"
+            value = details[3]
+            self.database.add_inventory(sell_user, sell_name)
+            sell_response = FakeResponse()
+            await InventoryCommands.sell.callback(
+                InventoryCommands(self.database),
+                SimpleNamespace(
+                    id=802 + index,
+                    user=SimpleNamespace(id=sell_user),
+                    response=sell_response,
+                ),
+                sell_name,
+                1,
+            )
+            self.assertIn(
+                f"{value:,} coins",
+                sell_response.messages[0]["content"],
+            )
+            self.assertEqual(self.database.get_balance(sell_user), value)
 
         team_user = "s1-team-user"
         self.database.add_inventory(team_user, "Dan (S1 TOTS 96)")
@@ -1752,6 +1868,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "Dan (S1 TOTS 96)": "Dan",
                     "Hala (S1 TOTS 99)": "Hala",
                     "Ebs (S1 TOTS 98)": "Ebs",
+                    "Gamer (S1 TOTS 97)": "Gamer",
+                    "Road (S1 TOTS 98)": "Road",
+                    "Lauren (S1 TOTS 97)": "Lauren",
                 }.get(player.name, player.name)
                 self.assertEqual(
                     label,
@@ -3673,6 +3792,9 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
                 "Dan (S1 TOTS 96)",
                 "Hala (S1 TOTS 99)",
                 "Ebs (S1 TOTS 98)",
+                "Gamer (S1 TOTS 97)",
+                "Road (S1 TOTS 98)",
+                "Lauren (S1 TOTS 97)",
             )
         ):
             player = self.database.get_player(name)
@@ -3708,7 +3830,14 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
             self.database.get_players(),
             rng=PrioritizeS1Cards(),
         )
-        self.assertIn("Dan (S1 TOTS 96)", {player.name for player in groups[1]})
+        self.assertTrue(
+            {"Dan (S1 TOTS 96)", "Gamer (S1 TOTS 97)"}
+            <= {player.name for player in groups[1]}
+        )
+        self.assertTrue(
+            {"Road (S1 TOTS 98)", "Lauren (S1 TOTS 97)"}
+            <= {player.name for player in groups[0]}
+        )
         self.assertTrue(
             {"Hala (S1 TOTS 99)", "Ebs (S1 TOTS 98)"}
             <= {player.name for group in groups[2:] for player in group}

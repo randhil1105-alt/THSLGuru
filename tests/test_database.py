@@ -1391,6 +1391,82 @@ class DatabaseTests(unittest.TestCase):
                 "Hala (S1 TOTS 99)",
             )
 
+    def test_gamer_road_and_lauren_s1_tots_cards_have_exact_catalog_data(self) -> None:
+        expected = {
+            "Gamer (S1 TOTS 97)": (
+                97,
+                "C",
+                "United States 🇺🇸",
+                27_000_000,
+                {
+                    "SHO": 96,
+                    "DRI": 98,
+                    "SAV": 76,
+                    "PAS": 95,
+                    "DEF": 93,
+                    "ACT": 85,
+                },
+                "cards/gamer_s1_tots_97.png",
+                ("CM1", "CM2"),
+            ),
+            "Road (S1 TOTS 98)": (
+                98,
+                "GK",
+                "France 🇫🇷",
+                40_000_000,
+                {
+                    "SAV": 97,
+                    "DIV": 96,
+                    "PAS": 93,
+                    "CLE": 95,
+                    "SWE": 99,
+                    "ACT": 99,
+                },
+                "cards/road_s1_tots_98.png",
+                ("GK",),
+            ),
+            "Lauren (S1 TOTS 97)": (
+                97,
+                "GK",
+                "England 🏴",
+                35_000_000,
+                {
+                    "SAV": 99,
+                    "DIV": 98,
+                    "PAS": 94,
+                    "SWE": 95,
+                    "CLE": 96,
+                    "ACT": 95,
+                },
+                "cards/lauren_s1_tots_97.png",
+                ("GK",),
+            ),
+        }
+        for name, details in expected.items():
+            with self.subTest(card=name):
+                player = self.database.get_player(name)
+                self.assertIsNotNone(player)
+                assert player is not None
+                self.assertEqual(
+                    (
+                        player.overall,
+                        player.position,
+                        player.country,
+                        player.value,
+                        player.stats,
+                        player.image_path,
+                    player.rarity,
+                        player.allowed_lineup_positions,
+                    ),
+                (*details[:6], "S1 TOTS", details[6]),
+                )
+                image_path = Path(__file__).resolve().parents[1] / details[5]
+                self.assertTrue(image_path.is_file())
+                self.assertEqual(
+                    sum(card.name == name for card in self.database.get_players()),
+                    1,
+                )
+
     def test_pack_receipt_migration_preserves_existing_rows(self) -> None:
         user_id = "legacy-pack-user"
         card = self.database.get_player("Dan")
