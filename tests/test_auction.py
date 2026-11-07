@@ -353,6 +353,55 @@ class AuctionCommandTests(unittest.IsolatedAsyncioTestCase):
             is_closed=Mock(return_value=True),
         )
 
+    async def test_s2_tots_cards_can_be_listed_with_their_artwork(self) -> None:
+        names = (
+            "EBS (S2 TOTS 99)",
+            "Jaycob (S2 TOTS 96)",
+            "Licha (S2 TOTS 96)",
+        )
+        for index, name in enumerate(names):
+            with self.subTest(card=name):
+                card = self.database.get_player(name)
+                self.assertIsNotNone(card)
+                assert card is not None
+                seller_id = 950 + index
+                self.database.add_inventory(seller_id, name)
+                channel = SimpleNamespace(
+                    id=850 + index,
+                    send=AsyncMock(return_value=SimpleNamespace(id=750 + index)),
+                )
+                cog = AuctionCommands(self.make_bot(channel), self.database)
+                response = SimpleNamespace(defer=AsyncMock())
+                followup = SimpleNamespace(send=AsyncMock())
+                interaction = SimpleNamespace(
+                    user=SimpleNamespace(id=seller_id, name=f"seller{index}"),
+                    guild=SimpleNamespace(id=650),
+                    channel=channel,
+                    response=response,
+                    followup=followup,
+                )
+
+                await AuctionCommands.sell.callback(
+                    cog,
+                    interaction,
+                    str(card.id),
+                    100_000,
+                    DURATION_CHOICES[0],
+                )
+
+                published = channel.send.await_args.kwargs
+                self.assertEqual(published["embed"].title, player_card_label(card))
+                self.assertEqual(
+                    published["embed"].image.url,
+                    f"attachment://{Path(card.image_path).name}",
+                )
+                self.assertEqual(published["file"].filename, Path(card.image_path).name)
+                self.assertEqual(
+                    self.database.list_user_auctions(seller_id)[0].player.id,
+                    card.id,
+                )
+                published["file"].close()
+
     async def test_sell_command_publishes_artwork_and_removes_available_card(self) -> None:
         seller_id = 900
         self.database.add_inventory(seller_id, self.card.name, 2)

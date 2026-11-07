@@ -400,7 +400,7 @@ class MinigameCommands(discord_commands.Cog):
                 embeds=embeds,
                 files=files,
                 view=view,
-                ephemeral=True,
+                ephemeral=False,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             view.message = await interaction.original_response()

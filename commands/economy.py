@@ -39,23 +39,23 @@ class EconomyCommands(discord_commands.Cog):
         except CooldownActive as exc:
             await interaction.response.send_message(
                 f"You can claim again in {format_remaining(exc.remaining_seconds)}.",
-                ephemeral=True,
+                ephemeral=False,
             )
             return
         except NoEligibleCards:
             await interaction.response.send_message(
                 "No GOLD card rewards are currently available.",
-                ephemeral=True,
+                ephemeral=False,
             )
             return
         except InvalidAmount as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.response.send_message(str(exc), ephemeral=False)
             return
 
         await send_player_card(
             interaction,
             player,
-            ephemeral=True,
+            ephemeral=False,
             content=(
                 f"Your claim reward: **{player_card_label(player)}**. "
                 f"Next claim: <t:{next_claim_at}:R>."

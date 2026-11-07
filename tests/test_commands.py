@@ -42,6 +42,7 @@ from commands.minigame import (
 )
 from commands.packs import PackBuyButton, PackCommands
 from commands.player import PlayerCommands
+from commands.profile import ProfileCommands
 from commands.team import TeamCommands
 from commands.information import InformationCommands
 from database import (
@@ -346,6 +347,28 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(inventory_response.messages[0]["ephemeral"])
 
+    async def test_profile_response_is_public_and_shows_xp_progress(self) -> None:
+        response = FakeResponse()
+        interaction = SimpleNamespace(
+            id=501,
+            user=SimpleNamespace(id="public-profile-user", name="PublicPlayer"),
+            response=response,
+        )
+        await ProfileCommands.profile.callback(
+            ProfileCommands(self.database),
+            interaction,
+        )
+
+        message = response.messages[0]
+        self.assertFalse(message["ephemeral"])
+        embed = message["embed"]
+        self.assertEqual(embed.title, "🏆 PLAYER PROFILE")
+        self.assertIn("PublicPlayer", embed.description)
+        fields = {field.name: field.value for field in embed.fields}
+        self.assertEqual(fields["Level"], "**1**")
+        self.assertEqual(fields["Total XP"], "⭐ **50**")
+        self.assertIn("XP", fields["Level 2 progress"])
+
     async def test_claim_awards_gold_card_image_without_changing_balance(self) -> None:
         user_id = "gold-card-claim-command-user"
         initial_balance = 98_765
@@ -361,7 +384,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
 
         message = response.messages[0]
-        self.assertTrue(message["ephemeral"])
+        self.assertFalse(message["ephemeral"])
         self.assertNotIn("coin", message["content"].casefold())
         inventory = self.database.get_inventory(user_id)
         self.assertEqual(len(inventory), 1)
@@ -387,7 +410,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertIn("claim again", cooldown_response.messages[0]["content"])
-        self.assertTrue(cooldown_response.messages[0]["ephemeral"])
+        self.assertFalse(cooldown_response.messages[0]["ephemeral"])
         self.assertEqual(self.database.get_balance(user_id), initial_balance)
         self.assertEqual(sum(entry.quantity for entry in self.database.get_inventory(user_id)), 1)
 
@@ -409,13 +432,21 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "No GOLD card rewards are currently available.",
             response.messages[0]["content"],
         )
-        self.assertTrue(response.messages[0]["ephemeral"])
+        self.assertFalse(response.messages[0]["ephemeral"])
         self.assertEqual(self.database.get_balance(user_id), 45_678)
         self.assertEqual(self.database.get_inventory(user_id), [])
 
     async def test_public_command_error_handler_keeps_responses_public(self) -> None:
         with patch("main.LOGGER.error"):
-            for command_name in ("packs", "pack", "inventory", "balance", "minigame"):
+            for command_name in (
+                "packs",
+                "pack",
+                "inventory",
+                "balance",
+                "minigame",
+                "claim",
+                "profile",
+            ):
                 response = SimpleNamespace(
                     is_done=lambda: False,
                     send_message=AsyncMock(),
@@ -470,6 +501,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Dark",
             "Road",
             "Ebs",
+            "EBS (S2 TOTS 99)",
+            "Jaycob (S2 TOTS 96)",
+            "Licha (S2 TOTS 96)",
             "Cam",
             "Licha (Gold 90)",
             "Chicken",
@@ -488,6 +522,202 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_player("Licha").rarity, "TOTW")
         self.assertEqual(self.database.get_player("Hala").rarity, "TOTW")
         self.assertEqual(self.database.get_player("Hala").overall, 93)
+
+    async def test_s2_tots_cards_work_across_card_inventory_packs_set_and_team_art(self) -> None:
+        expected = {
+            "EBS (S2 TOTS 99)": (
+                99,
+                "W",
+                "Ireland 🇮🇪",
+                34_000_000,
+                {"SHO": 99, "DRI": 90, "SAV": 80, "PAS": 92, "DEF": 80, "ACT": 93},
+                "cards/ebs_s2_tots_99.png",
+                "WING1",
+            ),
+            "Jaycob (S2 TOTS 96)": (
+                96,
+                "GK",
+                "United States 🇺🇸",
+                24_000_000,
+                {"SAV": 99, "DIV": 98, "PAS": 89, "CLE": 87, "SWE": 92, "ACT": 98},
+                "cards/jaycob_s2_tots_96.png",
+                "GK",
+            ),
+            "Licha (S2 TOTS 96)": (
+                96,
+                "GK",
+                "England 🏴",
+                25_000_000,
+                {"SAV": 97, "DIV": 99, "PAS": 88, "CLE": 87, "SWE": 92, "ACT": 95},
+                "cards/licha_s2_tots_96.png",
+                "GK",
+            ),
+        }
+        inventory_user = "s2-command-inventory-user"
+        player_cog = PlayerCommands(self.database)
+        for index, (name, details) in enumerate(expected.items()):
+            with self.subTest(card=name):
+                (
+                    overall,
+                    position,
+                    country,
+                    value,
+                    stats,
+                    image_path,
+                    lineup_position,
+                ) = details
+                player = self.database.get_player(name)
+                self.assertIsNotNone(player)
+                assert player is not None
+                self.assertEqual(
+                    (
+                        player.overall,
+                        player.position,
+                        player.country,
+                        player.value,
+                        player.stats,
+                        player.rarity,
+                        player.image_path,
+                    ),
+                    (overall, position, country, value, stats, "S2 TOTS", image_path),
+                )
+                label = player_card_label(player)
+                image_uri = _player_image_uri(player)
+                self.assertIsNotNone(image_uri)
+                assert image_uri is not None
+                self.assertTrue(image_uri.startswith("data:image/png;base64,"))
+
+                choices = await PlayerCommands.card_player_autocomplete(
+                    player_cog,
+                    SimpleNamespace(),
+                    name.split(" (", 1)[0],
+                )
+                choice = next(choice for choice in choices if choice.value == name)
+                self.assertEqual(choice.name, label)
+
+                card_response = FakeResponse()
+                await PlayerCommands.card.callback(
+                    player_cog,
+                    SimpleNamespace(response=card_response),
+                    name,
+                )
+                card_message = card_response.messages[0]
+                self.assertFalse(card_message["ephemeral"])
+                self.assertEqual(card_message["embed"].title, label)
+                self.assertEqual(
+                    card_message["embed"].image.url,
+                    f"attachment://{Path(image_path).name}",
+                )
+                card_fields = {
+                    field.name: field.value
+                    for field in card_message["embed"].fields
+                }
+                self.assertEqual(card_fields["Position"], position)
+                self.assertEqual(card_fields["Country"], country)
+                self.assertEqual(card_fields["Card Type"], "S2 TOTS")
+                self.assertEqual(card_fields["Value"], f"{value:,} coins")
+                for stat, stat_value in stats.items():
+                    self.assertIn(f"**{stat}** {stat_value}", card_fields["Stats"])
+                card_message["file"].close()
+
+                self.database.add_inventory(inventory_user, name)
+                lineup_user = f"s2-set-user-{index}"
+                self.database.add_inventory(lineup_user, name)
+                set_response = FakeResponse()
+                await TeamCommands.set_position.callback(
+                    TeamCommands(self.database),
+                    SimpleNamespace(
+                        id=700 + index,
+                        user=SimpleNamespace(id=lineup_user),
+                        response=set_response,
+                    ),
+                    discord.app_commands.Choice(
+                        name=lineup_position,
+                        value=lineup_position,
+                    ),
+                    name,
+                )
+                self.assertIn("Assigned", set_response.messages[0]["content"])
+                lineup = self.database.get_lineup(lineup_user)
+                self.assertEqual(lineup[lineup_position], player)
+                svg = build_lineup_svg(
+                    lineup,
+                    "Balanced",
+                    "0/3 starters filled",
+                )
+                self.assertIn(image_uri, svg)
+
+        inventory_response = FakeResponse()
+        await InventoryCommands.inventory.callback(
+            InventoryCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=inventory_user),
+                response=inventory_response,
+            ),
+        )
+        inventory_description = inventory_response.messages[0]["embed"].description
+        for name in expected:
+            player = self.database.get_player(name)
+            self.assertIn(f"**{player_card_label(player)}** ×1", inventory_description)
+
+        sell_user = "s2-sell-user"
+        sell_name = "EBS (S2 TOTS 99)"
+        self.database.add_inventory(sell_user, sell_name)
+        sell_response = FakeResponse()
+        await InventoryCommands.sell.callback(
+            InventoryCommands(self.database),
+            SimpleNamespace(
+                id=712,
+                user=SimpleNamespace(id=sell_user),
+                response=sell_response,
+            ),
+            sell_name,
+            1,
+        )
+        self.assertIn("99 EBS (S2 TOTS)", sell_response.messages[0]["content"])
+        self.assertIn("34,000,000 coins", sell_response.messages[0]["content"])
+        self.assertEqual(self.database.get_balance(sell_user), 34_000_000)
+
+        packs_response = FakeResponse()
+        await PackCommands.packs.callback(
+            PackCommands(self.database),
+            SimpleNamespace(
+                id=710,
+                user=SimpleNamespace(id=inventory_user),
+                response=packs_response,
+            ),
+        )
+        packs_fields = {
+            field.name: field.value
+            for field in packs_response.messages[0]["embed"].fields
+        }
+        s2_field_name = "S2 TOTS · 50,000,000 coins"
+        self.assertIn(s2_field_name, packs_fields)
+        for name in expected:
+            self.assertIn(name, packs_fields[s2_field_name])
+
+        pack_response = FakeResponse()
+        await PackCommands.pack.callback(
+            PackCommands(self.database),
+            SimpleNamespace(
+                id=711,
+                user=SimpleNamespace(id=inventory_user),
+                response=pack_response,
+            ),
+            discord.app_commands.Choice(name="S2 TOTS Pack", value="S2 TOTS"),
+        )
+        self.assertEqual(
+            [button.rarity for button in pack_response.messages[0]["view"].children],
+            ["S2 TOTS"],
+        )
+        self.assertIn(
+            "S2 TOTS",
+            next(
+                field.value
+                for field in pack_response.messages[0]["embed"].fields
+                if field.name.startswith("S2 TOTS")
+            ),
+        )
 
     async def test_ebs_cam_and_gold_licha_work_across_card_inventory_pack_set_team_and_sell(self) -> None:
         expected = {
@@ -1275,6 +1505,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "Hala (Gold 90)": "Hala",
                     "Licha (Gold 90)": "Licha",
                     "Hala (S2 TOTS 98)": "Hala",
+                    "EBS (S2 TOTS 99)": "EBS",
+                    "Jaycob (S2 TOTS 96)": "Jaycob",
+                    "Licha (S2 TOTS 96)": "Licha",
                 }.get(player.name, player.name)
                 self.assertEqual(
                     label,
@@ -2238,10 +2471,16 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Contains one random S2 TOTS player card.",
             field_values["S2 TOTS · 50,000,000 coins"],
         )
-        self.assertIn(
-            "Cryptic 33.33%",
-            field_values["S2 TOTS · 50,000,000 coins"],
-        )
+        s2_odds = field_values["S2 TOTS · 50,000,000 coins"]
+        for name in (
+            "Cryptic",
+            "Hala (S2 TOTS 98)",
+            "Xavier",
+            "EBS (S2 TOTS 99)",
+            "Jaycob (S2 TOTS 96)",
+            "Licha (S2 TOTS 96)",
+        ):
+            self.assertIn(f"{name} 16.67%", s2_odds)
         self.assertIn("Price: 5,000,000 coins.", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Price: 20,000,000 coins.", field_values["TOTW · 20,000,000 coins"])
         self.assertIn("50,000,000 coins", field_values["S2 TOTS · 50,000,000 coins"])

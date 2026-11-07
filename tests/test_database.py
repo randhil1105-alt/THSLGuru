@@ -134,6 +134,139 @@ class DatabaseTests(unittest.TestCase):
             },
         )
 
+    def test_s2_tots_cards_have_exact_data_correct_lineup_roles_and_stable_seed(self) -> None:
+        expected = {
+            "EBS (S2 TOTS 99)": (
+                99,
+                "W",
+                "Ireland 🇮🇪",
+                "Ottawa Senators",
+                34_000_000,
+                {"SHO": 99, "DRI": 90, "SAV": 80, "PAS": 92, "DEF": 80, "ACT": 93},
+                "cards/ebs_s2_tots_99.png",
+                "WING1",
+                "GK",
+            ),
+            "Jaycob (S2 TOTS 96)": (
+                96,
+                "GK",
+                "United States 🇺🇸",
+                "New York Rangers",
+                24_000_000,
+                {"SAV": 99, "DIV": 98, "PAS": 89, "CLE": 87, "SWE": 92, "ACT": 98},
+                "cards/jaycob_s2_tots_96.png",
+                "GK",
+                "WING1",
+            ),
+            "Licha (S2 TOTS 96)": (
+                96,
+                "GK",
+                "England 🏴",
+                "Ottawa Senators",
+                25_000_000,
+                {"SAV": 97, "DIV": 99, "PAS": 88, "CLE": 87, "SWE": 92, "ACT": 95},
+                "cards/licha_s2_tots_96.png",
+                "GK",
+                "WING1",
+            ),
+        }
+        initial_count = len(self.database.get_players())
+        for index, (name, details) in enumerate(expected.items()):
+            with self.subTest(card=name):
+                player = self.database.get_player(name)
+                self.assertIsNotNone(player)
+                assert player is not None
+                (
+                    overall,
+                    position,
+                    country,
+                    team,
+                    value,
+                    stats,
+                    image_path,
+                    allowed_slot,
+                    forbidden_slot,
+                ) = details
+                self.assertEqual(
+                    (
+                        player.overall,
+                        player.position,
+                        player.country,
+                        player.team,
+                        player.rarity,
+                        player.value,
+                        player.stats,
+                        player.image_path,
+                    ),
+                    (
+                        overall,
+                        position,
+                        country,
+                        team,
+                        "S2 TOTS",
+                        value,
+                        stats,
+                        image_path,
+                    ),
+                )
+                self.assertTrue(Path(image_path).is_file())
+                self.assertIn(player, self.database.get_players(rarity="S2 TOTS"))
+
+                user_id = f"s2-lineup-user-{index}"
+                self.database.add_inventory(user_id, name)
+                self.database.set_lineup_position(user_id, allowed_slot, name)
+                self.assertEqual(
+                    self.database.get_lineup(user_id)[allowed_slot],
+                    player,
+                )
+                with self.assertRaises(InvalidLineupPosition):
+                    self.database.set_lineup_position(
+                        user_id,
+                        forbidden_slot,
+                        name,
+                    )
+
+        self.assertEqual(self.database.get_player("Ebs").overall, 90)
+        self.assertEqual(self.database.get_player("Jaycob").overall, 89)
+        self.assertEqual(self.database.get_player("Licha").overall, 93)
+        self.database.initialize(load_player_seed())
+        self.assertEqual(len(self.database.get_players()), initial_count)
+        for name in expected:
+            self.assertEqual(
+                sum(player.name == name for player in self.database.get_players()),
+                1,
+            )
+
+    def test_s2_tots_pack_can_award_each_new_card(self) -> None:
+        class SelectNamedCard:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def choices(self, population, *, weights, k):
+                del weights, k
+                return [next(row for row in population if row["name"] == self.name)]
+
+        for index, name in enumerate(
+            (
+                "EBS (S2 TOTS 99)",
+                "Jaycob (S2 TOTS 96)",
+                "Licha (S2 TOTS 96)",
+            )
+        ):
+            user_id = f"s2-pack-user-{index}"
+            self.database.set_balance(user_id, S2_TOTS_PACK_COST)
+            awarded, remaining_balance = self.database.open_pack(
+                user_id,
+                "S2 TOTS",
+                S2_TOTS_PACK_COST,
+                rng=SelectNamedCard(name),
+                purchase_id=f"s2-new-card-pack-{index}",
+            )
+            self.assertEqual(awarded.name, name)
+            self.assertEqual(awarded.rarity, "S2 TOTS")
+            self.assertEqual(remaining_balance, 0)
+            self.assertEqual(self.database.get_inventory(user_id)[0].player, awarded)
+
     def test_megan_jaycob_and_karuwrld_have_exact_gold_data_and_slot_rules(self) -> None:
         expected = {
             "Megan": (
@@ -802,7 +935,14 @@ class DatabaseTests(unittest.TestCase):
         s2_tots_odds = calculate_pack_odds(s2_tots_cards)
         self.assertEqual(
             {card.name for card in s2_tots_cards},
-            {"Cryptic", "Hala (S2 TOTS 98)", "Xavier"},
+            {
+                "Cryptic",
+                "Hala (S2 TOTS 98)",
+                "Xavier",
+                "EBS (S2 TOTS 99)",
+                "Jaycob (S2 TOTS 96)",
+                "Licha (S2 TOTS 96)",
+            },
         )
         self.assertAlmostEqual(sum(s2_tots_odds.values()), 100.0)
 

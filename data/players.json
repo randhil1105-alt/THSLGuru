@@ -601,5 +601,59 @@
       "ACT": 96
     },
     "image_path": "cards/xavier_s2_tots_99.png"
+  },
+  {
+    "name": "EBS (S2 TOTS 99)",
+    "overall": 99,
+    "position": "W",
+    "country": "Ireland 🇮🇪",
+    "team": "Ottawa Senators",
+    "rarity": "S2 TOTS",
+    "value": 34000000,
+    "stats": {
+      "SHO": 99,
+      "DRI": 90,
+      "SAV": 80,
+      "PAS": 92,
+      "DEF": 80,
+      "ACT": 93
+    },
+    "image_path": "cards/ebs_s2_tots_99.png"
+  },
+  {
+    "name": "Jaycob (S2 TOTS 96)",
+    "overall": 96,
+    "position": "GK",
+    "country": "United States 🇺🇸",
+    "team": "New York Rangers",
+    "rarity": "S2 TOTS",
+    "value": 24000000,
+    "stats": {
+      "SAV": 99,
+      "DIV": 98,
+      "PAS": 89,
+      "CLE": 87,
+      "SWE": 92,
+      "ACT": 98
+    },
+    "image_path": "cards/jaycob_s2_tots_96.png"
+  },
+  {
+    "name": "Licha (S2 TOTS 96)",
+    "overall": 96,
+    "position": "GK",
+    "country": "England 🏴",
+    "team": "Ottawa Senators",
+    "rarity": "S2 TOTS",
+    "value": 25000000,
+    "stats": {
+      "SAV": 97,
+      "DIV": 99,
+      "PAS": 88,
+      "CLE": 87,
+      "SWE": 92,
+      "ACT": 95
+    },
+    "image_path": "cards/licha_s2_tots_96.png"
   }
 ]

@@ -38,7 +38,7 @@ DRAFT_GROUP_LABELS = (
 
 
 class DraftSessionView(discord.ui.View):
-    """One private, four-pick Draft with a single atomic reward settlement."""
+    """One public, owner-controlled four-pick Draft with an atomic reward."""
 
     def __init__(
         self,
@@ -105,12 +105,17 @@ class DraftSessionView(discord.ui.View):
         self,
     ) -> tuple[list[discord.Embed], list[discord.File]]:
         group = self.groups[self.stage_index]
+        description = (
+            f"Pick one of these three cards. "
+            f"Selection {self.stage_index + 1} of {len(self.groups)}."
+        )
+        if self.selected:
+            description += "\n\n**Selected so far:**\n" + "\n".join(
+                f"• {player_card_label(player)}" for player in self.selected
+            )
         heading = discord.Embed(
             title=f"Draft · Choose {DRAFT_GROUP_LABELS[self.stage_index]}",
-            description=(
-                f"Pick one of these three cards. "
-                f"Selection {self.stage_index + 1} of {len(self.groups)}."
-            ),
+            description=description,
             color=discord.Color.blurple(),
         )
         embeds = [heading]
@@ -171,8 +176,7 @@ class DraftSessionView(discord.ui.View):
         embed.add_field(
             name=f"Your Draft Squad · {user_average} OVR average",
             value="\n".join(
-                f"• {player.name} — {player.overall} OVR "
-                f"({format_card_type(player.rarity)}) · {player.position}"
+                f"• {player_card_label(player)} · {player.position}"
                 for player in user_squad
             ),
             inline=False,
@@ -180,8 +184,7 @@ class DraftSessionView(discord.ui.View):
         embed.add_field(
             name=f"{ai_team_name} · AI · {ai_average} OVR average",
             value="\n".join(
-                f"• {player.name} — {player.overall} OVR "
-                f"({format_card_type(player.rarity)}) · {player.position}"
+                f"• {player_card_label(player)} · {player.position}"
                 for player in ai_squad
             ),
             inline=False,

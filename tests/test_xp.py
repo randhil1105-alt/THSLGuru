@@ -95,6 +95,54 @@ class XPDatabaseTests(unittest.TestCase):
                 },
                 "image": "cards/xavier_s2_tots_99.png",
             },
+            "EBS (S2 TOTS 99)": {
+                "overall": 99,
+                "position": "W",
+                "country": "Ireland 🇮🇪",
+                "rarity": "S2 TOTS",
+                "value": 34_000_000,
+                "stats": {
+                    "SHO": 99,
+                    "DRI": 90,
+                    "SAV": 80,
+                    "PAS": 92,
+                    "DEF": 80,
+                    "ACT": 93,
+                },
+                "image": "cards/ebs_s2_tots_99.png",
+            },
+            "Jaycob (S2 TOTS 96)": {
+                "overall": 96,
+                "position": "GK",
+                "country": "United States 🇺🇸",
+                "rarity": "S2 TOTS",
+                "value": 24_000_000,
+                "stats": {
+                    "SAV": 99,
+                    "DIV": 98,
+                    "PAS": 89,
+                    "CLE": 87,
+                    "SWE": 92,
+                    "ACT": 98,
+                },
+                "image": "cards/jaycob_s2_tots_96.png",
+            },
+            "Licha (S2 TOTS 96)": {
+                "overall": 96,
+                "position": "GK",
+                "country": "England 🏴",
+                "rarity": "S2 TOTS",
+                "value": 25_000_000,
+                "stats": {
+                    "SAV": 97,
+                    "DIV": 99,
+                    "PAS": 88,
+                    "CLE": 87,
+                    "SWE": 92,
+                    "ACT": 95,
+                },
+                "image": "cards/licha_s2_tots_96.png",
+            },
         }
         for name, values in expected.items():
             with self.subTest(name=name):
@@ -127,7 +175,7 @@ class XPDatabaseTests(unittest.TestCase):
             self.assertEqual(sum(item == name for item in all_names), 1)
         self.assertEqual(
             len(self.database.get_players(rarity="S2 TOTS")),
-            3,
+            6,
         )
 
     def test_legacy_cards_migrate_in_place_without_losing_owned_copies(self) -> None:

@@ -169,7 +169,16 @@ def create_bot(
             getattr(interaction, "command", None),
             "name",
             None,
-        ) in {"packs", "pack", "inventory", "balance", "minigame", "match"}
+        ) in {
+            "packs",
+            "pack",
+            "inventory",
+            "balance",
+            "claim",
+            "minigame",
+            "match",
+            "profile",
+        }
         if isinstance(error, app_commands.MissingPermissions):
             message = "You need administrator permission to use that command."
             if interaction.response.is_done():

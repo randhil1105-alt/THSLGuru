@@ -36,7 +36,7 @@ class ProfileCommands(discord_commands.Cog):
             )
             progress = self.database.get_xp_profile(user_id)
         except EconomyError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.response.send_message(str(exc), ephemeral=False)
             return
 
         username = str(getattr(interaction.user, "name", "Player"))
@@ -75,7 +75,7 @@ class ProfileCommands(discord_commands.Cog):
             ),
             inline=False,
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

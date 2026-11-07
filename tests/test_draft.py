@@ -255,6 +255,24 @@ class DraftSimulationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
+    def test_new_s2_tots_cards_are_available_to_draft_by_position(self) -> None:
+        class CaptureCandidates:
+            def __init__(self) -> None:
+                self.populations: list[tuple] = []
+
+            def sample(self, population, count):
+                self.populations.append(tuple(population))
+                return list(population[:count])
+
+        captured = CaptureCandidates()
+        groups = generate_draft_groups(self.catalog, rng=captured)
+        self.assertEqual(len(groups), 4)
+        goalkeeper_names = {player.name for player in captured.populations[0]}
+        winger_names = {player.name for player in captured.populations[2]}
+        self.assertIn("Jaycob (S2 TOTS 96)", goalkeeper_names)
+        self.assertIn("Licha (S2 TOTS 96)", goalkeeper_names)
+        self.assertIn("EBS (S2 TOTS 99)", winger_names)
+
     def test_draft_generates_exactly_three_cards_per_position_group(self) -> None:
         groups = generate_draft_groups(self.catalog, rng=random.Random(23))
         self.assertEqual(tuple(map(len, groups)), (3, 3, 3, 3))
@@ -391,7 +409,7 @@ class DraftCommandTests(unittest.IsolatedAsyncioTestCase):
             discord.app_commands.Choice(name="Draft", value="draft"),
         )
         payload = interaction.response.messages[0]
-        self.assertTrue(payload["ephemeral"])
+        self.assertFalse(payload["ephemeral"])
         view = payload["view"]
         self.assertIsInstance(view, DraftSessionView)
         self.views.append(view)
@@ -408,7 +426,7 @@ class DraftCommandTests(unittest.IsolatedAsyncioTestCase):
             [("Guess Who", "guess"), ("Draft", "draft")],
         )
 
-    async def test_draft_command_starts_private_owner_controlled_picks(self) -> None:
+    async def test_draft_command_starts_public_owner_controlled_picks(self) -> None:
         interaction, view = await self.start_draft()
         payload = interaction.response.messages[0]
         self.assertEqual(len(view.children), 3)
@@ -434,6 +452,17 @@ class DraftCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response.messages[0]["ephemeral"])
         self.assertEqual(view.selected, [])
 
+        choose_response = FakeResponse()
+        await view.choose(
+            SimpleNamespace(
+                user=SimpleNamespace(id=view.owner_id + 1),
+                response=choose_response,
+            ),
+            view.groups[0][0],
+        )
+        self.assertTrue(choose_response.messages[0]["ephemeral"])
+        self.assertEqual(view.selected, [])
+
     async def test_four_position_picks_are_required_before_match_and_reward(self) -> None:
         _, view = await self.start_draft()
         for index in range(3):
@@ -447,6 +476,13 @@ class DraftCommandTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(view.stage_index, index + 1)
             self.assertEqual(self.database.get_balance(view.owner_id), 0)
+            prompt_embeds = response.messages[0]["embeds"]
+            self.assertEqual(len(prompt_embeds), 4)
+            for selected in view.selected:
+                self.assertIn(
+                    player_card_label(selected),
+                    prompt_embeds[0].description,
+                )
         self.assertFalse(view.finished)
         self.assertEqual(len(view.selected), 3)
 
