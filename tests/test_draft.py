@@ -272,6 +272,12 @@ class DraftSimulationTests(unittest.TestCase):
         self.assertIn("Jaycob (S2 TOTS 96)", goalkeeper_names)
         self.assertIn("Licha (S2 TOTS 96)", goalkeeper_names)
         self.assertIn("EBS (S2 TOTS 99)", winger_names)
+        for name in (
+            "Ebs (S1 TOTY 98)",
+            "Hala (S1 TOTY 99)",
+            "Cam (S1 TOTY 97)",
+        ):
+            self.assertIn(name, winger_names)
 
     def test_draft_generates_exactly_three_cards_per_position_group(self) -> None:
         groups = generate_draft_groups(self.catalog, rng=random.Random(23))

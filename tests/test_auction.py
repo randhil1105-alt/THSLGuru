@@ -364,6 +364,9 @@ class AuctionCommandTests(unittest.IsolatedAsyncioTestCase):
             "Gamer (S1 TOTS 97)",
             "Road (S1 TOTS 98)",
             "Lauren (S1 TOTS 97)",
+            "Ebs (S1 TOTY 98)",
+            "Hala (S1 TOTY 99)",
+            "Cam (S1 TOTY 97)",
         )
         for index, name in enumerate(names):
             with self.subTest(card=name):
@@ -413,6 +416,9 @@ class AuctionCommandTests(unittest.IsolatedAsyncioTestCase):
             "Gamer (S1 TOTS 97)",
             "Road (S1 TOTS 98)",
             "Lauren (S1 TOTS 97)",
+            "Ebs (S1 TOTY 98)",
+            "Hala (S1 TOTY 99)",
+            "Cam (S1 TOTY 97)",
         )
         for index, name in enumerate(names):
             with self.subTest(card=name):

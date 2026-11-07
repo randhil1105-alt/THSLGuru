@@ -54,6 +54,7 @@ from database import (
     InvalidLineupPosition,
     LINEUP_POSITIONS,
     S1_TOTS_PACK_COST,
+    S1_TOTY_PACK_COST,
     S2_TOTS_PACK_COST,
     SUBSTITUTE_POSITIONS,
     TOTW_PACK_COST,
@@ -266,7 +267,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(
             [choice.value for choice in pack_parameters["pack_type"].choices],
-            ["GOLD", "TOTW", "S2 TOTS", "S1 TOTS"],
+            ["GOLD", "TOTW", "S2 TOTS", "S1 TOTS", "S1 TOTY"],
         )
 
     async def test_help_lists_the_combined_pack_command(self) -> None:
@@ -1871,6 +1872,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "Gamer (S1 TOTS 97)": "Gamer",
                     "Road (S1 TOTS 98)": "Road",
                     "Lauren (S1 TOTS 97)": "Lauren",
+            "Ebs (S1 TOTY 98)": "Ebs",
+            "Hala (S1 TOTY 99)": "Hala",
+            "Cam (S1 TOTY 97)": "Cam",
                 }.get(player.name, player.name)
                 self.assertEqual(
                     label,
@@ -2821,6 +2825,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "TOTW · 20,000,000 coins",
                 "S2 TOTS · 50,000,000 coins",
                 "S1 TOTS · 35,000,000 coins",
+                "S1 TOTY PACK · 60,000,000 coins",
             },
         )
         self.assertIn(
@@ -2856,6 +2861,16 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertIn(name, s1_odds)
         self.assertIn("35,000,000 coins", s1_odds)
+        s1_toty_field = field_values["S1 TOTY PACK · 60,000,000 coins"]
+        self.assertIn("Contains one random S1 TOTY player card.", s1_toty_field)
+        self.assertIn("Rarity: S1 TOTY.", s1_toty_field)
+        self.assertIn("Price: 60,000,000 coins.", s1_toty_field)
+        for name in (
+            "Ebs (S1 TOTY 98)",
+            "Hala (S1 TOTY 99)",
+            "Cam (S1 TOTY 97)",
+        ):
+            self.assertIn(f"{name} 33.33%", s1_toty_field)
         self.assert_pack_menu_shows_odds(menu["embed"])
 
         view = menu["view"]
@@ -3795,6 +3810,9 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
                 "Gamer (S1 TOTS 97)",
                 "Road (S1 TOTS 98)",
                 "Lauren (S1 TOTS 97)",
+                "Ebs (S1 TOTY 98)",
+                "Hala (S1 TOTY 99)",
+                "Cam (S1 TOTY 97)",
             )
         ):
             player = self.database.get_player(name)
@@ -3818,7 +3836,9 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         class PrioritizeS1Cards:
             def sample(self, population, count):
                 selected = [
-                    player for player in population if player.rarity == "S1 TOTS"
+                    player
+                    for player in population
+                    if player.rarity in {"S1 TOTS", "S1 TOTY"}
                 ][:count]
                 selected_ids = {player.id for player in selected}
                 selected.extend(
@@ -3840,6 +3860,10 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(
             {"Hala (S1 TOTS 99)", "Ebs (S1 TOTS 98)"}
+            <= {player.name for group in groups[2:] for player in group}
+        )
+        self.assertTrue(
+            {"Ebs (S1 TOTY 98)", "Hala (S1 TOTY 99)", "Cam (S1 TOTY 97)"}
             <= {player.name for group in groups[2:] for player in group}
         )
 

@@ -766,5 +766,62 @@
     },
     "image_path": "cards/lauren_s1_tots_97.png",
     "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Ebs (S1 TOTY 98)",
+    "overall": 98,
+    "position": "WI",
+    "country": "Ireland 🇮🇪",
+    "team": "Buffalo Sabres",
+    "rarity": "S1 TOTY",
+    "value": 35000000,
+    "stats": {
+      "SHO": 97,
+      "DRI": 98,
+      "SAV": 80,
+      "PAS": 95,
+      "DEF": 93,
+      "ACT": 88
+    },
+    "image_path": "cards/ebs_s1_toty_98.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Hala (S1 TOTY 99)",
+    "overall": 99,
+    "position": "WI",
+    "country": "Scotland 🏴",
+    "team": "Ottawa Senators",
+    "rarity": "S1 TOTY",
+    "value": 50000000,
+    "stats": {
+      "SHO": 99,
+      "DRI": 99,
+      "SAV": 83,
+      "PAS": 97,
+      "DEF": 87,
+      "ACT": 86
+    },
+    "image_path": "cards/hala_s1_toty_99.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Cam (S1 TOTY 97)",
+    "overall": 97,
+    "position": "W",
+    "country": "United States 🇺🇸",
+    "team": "Pittsburgh Penguins",
+    "rarity": "S1 TOTY",
+    "value": 30000000,
+    "stats": {
+      "SHO": 99,
+      "DRI": 98,
+      "SAV": 87,
+      "PAS": 93,
+      "DEF": 87,
+      "ACT": 85
+    },
+    "image_path": "cards/cam_s1_toty_97.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
   }
 ]

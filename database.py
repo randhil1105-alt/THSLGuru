@@ -25,6 +25,14 @@ GOLD_PACK_COST = 5_000_000
 TOTW_PACK_COST = 20_000_000
 S2_TOTS_PACK_COST = 50_000_000
 S1_TOTS_PACK_COST = 35_000_000
+S1_TOTY_PACK_COST = 60_000_000
+PACK_COST_BY_RARITY = {
+    "GOLD": GOLD_PACK_COST,
+    "TOTW": TOTW_PACK_COST,
+    "S2 TOTS": S2_TOTS_PACK_COST,
+    "S1 TOTS": S1_TOTS_PACK_COST,
+    "S1 TOTY": S1_TOTY_PACK_COST,
+}
 MAX_PACK_QUANTITY = 10
 MATCH_REWARD = 5_000_000
 MATCH_INVITATION_SECONDS = 60
@@ -388,6 +396,8 @@ def format_card_type(rarity: str) -> str:
         return "S2 TOTS"
     if normalized == "S1 TOTS":
         return "S1 TOTS"
+    if normalized == "S1 TOTY":
+        return "S1 TOTY"
     return raw_type.title()
 
 
@@ -518,7 +528,7 @@ class Database:
                     user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
                     player_id INTEGER NOT NULL REFERENCES players(id),
                     rarity TEXT NOT NULL CHECK (
-                        rarity IN ('GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS')
+                        rarity IN ('GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS', 'S1 TOTY')
                     ),
                     cost INTEGER NOT NULL CHECK (cost > 0),
                     balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
@@ -739,17 +749,27 @@ class Database:
             if table is None:
                 raise RuntimeError("The pack purchase table is missing.")
             table_sql = str(table["sql"] or "").casefold()
-            if "'s1 tots'" in table_sql and "'s2 tots'" in table_sql:
+            supported_rarities = (
+                "GOLD",
+                "TOTW",
+                "S2 TOTS",
+                "S1 TOTS",
+                "S1 TOTY",
+            )
+            if all(
+                f"'{rarity.casefold()}'" in table_sql
+                for rarity in supported_rarities
+            ):
                 return
 
             connection.execute(
                 """
-                CREATE TABLE pack_purchases_s1_migration (
+                CREATE TABLE pack_purchases_rarity_migration (
                     interaction_id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
                     player_id INTEGER NOT NULL REFERENCES players(id),
                     rarity TEXT NOT NULL CHECK (
-                        rarity IN ('GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS')
+                        rarity IN ('GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS', 'S1 TOTY')
                     ),
                     cost INTEGER NOT NULL CHECK (cost > 0),
                     balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
@@ -759,7 +779,7 @@ class Database:
             )
             connection.execute(
                 """
-                INSERT INTO pack_purchases_s1_migration
+                INSERT INTO pack_purchases_rarity_migration
                     (interaction_id, user_id, player_id, rarity, cost,
                      balance_after, created_at)
                 SELECT interaction_id, user_id, player_id, rarity, cost,
@@ -769,7 +789,7 @@ class Database:
             )
             connection.execute("DROP TABLE pack_purchases")
             connection.execute(
-                "ALTER TABLE pack_purchases_s1_migration "
+                "ALTER TABLE pack_purchases_rarity_migration "
                 "RENAME TO pack_purchases"
             )
 
@@ -3171,15 +3191,10 @@ class Database:
             normalized_purchase_id = str(purchase_id).strip()
             if not normalized_purchase_id or len(normalized_purchase_id) > 128:
                 raise InvalidAmount("A valid pack purchase ID is required.")
-        if expected_rarity not in {"GOLD", "TOTW", "S2 TOTS", "S1 TOTS"}:
+        if expected_rarity not in PACK_COST_BY_RARITY:
             raise InvalidPlayer("That pack rarity is not supported.")
         cost = self._validate_amount(cost)
-        expected_cost = {
-            "GOLD": GOLD_PACK_COST,
-            "TOTW": TOTW_PACK_COST,
-            "S2 TOTS": S2_TOTS_PACK_COST,
-            "S1 TOTS": S1_TOTS_PACK_COST,
-        }[expected_rarity]
+        expected_cost = PACK_COST_BY_RARITY[expected_rarity]
         if cost != expected_cost:
             raise InvalidAmount(
                 f"{expected_rarity} packs must cost exactly {expected_cost:,} coins."
@@ -3295,15 +3310,10 @@ class Database:
             )
 
         expected_rarity = rarity.strip().upper()
-        if expected_rarity not in {"GOLD", "TOTW", "S2 TOTS", "S1 TOTS"}:
+        if expected_rarity not in PACK_COST_BY_RARITY:
             raise InvalidPlayer("That pack rarity is not supported.")
         cost = self._validate_amount(cost)
-        expected_cost = {
-            "GOLD": GOLD_PACK_COST,
-            "TOTW": TOTW_PACK_COST,
-            "S2 TOTS": S2_TOTS_PACK_COST,
-            "S1 TOTS": S1_TOTS_PACK_COST,
-        }[expected_rarity]
+        expected_cost = PACK_COST_BY_RARITY[expected_rarity]
         if cost != expected_cost:
             raise InvalidAmount(
                 f"{expected_rarity} packs must cost exactly {expected_cost:,} coins."
