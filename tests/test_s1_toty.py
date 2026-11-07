@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import discord
 
-from commands.common import resolve_card_image
+from commands.common import player_card_label, resolve_card_image
 from commands.information import InformationCommands
 from commands.inventory import InventoryCommands
 from commands.lineup_image import OUTPUT_FILENAME, _player_image_uri, build_lineup_svg
@@ -55,6 +55,12 @@ S1_TOTY_CARDS = {
         "image_path": "cards/cam_s1_toty_97.png",
         "allowed": ("WING1", "WING2"),
     },
+}
+
+S1_TOTY_SOURCE_ARTWORK = {
+    "Ebs (S1 TOTY 98)": "attached_assets/Firefly_(21)_1794057314441.png",
+    "Hala (S1 TOTY 99)": "attached_assets/Firefly_(20)_1794057314470.png",
+    "Cam (S1 TOTY 97)": "attached_assets/Firefly_(17)_1794057314483.png",
 }
 
 
@@ -108,6 +114,10 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNotNone(image)
                 assert image is not None
                 self.assertEqual(image.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+                self.assertEqual(
+                    image.read_bytes(),
+                    Path(S1_TOTY_SOURCE_ARTWORK[name]).read_bytes(),
+                )
 
         user_id = "s1-toty-seed-rerun-user"
         self.database.set_balance(user_id, 123)
@@ -159,7 +169,7 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
             purchase_id="s1-toty-single-receipt",
         )
         self.assertEqual(card.rarity, "S1 TOTY")
-        self.assertEqual(card.name, rng.candidates[-1].name)
+        self.assertEqual(card.name, rng.candidates[-1]["name"])
         self.assertEqual(
             rng.weights,
             [0.25, 0.25, 0.25],
@@ -289,7 +299,10 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
         )
         inventory_text = inventory_response.messages[0]["embed"].description
         for name in S1_TOTY_CARDS:
-            self.assertIn(name, inventory_text)
+            card = self.database.get_player(name)
+            self.assertIsNotNone(card)
+            assert card is not None
+            self.assertIn(player_card_label(card), inventory_text)
 
     async def test_named_pack_menu_purchase_and_reveal(self) -> None:
         existing_packs = (

@@ -3801,7 +3801,7 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.views.append(view)
         return interaction, game_channel, player, view
 
-    async def test_s1_tots_cards_can_be_selected_in_minigames_and_drafts(self) -> None:
+    async def test_s1_special_cards_can_be_selected_in_minigames_and_drafts(self) -> None:
         for index, name in enumerate(
             (
                 "Dan (S1 TOTS 96)",
@@ -3831,7 +3831,7 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(fields["🌍 Nationality"], player.country)
             self.assertEqual(fields["⭐ Rating"], f"{player.overall} OVR")
             self.assertEqual(fields["🏒 Position"], player.position)
-            self.assertEqual(fields["Card Type"], "S1 TOTS")
+            self.assertEqual(fields["Card Type"], player.rarity)
 
         class PrioritizeS1Cards:
             def sample(self, population, count):
