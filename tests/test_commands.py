@@ -45,12 +45,15 @@ from commands.player import PlayerCommands
 from commands.profile import ProfileCommands
 from commands.team import TeamCommands
 from commands.information import InformationCommands
+from draft_simulation import generate_draft_groups
 from database import (
     Database,
     FORMATION_STARTERS,
     GOLD_PACK_COST,
     InventoryEntry,
+    InvalidLineupPosition,
     LINEUP_POSITIONS,
+    S1_TOTS_PACK_COST,
     S2_TOTS_PACK_COST,
     SUBSTITUTE_POSITIONS,
     TOTW_PACK_COST,
@@ -263,7 +266,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(
             [choice.value for choice in pack_parameters["pack_type"].choices],
-            ["GOLD", "TOTW", "S2 TOTS"],
+            ["GOLD", "TOTW", "S2 TOTS", "S1 TOTS"],
         )
 
     async def test_help_lists_the_combined_pack_command(self) -> None:
@@ -718,6 +721,244 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 if field.name.startswith("S2 TOTS")
             ),
         )
+
+    async def test_s1_tots_cards_work_across_card_inventory_pack_set_team_and_sell(self) -> None:
+        expected = {
+            "Dan (S1 TOTS 96)": (
+                96,
+                "C",
+                "Italy 🇮🇹",
+                25_000_000,
+                {"SHO": 96, "DRI": 97, "SAV": 76, "PAS": 93, "DEF": 96, "ACT": 88},
+                "cards/dan_s1_tots_96.png",
+                "CM1",
+                "WING1",
+            ),
+            "Hala (S1 TOTS 99)": (
+                99,
+                "WI",
+                "Scotland 🏴",
+                50_000_000,
+                {"SHO": 99, "DRI": 99, "SAV": 83, "PAS": 97, "DEF": 87, "ACT": 86},
+                "cards/hala_s1_tots_99.png",
+                "WING1",
+                "CM1",
+            ),
+            "Ebs (S1 TOTS 98)": (
+                98,
+                "WI",
+                "Ireland 🇮🇪",
+                27_000_000,
+                {"SHO": 97, "DRI": 98, "SAV": 80, "PAS": 95, "DEF": 93, "ACT": 88},
+                "cards/ebs_s1_tots_98.png",
+                "WING1",
+                "CM1",
+            ),
+        }
+        originals = {"Dan": 87, "Hala": 93, "Ebs": 90}
+        for name, rating in originals.items():
+            original = self.database.get_player(name)
+            self.assertIsNotNone(original)
+            self.assertEqual(original.overall, rating)
+
+        player_cog = PlayerCommands(self.database)
+        inventory_user = "s1-command-inventory-user"
+        for index, (name, details) in enumerate(expected.items()):
+            with self.subTest(card=name):
+                (
+                    overall,
+                    position,
+                    country,
+                    value,
+                    stats,
+                    image_path,
+                    allowed_position,
+                    forbidden_position,
+                ) = details
+                player = self.database.get_player(name)
+                self.assertIsNotNone(player)
+                assert player is not None
+                self.assertEqual(
+                    (
+                        player.overall,
+                        player.position,
+                        player.country,
+                        player.value,
+                        player.stats,
+                        player.rarity,
+                        player.image_path,
+                    ),
+                    (overall, position, country, value, stats, "S1 TOTS", image_path),
+                )
+                image = resolve_card_image(player)
+                self.assertIsNotNone(image)
+                assert image is not None
+                self.assertEqual(image.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+                image_bytes = image.read_bytes()
+                width, height = struct.unpack(">II", image_bytes[16:24])
+                self.assertGreater(width, 200)
+                self.assertGreater(height, 250)
+
+                card_response = FakeResponse()
+                await PlayerCommands.card.callback(
+                    player_cog,
+                    SimpleNamespace(response=card_response),
+                    name,
+                )
+                card_message = card_response.messages[0]
+                self.assertEqual(card_message["embed"].title, player_card_label(player))
+                self.assertEqual(
+                    card_message["embed"].image.url,
+                    f"attachment://{Path(image_path).name}",
+                )
+                fields = {
+                    field.name: field.value for field in card_message["embed"].fields
+                }
+                self.assertEqual(fields["Position"], position)
+                self.assertEqual(fields["Country"], country)
+                self.assertEqual(fields["Card Type"], "S1 TOTS")
+                self.assertEqual(fields["Value"], f"{value:,} coins")
+                for stat, stat_value in stats.items():
+                    self.assertIn(f"**{stat}** {stat_value}", fields["Stats"])
+                card_message["file"].close()
+
+                self.database.add_inventory(inventory_user, name)
+                lineup_user = f"s1-set-user-{index}"
+                self.database.add_inventory(lineup_user, name)
+                set_response = FakeResponse()
+                await TeamCommands.set_position.callback(
+                    TeamCommands(self.database),
+                    SimpleNamespace(
+                        id=800 + index,
+                        user=SimpleNamespace(id=lineup_user),
+                        response=set_response,
+                    ),
+                    discord.app_commands.Choice(
+                        name=allowed_position,
+                        value=allowed_position,
+                    ),
+                    name,
+                )
+                self.assertIn("Assigned", set_response.messages[0]["content"])
+                self.assertEqual(
+                    self.database.get_lineup(lineup_user)[allowed_position].name,
+                    name,
+                )
+                with self.assertRaises(InvalidLineupPosition) as error:
+                    self.database.set_lineup_position(
+                        lineup_user,
+                        forbidden_position,
+                        name,
+                    )
+                self.assertIn("can occupy", str(error.exception))
+
+        inventory_response = FakeResponse()
+        await InventoryCommands.inventory.callback(
+            InventoryCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=inventory_user),
+                response=inventory_response,
+            ),
+        )
+        inventory_description = inventory_response.messages[0]["embed"].description
+        for name in expected:
+            self.assertIn(
+                f"**{player_card_label(self.database.get_player(name))}** ×1",
+                inventory_description,
+            )
+
+        packs_response = FakeResponse()
+        await PackCommands.packs.callback(
+            PackCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=inventory_user),
+                response=packs_response,
+            ),
+        )
+        packs_fields = {
+            field.name: field.value
+            for field in packs_response.messages[0]["embed"].fields
+        }
+        s1_field = f"S1 TOTS · {S1_TOTS_PACK_COST:,} coins"
+        self.assertIn(s1_field, packs_fields)
+        for name in expected:
+            self.assertIn(name, packs_fields[s1_field])
+
+        pack_user = "s1-pack-command-user"
+        self.database.set_balance(pack_user, S1_TOTS_PACK_COST)
+        pack_response = FakeResponse()
+        await PackCommands.pack.callback(
+            PackCommands(self.database),
+            SimpleNamespace(
+                user=SimpleNamespace(id=pack_user),
+                response=pack_response,
+            ),
+            discord.app_commands.Choice(name="S1 TOTS Pack", value="S1 TOTS"),
+        )
+        pack_menu = pack_response.messages[0]
+        self.assertEqual(
+            [button.rarity for button in pack_menu["view"].children],
+            ["S1 TOTS"],
+        )
+        purchase_response = FakeResponse()
+        await pack_menu["view"].children[0].callback(
+            SimpleNamespace(
+                user=SimpleNamespace(id=pack_user),
+                response=purchase_response,
+                id=801,
+                message=FakeMessage(),
+            )
+        )
+        purchased = self.database.get_inventory(pack_user)
+        self.assertEqual(len(purchased), 1)
+        self.assertEqual(purchased[0].player.rarity, "S1 TOTS")
+        self.assertEqual(self.database.get_balance(pack_user), 0)
+        purchase_response.messages[0]["file"].close()
+
+        sell_name = "Dan (S1 TOTS 96)"
+        sell_user = "s1-sell-user"
+        self.database.add_inventory(sell_user, sell_name)
+        sell_response = FakeResponse()
+        await InventoryCommands.sell.callback(
+            InventoryCommands(self.database),
+            SimpleNamespace(
+                id=802,
+                user=SimpleNamespace(id=sell_user),
+                response=sell_response,
+            ),
+            sell_name,
+            1,
+        )
+        self.assertIn("25,000,000 coins", sell_response.messages[0]["content"])
+        self.assertEqual(self.database.get_balance(sell_user), 25_000_000)
+
+        team_user = "s1-team-user"
+        self.database.add_inventory(team_user, "Dan (S1 TOTS 96)")
+        self.database.set_lineup_position(team_user, "CM1", "Dan (S1 TOTS 96)")
+        lineup = self.database.get_lineup(team_user)
+        image_uri = _player_image_uri(lineup["CM1"])
+        self.assertIsNotNone(image_uri)
+        svg = build_lineup_svg(lineup, "Balanced", "0/3 starters filled")
+        self.assertIn(image_uri, svg)
+        team_response = FakeResponse()
+        team_followup = FakeFollowup()
+        await TeamCommands.team.callback(
+            TeamCommands(self.database),
+            SimpleNamespace(
+                id=803,
+                user=SimpleNamespace(id=team_user, display_name="S1 Captain"),
+                response=team_response,
+                followup=team_followup,
+            ),
+        )
+        team_message = team_followup.messages[0]
+        team_fields = {field.name: field.value for field in team_message["embed"].fields}
+        self.assertIn("96 Dan (S1 TOTS)", team_fields["CM1 · CM 1"])
+        self.assertEqual(
+            team_message["embed"].image.url,
+            f"attachment://{OUTPUT_FILENAME}",
+        )
+        team_message["file"].close()
 
     async def test_ebs_cam_and_gold_licha_work_across_card_inventory_pack_set_team_and_sell(self) -> None:
         expected = {
@@ -1508,6 +1749,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "EBS (S2 TOTS 99)": "EBS",
                     "Jaycob (S2 TOTS 96)": "Jaycob",
                     "Licha (S2 TOTS 96)": "Licha",
+                    "Dan (S1 TOTS 96)": "Dan",
+                    "Hala (S1 TOTS 99)": "Hala",
+                    "Ebs (S1 TOTS 98)": "Ebs",
                 }.get(player.name, player.name)
                 self.assertEqual(
                     label,
@@ -2457,6 +2701,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "GOLD · 5,000,000 coins",
                 "TOTW · 20,000,000 coins",
                 "S2 TOTS · 50,000,000 coins",
+                "S1 TOTS · 35,000,000 coins",
             },
         )
         self.assertIn(
@@ -2484,6 +2729,14 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Price: 5,000,000 coins.", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Price: 20,000,000 coins.", field_values["TOTW · 20,000,000 coins"])
         self.assertIn("50,000,000 coins", field_values["S2 TOTS · 50,000,000 coins"])
+        s1_odds = field_values["S1 TOTS · 35,000,000 coins"]
+        for name in (
+            "Dan (S1 TOTS 96)",
+            "Hala (S1 TOTS 99)",
+            "Ebs (S1 TOTS 98)",
+        ):
+            self.assertIn(name, s1_odds)
+        self.assertIn("35,000,000 coins", s1_odds)
         self.assert_pack_menu_shows_odds(menu["embed"])
 
         view = menu["view"]
@@ -2539,6 +2792,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             ("GOLD", GOLD_PACK_COST, "Contains one random Gold player card."),
             ("TOTW", TOTW_PACK_COST, "Contains one random TOTW player card."),
             ("S2 TOTS", S2_TOTS_PACK_COST, "Contains one random S2 TOTS player card."),
+            ("S1 TOTS", S1_TOTS_PACK_COST, "Contains one random S1 TOTS player card."),
         )
         for index, (rarity, cost, offer) in enumerate(pack_cases):
             with self.subTest(rarity=rarity):
@@ -3412,6 +3666,53 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         view = interaction.response.messages[0]["view"]
         self.views.append(view)
         return interaction, game_channel, player, view
+
+    async def test_s1_tots_cards_can_be_selected_in_minigames_and_drafts(self) -> None:
+        for index, name in enumerate(
+            (
+                "Dan (S1 TOTS 96)",
+                "Hala (S1 TOTS 99)",
+                "Ebs (S1 TOTS 98)",
+            )
+        ):
+            player = self.database.get_player(name)
+            self.assertIsNotNone(player)
+            assert player is not None
+            interaction, _, selected, _ = await self.start_game(
+                user_id=5100 + index,
+                guild_id=6100 + index,
+                selected=player,
+            )
+            self.assertEqual(selected.name, name)
+            fields = {
+                field.name: field.value
+                for field in interaction.response.messages[0]["embed"].fields
+            }
+            self.assertEqual(fields["🌍 Nationality"], player.country)
+            self.assertEqual(fields["⭐ Rating"], f"{player.overall} OVR")
+            self.assertEqual(fields["🏒 Position"], player.position)
+            self.assertEqual(fields["Card Type"], "S1 TOTS")
+
+        class PrioritizeS1Cards:
+            def sample(self, population, count):
+                selected = [
+                    player for player in population if player.rarity == "S1 TOTS"
+                ][:count]
+                selected_ids = {player.id for player in selected}
+                selected.extend(
+                    player for player in population if player.id not in selected_ids
+                )
+                return selected[:count]
+
+        groups = generate_draft_groups(
+            self.database.get_players(),
+            rng=PrioritizeS1Cards(),
+        )
+        self.assertIn("Dan (S1 TOTS 96)", {player.name for player in groups[1]})
+        self.assertTrue(
+            {"Hala (S1 TOTS 99)", "Ebs (S1 TOTS 98)"}
+            <= {player.name for group in groups[2:] for player in group}
+        )
 
     async def submit_answer(
         self,

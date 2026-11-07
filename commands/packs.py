@@ -19,6 +19,7 @@ from commands.xp import mark_successful_command
 from database import (
     GOLD_PACK_COST,
     MAX_PACK_QUANTITY,
+    S1_TOTS_PACK_COST,
     S2_TOTS_PACK_COST,
     TOTW_PACK_COST,
     Database,
@@ -36,6 +37,7 @@ PACKS = (
     ("GOLD", GOLD_PACK_COST),
     ("TOTW", TOTW_PACK_COST),
     ("S2 TOTS", S2_TOTS_PACK_COST),
+    ("S1 TOTS", S1_TOTS_PACK_COST),
 )
 
 
@@ -342,12 +344,13 @@ class PackCommands(discord_commands.Cog):
         name="pack",
         description="Choose and purchase a card pack.",
     )
-    @app_commands.describe(pack_type="Choose a GOLD, TOTW, or S2 TOTS pack")
+    @app_commands.describe(pack_type="Choose a GOLD, TOTW, S2 TOTS, or S1 TOTS pack")
     @app_commands.choices(
         pack_type=[
             app_commands.Choice(name="GOLD Pack", value="GOLD"),
             app_commands.Choice(name="TOTW Pack", value="TOTW"),
             app_commands.Choice(name="S2 TOTS Pack", value="S2 TOTS"),
+            app_commands.Choice(name="S1 TOTS Pack", value="S1 TOTS"),
         ]
     )
     async def pack(

@@ -14,6 +14,7 @@ from database import (
     FORMATION_STARTERS,
     GOLD_PACK_COST,
     LINEUP_POSITIONS,
+    S1_TOTS_PACK_COST,
     S2_TOTS_PACK_COST,
     SUBSTITUTE_POSITIONS,
     TEAM_FORMATIONS,
@@ -1320,6 +1321,76 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(batch_balance, 23)
         self.assertEqual(self.database.get_balance(batch_user), 23)
 
+    def test_s1_tots_pack_awards_s1_tots_cards_and_is_idempotent(self) -> None:
+        user_id = "s1-tots-user"
+        self.database.set_balance(user_id, S1_TOTS_PACK_COST + 17)
+        first, balance = self.database.open_pack(
+            user_id,
+            "S1 TOTS",
+            S1_TOTS_PACK_COST,
+            rng=random.Random(18),
+            purchase_id="s1-tots-single",
+        )
+        replayed, replayed_balance = self.database.open_pack(
+            user_id,
+            "S1 TOTS",
+            S1_TOTS_PACK_COST,
+            rng=random.Random(19),
+            purchase_id="s1-tots-single",
+        )
+        self.assertEqual(first.rarity, "S1 TOTS")
+        self.assertIn(first, self.database.get_players(rarity="S1 TOTS"))
+        self.assertEqual(replayed.id, first.id)
+        self.assertEqual(balance, 17)
+        self.assertEqual(replayed_balance, 17)
+        self.assertEqual(self.database.get_balance(user_id), 17)
+        self.assertEqual(self.database.get_inventory(user_id)[0].quantity, 1)
+
+        batch_user = "s1-tots-batch-user"
+        self.database.set_balance(batch_user, 2 * S1_TOTS_PACK_COST + 23)
+        cards, batch_balance = self.database.open_packs(
+            batch_user,
+            "S1 TOTS",
+            S1_TOTS_PACK_COST,
+            2,
+            rng=random.Random(20),
+            purchase_id="s1-tots-batch",
+        )
+        self.assertEqual(len(cards), 2)
+        self.assertTrue(all(card.rarity == "S1 TOTS" for card in cards))
+        self.assertEqual(batch_balance, 23)
+        self.assertEqual(self.database.get_balance(batch_user), 23)
+
+    def test_s1_tots_cards_are_available_to_their_lineup_roles(self) -> None:
+        expected = {
+            "Dan (S1 TOTS 96)": "CM1",
+            "Hala (S1 TOTS 99)": "WING1",
+            "Ebs (S1 TOTS 98)": "WING1",
+        }
+        for index, (name, allowed_position) in enumerate(expected.items()):
+            user_id = f"s1-lineup-user-{index}"
+            self.database.add_inventory(user_id, name)
+            self.database.set_lineup_position(user_id, allowed_position, name)
+            self.assertEqual(
+                self.database.get_lineup(user_id)[allowed_position].name,
+                name,
+            )
+
+        self.database.add_inventory("s1-invalid-wing-user", "Dan (S1 TOTS 96)")
+        with self.assertRaises(InvalidLineupPosition):
+            self.database.set_lineup_position(
+                "s1-invalid-wing-user",
+                "WING1",
+                "Dan (S1 TOTS 96)",
+            )
+        self.database.add_inventory("s1-invalid-center-user", "Hala (S1 TOTS 99)")
+        with self.assertRaises(InvalidLineupPosition):
+            self.database.set_lineup_position(
+                "s1-invalid-center-user",
+                "CM1",
+                "Hala (S1 TOTS 99)",
+            )
+
     def test_pack_receipt_migration_preserves_existing_rows(self) -> None:
         user_id = "legacy-pack-user"
         card = self.database.get_player("Dan")
@@ -1365,6 +1436,19 @@ class DatabaseTests(unittest.TestCase):
         finally:
             connection.close()
         self.assertEqual(preserved, (user_id, card.id, "GOLD"))
+        connection = sqlite3.connect(self.database.path)
+        try:
+            table_sql = connection.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'pack_purchases'"
+            ).fetchone()[0]
+            self.assertIn("'S1 TOTS'", table_sql)
+            receipt_count = connection.execute(
+                "SELECT COUNT(*) FROM pack_purchases"
+            ).fetchone()[0]
+            self.assertEqual(receipt_count, 1)
+        finally:
+            connection.close()
 
         self.database.set_balance(user_id, S2_TOTS_PACK_COST + 10)
         awarded, new_balance = self.database.open_pack(
@@ -1376,6 +1460,17 @@ class DatabaseTests(unittest.TestCase):
         )
         self.assertEqual(awarded.rarity, "S2 TOTS")
         self.assertEqual(new_balance, 10)
+
+        self.database.set_balance(user_id, S1_TOTS_PACK_COST + 3)
+        s1_awarded, s1_balance = self.database.open_pack(
+            user_id,
+            "S1 TOTS",
+            S1_TOTS_PACK_COST,
+            rng=random.Random(21),
+            purchase_id="new-s1-tots-receipt",
+        )
+        self.assertEqual(s1_awarded.rarity, "S1 TOTS")
+        self.assertEqual(s1_balance, 3)
 
     def test_replayed_pack_purchase_id_does_not_charge_or_award_twice(self) -> None:
         self.database.set_balance("replay-user", GOLD_PACK_COST + 100)

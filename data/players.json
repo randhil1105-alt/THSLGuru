@@ -655,5 +655,59 @@
       "ACT": 95
     },
     "image_path": "cards/licha_s2_tots_96.png"
+  },
+  {
+    "name": "Dan (S1 TOTS 96)",
+    "overall": 96,
+    "position": "C",
+    "country": "Italy 🇮🇹",
+    "team": "Dallas Stars",
+    "rarity": "S1 TOTS",
+    "value": 25000000,
+    "stats": {
+      "SHO": 96,
+      "DRI": 97,
+      "SAV": 76,
+      "PAS": 93,
+      "DEF": 96,
+      "ACT": 88
+    },
+    "image_path": "cards/dan_s1_tots_96.png"
+  },
+  {
+    "name": "Hala (S1 TOTS 99)",
+    "overall": 99,
+    "position": "WI",
+    "country": "Scotland 🏴",
+    "team": "Ottawa Senators",
+    "rarity": "S1 TOTS",
+    "value": 50000000,
+    "stats": {
+      "SHO": 99,
+      "DRI": 99,
+      "SAV": 83,
+      "PAS": 97,
+      "DEF": 87,
+      "ACT": 86
+    },
+    "image_path": "cards/hala_s1_tots_99.png"
+  },
+  {
+    "name": "Ebs (S1 TOTS 98)",
+    "overall": 98,
+    "position": "WI",
+    "country": "Ireland 🇮🇪",
+    "team": "Buffalo Sabres",
+    "rarity": "S1 TOTS",
+    "value": 27000000,
+    "stats": {
+      "SHO": 97,
+      "DRI": 98,
+      "SAV": 80,
+      "PAS": 95,
+      "DEF": 93,
+      "ACT": 88
+    },
+    "image_path": "cards/ebs_s1_tots_98.png"
   }
 ]

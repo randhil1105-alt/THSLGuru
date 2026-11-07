@@ -20,6 +20,7 @@ RARITY_COLORS = {
     "GOLD": discord.Color.gold(),
     "TOTW": discord.Color.dark_purple(),
     "S2 TOTS": discord.Color.blue(),
+    "S1 TOTS": discord.Color.blue(),
 }
 
 

@@ -353,11 +353,14 @@ class AuctionCommandTests(unittest.IsolatedAsyncioTestCase):
             is_closed=Mock(return_value=True),
         )
 
-    async def test_s2_tots_cards_can_be_listed_with_their_artwork(self) -> None:
+    async def test_tots_cards_can_be_listed_with_their_artwork(self) -> None:
         names = (
             "EBS (S2 TOTS 99)",
             "Jaycob (S2 TOTS 96)",
             "Licha (S2 TOTS 96)",
+            "Dan (S1 TOTS 96)",
+            "Hala (S1 TOTS 99)",
+            "Ebs (S1 TOTS 98)",
         )
         for index, name in enumerate(names):
             with self.subTest(card=name):
@@ -401,6 +404,44 @@ class AuctionCommandTests(unittest.IsolatedAsyncioTestCase):
                     card.id,
                 )
                 published["file"].close()
+
+    def test_s1_tots_auction_transfers_card_to_the_winning_bidder(self) -> None:
+        card = self.database.get_player("Hala (S1 TOTS 99)")
+        self.assertIsNotNone(card)
+        assert card is not None
+        self.database.add_inventory("s1-seller", card.name)
+        auction = self.database.create_auction(
+            "s1-seller",
+            "S1 Seller",
+            card.id,
+            100,
+            AUCTION_DURATIONS_SECONDS[0],
+            "s1-tots-transfer",
+            987654321,
+            now=2_000,
+        )
+        self.database.set_balance("s1-buyer", 250)
+        highest_bid = self.database.place_auction_bid(
+            auction.auction_id,
+            "s1-buyer",
+            "S1 Buyer",
+            125,
+            "s1-tots-winning-bid",
+            now=2_001,
+        )
+        self.assertEqual(highest_bid.player.name, card.name)
+        completed = self.database.finalize_expired_auctions(
+            now=auction.end_time
+        )
+        self.assertEqual([item.status for item in completed], ["COMPLETED"])
+        self.assertEqual(
+            [(entry.player.name, entry.quantity)
+             for entry in self.database.get_inventory("s1-buyer")],
+            [(card.name, 1)],
+        )
+        self.assertEqual(self.database.get_inventory("s1-seller"), [])
+        self.assertEqual(self.database.get_balance("s1-seller"), 125)
+        self.assertEqual(self.database.get_balance("s1-buyer"), 125)
 
     async def test_sell_command_publishes_artwork_and_removes_available_card(self) -> None:
         seller_id = 900
