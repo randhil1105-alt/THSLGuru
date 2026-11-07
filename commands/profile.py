@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.xp import xp_notification_text
+from commands.xp import xp_level_up_embed, xp_notification_text
 from database import Database, EconomyError
 from xp_system import NORMAL_COMMAND_XP
 
@@ -69,13 +69,21 @@ class ProfileCommands(discord_commands.Cog):
         embed.add_field(
             name="XP earned",
             value=(
-                xp_notification_text(grant)
+                xp_notification_text(
+                    grant,
+                    include_level_up=not grant.leveled_up,
+                )
                 if grant.is_new
                 else "XP for this interaction was already credited."
             ),
             inline=False,
         )
         await interaction.response.send_message(embed=embed, ephemeral=False)
+        if grant.is_new and grant.leveled_up:
+            await interaction.followup.send(
+                embed=xp_level_up_embed(grant, user=interaction.user),
+                ephemeral=False,
+            )
 
 
 async def setup(bot: discord_commands.Bot) -> None:

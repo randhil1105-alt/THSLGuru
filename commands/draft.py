@@ -12,7 +12,7 @@ from typing import Any
 import discord
 
 from commands.common import format_coins, player_card_label, resolve_card_image
-from commands.xp import xp_notification_text
+from commands.xp import xp_level_up_embed, xp_notification_text
 from database import (
     DRAFT_COOLDOWN_SECONDS,
     DRAFT_WIN_REWARD,
@@ -375,6 +375,17 @@ class DraftSessionView(discord.ui.View):
         xp_grant = self.database.get_xp_event(
             f"draft-completion:{self.game_id}:{self.owner_id}"
         )
+        level_up_embeds = (
+            [
+                xp_level_up_embed(
+                    xp_grant,
+                    user_id=self.owner_id,
+                    username=self.username,
+                )
+            ]
+            if xp_grant is not None and xp_grant.leveled_up
+            else []
+        )
         result_embed = self._result_embed(
             user_squad=user_squad,
             ai_squad=ai_squad,
@@ -383,7 +394,14 @@ class DraftSessionView(discord.ui.View):
             ai_team_name=ai_team_name,
             match=match,
             new_balance=balance,
-            xp_notice=xp_notification_text(xp_grant) if xp_grant else None,
+            xp_notice=(
+                xp_notification_text(
+                    xp_grant,
+                    include_level_up=not xp_grant.leveled_up,
+                )
+                if xp_grant
+                else None
+            ),
         )
         artwork_embeds, artwork_files = self._result_artwork(user_squad)
         self.stop()
@@ -391,7 +409,7 @@ class DraftSessionView(discord.ui.View):
             self.on_finished(self)
         await interaction.response.edit_message(
             content=None,
-            embeds=[result_embed, *artwork_embeds],
+            embeds=[result_embed, *level_up_embeds, *artwork_embeds],
             attachments=artwork_files,
             view=None,
             allowed_mentions=discord.AllowedMentions.none(),

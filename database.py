@@ -18,6 +18,7 @@ from xp_system import (
     XPGrant,
     XPProgress,
     calculate_xp_progress,
+    level_up_pack_rewards,
 )
 
 CLAIM_COOLDOWN_SECONDS = 30 * 60
@@ -34,6 +35,7 @@ PACK_COST_BY_RARITY = {
     "S1 TOTY": S1_TOTY_PACK_COST,
 }
 MAX_PACK_QUANTITY = 10
+LEVEL_REWARD_PACK_RARITIES = ("GOLD", "TOTW")
 MATCH_REWARD = 5_000_000
 MATCH_INVITATION_SECONDS = 60
 DRAFT_COOLDOWN_SECONDS = 10 * 60
@@ -128,6 +130,10 @@ class CooldownActive(EconomyError):
 
 
 class NoEligibleCards(EconomyError):
+    pass
+
+
+class NoFreeRewardPacks(EconomyError):
     pass
 
 
@@ -889,6 +895,44 @@ class Database:
                     ON xp_transactions(user_id, created_at DESC)
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS free_pack_inventory (
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    rarity TEXT NOT NULL CHECK (rarity IN ('GOLD', 'TOTW')),
+                    quantity INTEGER NOT NULL CHECK (quantity > 0),
+                    PRIMARY KEY (user_id, rarity)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS xp_level_rewards (
+                    event_id TEXT PRIMARY KEY
+                        REFERENCES xp_transactions(event_id) ON DELETE CASCADE,
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    level_before INTEGER NOT NULL CHECK (level_before >= 1),
+                    level_after INTEGER NOT NULL CHECK (level_after > level_before),
+                    gold_packs INTEGER NOT NULL CHECK (gold_packs > 0),
+                    totw_packs INTEGER NOT NULL CHECK (totw_packs >= 0),
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS free_pack_redemptions (
+                    interaction_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    rarity TEXT NOT NULL CHECK (rarity IN ('GOLD', 'TOTW')),
+                    player_id INTEGER NOT NULL REFERENCES players(id),
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
 
     def _migrate_legacy_team_data(self) -> None:
         """Copy compatible legacy lineup data without changing legacy records."""
@@ -1172,6 +1216,65 @@ class Database:
         )
 
     @staticmethod
+    def _grant_level_up_packs_locked(
+        connection: sqlite3.Connection,
+        *,
+        user_id: str,
+        event_id: str,
+        level_before: int,
+        level_after: int,
+        now: int,
+    ) -> None:
+        gold_packs, totw_packs = level_up_pack_rewards(level_before, level_after)
+        if not gold_packs:
+            return
+        receipt = connection.execute(
+            """
+            INSERT OR IGNORE INTO xp_level_rewards
+                (event_id, user_id, level_before, level_after,
+                 gold_packs, totw_packs, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                user_id,
+                level_before,
+                level_after,
+                gold_packs,
+                totw_packs,
+                now,
+            ),
+        )
+        if receipt.rowcount != 1:
+            return
+
+        for rarity, quantity in (
+            ("GOLD", gold_packs),
+            ("TOTW", totw_packs),
+        ):
+            if not quantity:
+                continue
+            existing = connection.execute(
+                """
+                SELECT quantity FROM free_pack_inventory
+                WHERE user_id = ? AND rarity = ?
+                """,
+                (user_id, rarity),
+            ).fetchone()
+            current_quantity = int(existing["quantity"]) if existing else 0
+            if current_quantity + quantity > SQLITE_INT_MAX:
+                raise InvalidAmount("The free pack inventory is full.")
+            connection.execute(
+                """
+                INSERT INTO free_pack_inventory(user_id, rarity, quantity)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, rarity)
+                DO UPDATE SET quantity = free_pack_inventory.quantity + excluded.quantity
+                """,
+                (user_id, rarity, quantity),
+            )
+
+    @staticmethod
     def _award_xp_locked(
         connection: sqlite3.Connection,
         *,
@@ -1242,6 +1345,14 @@ class Database:
                 new_level,
                 now,
             ),
+        )
+        Database._grant_level_up_packs_locked(
+            connection,
+            user_id=user_id,
+            event_id=event_id,
+            level_before=previous_level,
+            level_after=new_level,
+            now=now,
         )
         return XPGrant(
             event_id=event_id,
@@ -1439,6 +1550,26 @@ class Database:
                 "SELECT balance FROM users WHERE user_id = ?", (normalized_id,)
             ).fetchone()
         return int(row["balance"]) if row else 0
+
+    def get_free_pack_inventory(self, user_id: str | int) -> dict[str, int]:
+        """Return saved level-up pack counts without creating an account."""
+        normalized_id = self._validate_user_id(user_id)
+        counts = {rarity: 0 for rarity in LEVEL_REWARD_PACK_RARITIES}
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT rarity, quantity FROM free_pack_inventory
+                WHERE user_id = ?
+                """,
+                (normalized_id,),
+            ).fetchall()
+        counts.update(
+            {
+                str(row["rarity"]): int(row["quantity"])
+                for row in rows
+            }
+        )
+        return counts
 
     def set_balance(self, user_id: str | int, amount: int) -> int:
         normalized_id = self._validate_user_id(user_id)
@@ -3473,6 +3604,137 @@ class Database:
                 [self._player_from_row(selected) for selected in selected_cards],
                 balance - total_cost,
             )
+
+    def open_free_reward_pack(
+        self,
+        user_id: str | int,
+        rarity: str,
+        redemption_id: str | int,
+        rng: Any | None = None,
+    ) -> tuple[Player, int]:
+        """Redeem one saved level-up pack without charging coins, exactly once."""
+        normalized_id = self._validate_user_id(user_id)
+        expected_rarity = str(rarity).strip().upper()
+        if expected_rarity not in LEVEL_REWARD_PACK_RARITIES:
+            raise InvalidPlayer("Only GOLD and TOTW level-up packs can be redeemed.")
+        normalized_redemption_id = str(redemption_id).strip()
+        if not normalized_redemption_id or len(normalized_redemption_id) > 128:
+            raise InvalidAmount("A valid free pack redemption ID is required.")
+        chooser = rng if rng is not None else random.SystemRandom()
+
+        with self._transaction() as connection:
+            previous = connection.execute(
+                """
+                SELECT redemptions.user_id, redemptions.rarity, players.*
+                FROM free_pack_redemptions AS redemptions
+                JOIN players ON players.id = redemptions.player_id
+                WHERE redemptions.interaction_id = ?
+                """,
+                (normalized_redemption_id,),
+            ).fetchone()
+            if previous is not None:
+                if (
+                    str(previous["user_id"]) != normalized_id
+                    or str(previous["rarity"]) != expected_rarity
+                ):
+                    raise InvalidAmount(
+                        "That free pack redemption ID has already been used."
+                    )
+                remaining = connection.execute(
+                    """
+                    SELECT quantity FROM free_pack_inventory
+                    WHERE user_id = ? AND rarity = ?
+                    """,
+                    (normalized_id, expected_rarity),
+                ).fetchone()
+                return (
+                    self._player_from_row(previous),
+                    int(remaining["quantity"]) if remaining else 0,
+                )
+
+            available = connection.execute(
+                """
+                SELECT quantity FROM free_pack_inventory
+                WHERE user_id = ? AND rarity = ?
+                """,
+                (normalized_id, expected_rarity),
+            ).fetchone()
+            if available is None or int(available["quantity"]) <= 0:
+                raise NoFreeRewardPacks(
+                    f"No free {expected_rarity} level-up packs are available."
+                )
+
+            candidates = connection.execute(
+                "SELECT * FROM players WHERE rarity = ? ORDER BY id",
+                (expected_rarity,),
+            ).fetchall()
+            if not candidates:
+                raise NoEligibleCards(expected_rarity)
+            weights = [
+                card_rating_weight(int(candidate["overall"]))
+                for candidate in candidates
+            ]
+            selected = chooser.choices(candidates, weights=weights, k=1)[0]
+            player_id = int(selected["id"])
+            owned = connection.execute(
+                """
+                SELECT quantity FROM inventory
+                WHERE user_id = ? AND player_id = ?
+                """,
+                (normalized_id, player_id),
+            ).fetchone()
+            if owned is not None and int(owned["quantity"]) >= SQLITE_INT_MAX:
+                raise InvalidAmount("That card inventory quantity is too large.")
+
+            self._ensure_user(connection, normalized_id)
+            connection.execute(
+                """
+                UPDATE free_pack_inventory
+                SET quantity = quantity - 1
+                WHERE user_id = ? AND rarity = ? AND quantity > 0
+                """,
+                (normalized_id, expected_rarity),
+            )
+            remaining = connection.execute(
+                """
+                SELECT quantity FROM free_pack_inventory
+                WHERE user_id = ? AND rarity = ?
+                """,
+                (normalized_id, expected_rarity),
+            ).fetchone()
+            remaining_count = int(remaining["quantity"]) if remaining else 0
+            if remaining_count == 0:
+                connection.execute(
+                    """
+                    DELETE FROM free_pack_inventory
+                    WHERE user_id = ? AND rarity = ?
+                    """,
+                    (normalized_id, expected_rarity),
+                )
+            connection.execute(
+                """
+                INSERT INTO inventory(user_id, player_id, quantity)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, player_id)
+                DO UPDATE SET quantity = inventory.quantity + 1
+                """,
+                (normalized_id, player_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO free_pack_redemptions
+                    (interaction_id, user_id, rarity, player_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_redemption_id,
+                    normalized_id,
+                    expected_rarity,
+                    player_id,
+                    int(time.time()),
+                ),
+            )
+            return self._player_from_row(selected), remaining_count
 
     @staticmethod
     def _auction_from_row(row: sqlite3.Row) -> Auction:

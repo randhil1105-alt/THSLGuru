@@ -26,6 +26,7 @@ from database import (
     Database,
     InsufficientFunds,
     InvalidAmount,
+    NoFreeRewardPacks,
     NoEligibleCards,
     Player,
     calculate_pack_odds,
@@ -77,6 +78,26 @@ class PackBuyButton(discord.ui.Button["PackPurchaseView"]):
         await self.view.buy(interaction, rarity=self.rarity, cost=self.cost)
 
 
+class FreePackOpenButton(discord.ui.Button["PackPurchaseView"]):
+    def __init__(self, rarity: str, quantity: int) -> None:
+        label = f"Open Free {format_card_type(rarity)} ×{quantity}"
+        super().__init__(
+            label=label[:80],
+            style=discord.ButtonStyle.success,
+        )
+        self.rarity = rarity
+        self.quantity = quantity
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if self.view is None:
+            await interaction.response.send_message(
+                "This pack menu is no longer available.",
+                ephemeral=False,
+            )
+            return
+        await self.view.open_free_pack(interaction, rarity=self.rarity)
+
+
 class PackPurchaseView(discord.ui.View):
     """A user-bound, single-use menu with an idempotent pack purchase."""
 
@@ -89,12 +110,14 @@ class PackPurchaseView(discord.ui.View):
         only_rarity: str | None = None,
         quantity: int = 1,
         balance: int = 0,
+        free_pack_counts: dict[str, int] | None = None,
     ) -> None:
         super().__init__(timeout=180)
         self.command = command
         self.user_id = str(user_id)
         self.cards_by_rarity = cards_by_rarity
         self.quantity = quantity
+        self.free_pack_counts = free_pack_counts or {}
         self._purchase_lock = asyncio.Lock()
         self._used = False
 
@@ -112,6 +135,9 @@ class PackPurchaseView(discord.ui.View):
                     ),
                 )
             )
+            free_count = self.free_pack_counts.get(rarity, 0)
+            if rarity in {"GOLD", "TOTW"} and free_count > 0:
+                self.add_item(FreePackOpenButton(rarity, free_count))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if str(interaction.user.id) != self.user_id:
@@ -147,14 +173,44 @@ class PackPurchaseView(discord.ui.View):
                     quantity=self.quantity,
                 )
             finally:
-                for child in self.children:
-                    child.disabled = True
-                message = getattr(interaction, "message", None)
-                if message is not None:
-                    try:
-                        await message.edit(view=self)
-                    except discord.HTTPException:
-                        LOGGER.debug("Could not disable the completed pack menu.")
+                await self._disable_completed_menu(interaction)
+
+    async def open_free_pack(
+        self,
+        interaction: discord.Interaction,
+        *,
+        rarity: str,
+    ) -> None:
+        async with self._purchase_lock:
+            if self._used:
+                await interaction.response.send_message(
+                    "This pack menu has already been used. Run `/pack` again to open another pack.",
+                    ephemeral=False,
+                )
+                return
+
+            self._used = True
+            try:
+                await self.command._open_free_reward(
+                    interaction,
+                    rarity=rarity,
+                    redemption_id=interaction.id,
+                )
+            finally:
+                await self._disable_completed_menu(interaction)
+
+    async def _disable_completed_menu(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        for child in self.children:
+            child.disabled = True
+        message = getattr(interaction, "message", None)
+        if message is not None:
+            try:
+                await message.edit(view=self)
+            except discord.HTTPException:
+                LOGGER.debug("Could not disable the completed pack menu.")
 
 
 class PackCommands(discord_commands.Cog):
@@ -268,6 +324,43 @@ class PackCommands(discord_commands.Cog):
             ephemeral=False,
         )
 
+    async def _open_free_reward(
+        self,
+        interaction: discord.Interaction,
+        *,
+        rarity: str,
+        redemption_id: str | int,
+    ) -> None:
+        try:
+            player, remaining = self.database.open_free_reward_pack(
+                interaction.user.id,
+                rarity,
+                redemption_id,
+            )
+        except NoFreeRewardPacks as exc:
+            await interaction.response.send_message(str(exc), ephemeral=False)
+            return
+        except NoEligibleCards:
+            await interaction.response.send_message(
+                f"No **{rarity}** cards are available. Your free pack was not used.",
+                ephemeral=False,
+            )
+            return
+        except InvalidAmount as exc:
+            await interaction.response.send_message(str(exc), ephemeral=False)
+            return
+
+        pack_name = f"{format_card_type(rarity)} Pack"
+        await send_player_card(
+            interaction,
+            player,
+            ephemeral=False,
+            content=(
+                f"You opened a **FREE {pack_name}** level-up reward. "
+                f"Remaining free {format_card_type(rarity)} packs: **{remaining}**."
+            ),
+        )
+
     def _pack_cards(self) -> dict[str, list[Player]]:
         return {
             rarity: self.database.get_players(rarity=rarity)
@@ -283,6 +376,9 @@ class PackCommands(discord_commands.Cog):
     ) -> None:
         cards_by_rarity = self._pack_cards()
         balance = self.database.get_balance(interaction.user.id)
+        free_pack_counts = self.database.get_free_pack_inventory(
+            interaction.user.id
+        )
         visible_packs = [
             (rarity, cost)
             for rarity, cost in PACKS
@@ -317,6 +413,11 @@ class PackCommands(discord_commands.Cog):
                 )
                 if rarity in PACK_DISPLAY_NAMES:
                     contents += f" Rarity: {card_type}."
+                if rarity in {"GOLD", "TOTW"}:
+                    contents += (
+                        f" Free level-up packs available: "
+                        f"{free_pack_counts.get(rarity, 0)}."
+                    )
                 odds = calculate_pack_odds(cards)
                 odds_text = "Card odds: " + " · ".join(
                     f"{card.name} {odds[card.id]:.2f}%"
@@ -334,7 +435,8 @@ class PackCommands(discord_commands.Cog):
                     f"{contents}\n"
                     f"Price: {format_coins(cost)}. Requires an eligible {rarity} "
                     f"card in the catalog and {format_coins(total_cost)} in your "
-                    f"balance.\n{odds_text}\nTotal for {quantity}: "
+                    f"balance. Level-up reward packs are free and separate.\n"
+                    f"{odds_text}\nTotal for {quantity}: "
                     f"{format_coins(total_cost)}."
                 ),
                 inline=False,
@@ -347,6 +449,7 @@ class PackCommands(discord_commands.Cog):
             only_rarity=only_rarity,
             quantity=quantity,
             balance=balance,
+            free_pack_counts=free_pack_counts,
         )
         await interaction.response.send_message(
             embed=embed,

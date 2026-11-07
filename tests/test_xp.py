@@ -7,14 +7,28 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
+import discord
+
 from commands.common import player_card_label, resolve_card_image
 from commands.profile import ProfileCommands, xp_progress_bar
-from commands.xp import award_marked_command_xp, mark_successful_command
-from database import Database, InvalidLineupPosition
+from commands.packs import FreePackOpenButton, PackCommands
+from commands.xp import (
+    award_marked_command_xp,
+    mark_successful_command,
+    xp_level_up_embed,
+)
+from database import (
+    GOLD_PACK_COST,
+    TOTW_PACK_COST,
+    Database,
+    InvalidLineupPosition,
+    NoFreeRewardPacks,
+)
 from main import load_player_seed
 from xp_system import (
     MINIGAME_COMPLETION_XP,
     calculate_xp_progress,
+    level_up_pack_rewards,
     xp_required_for_level,
 )
 
@@ -44,6 +58,20 @@ class XPDatabaseTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def set_total_xp(self, user_id: str, total_xp: int) -> None:
+        self.database.set_balance(user_id, 0)
+        with self.database._transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO player_xp(user_id, total_xp, updated_at)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id)
+                DO UPDATE SET total_xp = excluded.total_xp,
+                              updated_at = excluded.updated_at
+                """,
+                (user_id, total_xp),
+            )
 
     def test_card_catalog_artwork_values_and_display_labels(self) -> None:
         expected = {
@@ -262,6 +290,148 @@ class XPDatabaseTests(unittest.TestCase):
         self.assertEqual(partial.progress_percent, 50)
         self.assertEqual(xp_progress_bar(50), "███████░░░░░░░░")
 
+    def test_level_ups_grant_gold_and_each_tenth_level_grants_totw(self) -> None:
+        ordinary_user = "ordinary-level-reward"
+        self.set_total_xp(ordinary_user, xp_required_for_level(2) - 1)
+        ordinary_grant = self.database.award_xp(
+            ordinary_user,
+            "ordinary-level-up",
+            1,
+            "test",
+        )
+        self.assertEqual((ordinary_grant.level_before, ordinary_grant.level_after), (1, 2))
+        self.assertEqual(
+            self.database.get_free_pack_inventory(ordinary_user),
+            {"GOLD": 1, "TOTW": 0},
+        )
+
+        for milestone in range(10, 51, 10):
+            with self.subTest(level=milestone):
+                user_id = f"milestone-{milestone}"
+                self.set_total_xp(user_id, xp_required_for_level(milestone) - 1)
+                grant = self.database.award_xp(
+                    user_id,
+                    f"reach-level-{milestone}",
+                    1,
+                    "test",
+                )
+                self.assertEqual(grant.level_after, milestone)
+                self.assertEqual(
+                    self.database.get_free_pack_inventory(user_id),
+                    {"GOLD": 1, "TOTW": 1},
+                )
+
+    def test_skipped_levels_grant_each_gold_pack_and_crossed_totw_milestones(self) -> None:
+        user_id = "skip-level-rewards"
+        previous_xp = xp_required_for_level(8)
+        target_xp = xp_required_for_level(12)
+        self.set_total_xp(user_id, previous_xp)
+
+        grant = self.database.award_xp(
+            user_id,
+            "skip-levels-8-to-12",
+            target_xp - previous_xp,
+            "test",
+        )
+
+        self.assertEqual((grant.level_before, grant.level_after), (8, 12))
+        self.assertEqual(level_up_pack_rewards(8, 12), (4, 1))
+        self.assertEqual(
+            self.database.get_free_pack_inventory(user_id),
+            {"GOLD": 4, "TOTW": 1},
+        )
+        embed = xp_level_up_embed(grant, user_id=user_id, username="SkipPlayer")
+        self.assertEqual(embed.title, "🎉 LEVEL UP!")
+        self.assertIn("<@skip-level-rewards>", embed.description)
+        self.assertIn("Level 12", embed.description)
+        self.assertEqual(
+            embed.fields[0].value,
+            "- 4x Gold Packs\n- 1x TOTW Pack",
+        )
+
+    def test_level_rewards_and_free_pack_redemption_persist_and_are_idempotent(self) -> None:
+        user_id = "persistent-free-packs"
+        self.set_total_xp(user_id, xp_required_for_level(2) - 1)
+        self.database.set_balance(user_id, 777)
+        self.database.award_xp(user_id, "persistent-level-up", 1, "test")
+
+        reopened = Database(self.path)
+        reopened.initialize(load_player_seed())
+        self.assertEqual(
+            reopened.get_free_pack_inventory(user_id),
+            {"GOLD": 1, "TOTW": 0},
+        )
+
+        class ChooseFirst:
+            def choices(self, population, *, weights, k):
+                del weights, k
+                return [population[0]]
+
+        player, remaining = reopened.open_free_reward_pack(
+            user_id,
+            "GOLD",
+            "free-pack-open-once",
+            rng=ChooseFirst(),
+        )
+
+        class NoSelection:
+            def choices(self, population, *, weights, k):
+                del population, weights, k
+                raise AssertionError("A replay must return the saved pack result.")
+
+        replayed, replayed_remaining = reopened.open_free_reward_pack(
+            user_id,
+            "GOLD",
+            "free-pack-open-once",
+            rng=NoSelection(),
+        )
+        self.assertEqual(player.id, replayed.id)
+        self.assertEqual((remaining, replayed_remaining), (0, 0))
+        self.assertEqual(player.rarity, "GOLD")
+        self.assertEqual(reopened.get_balance(user_id), 777)
+        self.assertEqual(reopened.get_free_pack_inventory(user_id), {"GOLD": 0, "TOTW": 0})
+        self.assertEqual(
+            [(entry.player.name, entry.quantity) for entry in reopened.get_inventory(user_id)],
+            [(player.name, 1)],
+        )
+        with self.assertRaises(NoFreeRewardPacks):
+            reopened.open_free_reward_pack(
+                user_id,
+                "GOLD",
+                "another-free-pack-open",
+                rng=ChooseFirst(),
+            )
+
+    def test_concurrent_duplicate_level_xp_event_awards_one_reward(self) -> None:
+        user_id = "concurrent-level-up"
+        self.set_total_xp(user_id, xp_required_for_level(2) - 1)
+
+        def award(_index: int):
+            return self.database.award_xp(
+                user_id,
+                "same-level-up-event",
+                1,
+                "test",
+            )
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            grants = list(pool.map(award, range(20)))
+
+        self.assertEqual(sum(grant.is_new for grant in grants), 1)
+        self.assertEqual(self.database.get_xp_profile(user_id).level, 2)
+        self.assertEqual(
+            self.database.get_free_pack_inventory(user_id),
+            {"GOLD": 1, "TOTW": 0},
+        )
+        with self.database._read_connection() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT count(*) FROM xp_level_rewards WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()[0],
+                1,
+            )
+
     def test_xp_transactions_are_idempotent_and_persist(self) -> None:
         first = self.database.award_xp(
             "user-1", "command:101", 50, "command", now=100
@@ -339,6 +509,10 @@ class XPDatabaseTests(unittest.TestCase):
             grants = list(pool.map(award, range(40)))
         self.assertEqual(sum(grant.amount for grant in grants), 2_000)
         self.assertEqual(self.database.get_xp_profile("parallel").total_xp, 2_000)
+        self.assertEqual(
+            self.database.get_free_pack_inventory("parallel"),
+            {"GOLD": 2, "TOTW": 0},
+        )
 
         def repeat_same_event(_index: int):
             return self.database.award_xp(

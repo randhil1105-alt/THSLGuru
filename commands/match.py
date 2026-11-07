@@ -23,7 +23,7 @@ from database import (
     MatchNotFound,
     MatchNotPending,
 )
-from commands.xp import xp_notification_text
+from commands.xp import xp_level_up_embed, xp_notification_text
 from match_simulation import (
     MatchEvent,
     MatchResult,
@@ -278,7 +278,8 @@ def _completed_embed(
         embed.add_field(
             name="XP earned",
             value="\n".join(
-                f"<@{grant.user_id}> · {xp_notification_text(grant)}"
+                f"<@{grant.user_id}> · "
+                f"{xp_notification_text(grant, include_level_up=False)}"
                 for grant in xp_grants
             ),
             inline=False,
@@ -789,17 +790,22 @@ class MatchCommands(discord_commands.Cog):
         embed: discord.Embed,
         *,
         message: discord.Message | None = None,
+        extra_embeds: list[discord.Embed] | None = None,
     ) -> bool:
         try:
             if message is None:
                 _channel, message = await self._resolve_message(match)
             if message is None:
                 return False
-            await message.edit(
-                embed=embed,
-                view=None,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
+            edit_payload: dict[str, Any] = {
+                "view": None,
+                "allowed_mentions": discord.AllowedMentions.none(),
+            }
+            if extra_embeds:
+                edit_payload["embeds"] = [embed, *extra_embeds]
+            else:
+                edit_payload["embed"] = embed
+            await message.edit(**edit_payload)
             return True
         except discord.HTTPException:
             LOGGER.warning(
@@ -828,19 +834,40 @@ class MatchCommands(discord_commands.Cog):
             is not None
         ]
         completed_embed = _completed_embed(match, xp_grants=xp_grants)
+        participant_names = {
+            str(match["challenger_id"]): str(match["challenger_name"]),
+            str(match["opponent_id"]): str(match["opponent_name"]),
+        }
+        level_up_embeds = [
+            xp_level_up_embed(
+                grant,
+                user_id=grant.user_id,
+                username=participant_names.get(grant.user_id),
+            )
+            for grant in xp_grants
+            if grant.leveled_up
+        ]
         sent = await self._edit_match_message(
             match,
             completed_embed,
             message=message,
+            extra_embeds=level_up_embeds,
         )
         if not sent:
             try:
                 channel, _message = await self._resolve_message(match)
                 if channel is not None:
-                    await channel.send(
-                        embed=completed_embed,
-                        allowed_mentions=discord.AllowedMentions.none(),
-                    )
+                    send_payload: dict[str, Any] = {
+                        "allowed_mentions": discord.AllowedMentions.none(),
+                    }
+                    if level_up_embeds:
+                        send_payload["embeds"] = [
+                            completed_embed,
+                            *level_up_embeds,
+                        ]
+                    else:
+                        send_payload["embed"] = completed_embed
+                    await channel.send(**send_payload)
                     sent = True
             except discord.HTTPException:
                 LOGGER.warning(

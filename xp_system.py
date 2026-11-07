@@ -45,6 +45,17 @@ def xp_required_for_level(level: int) -> int:
     return 100 * previous_level * (previous_level + 4)
 
 
+def level_up_pack_rewards(level_before: int, level_after: int) -> tuple[int, int]:
+    """Return (Gold, TOTW) packs earned across a level transition."""
+    previous = int(level_before)
+    current = int(level_after)
+    if previous < 1 or current < 1:
+        raise ValueError("Levels start at 1.")
+    if current <= previous:
+        return 0, 0
+    return current - previous, current // 10 - previous // 10
+
+
 def calculate_xp_progress(total_xp: int) -> XPProgress:
     """Calculate level and progress using the progressive threshold sequence."""
     xp = max(0, int(total_xp))

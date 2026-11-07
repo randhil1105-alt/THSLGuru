@@ -23,7 +23,7 @@ from commands.common import (
     resolve_card_image,
 )
 from commands.draft import DraftSessionView
-from commands.xp import xp_notification_text
+from commands.xp import xp_level_up_embed, xp_notification_text
 from database import (
     DRAFT_COOLDOWN_SECONDS,
     Database,
@@ -207,9 +207,17 @@ class IndividualMinigameView(discord.ui.View):
             )
             return
         if result == "incorrect":
+            leveled_up = bool(
+                xp_grant and xp_grant.is_new and xp_grant.leveled_up
+            )
             await interaction.response.send_message(
                 "That answer is incorrect. Your one attempt has been used.\n\n"
-                f"{xp_notification_text(xp_grant)}",
+                f"{xp_notification_text(xp_grant, include_level_up=not leveled_up)}",
+                embed=(
+                    xp_level_up_embed(xp_grant, user=interaction.user)
+                    if leveled_up
+                    else None
+                ),
                 ephemeral=True,
             )
             await self._disable_prompt_button()
@@ -223,9 +231,17 @@ class IndividualMinigameView(discord.ui.View):
             await self._disable_prompt_button()
             return
 
+        leveled_up = bool(
+            xp_grant and xp_grant.is_new and xp_grant.leveled_up
+        )
         await interaction.response.send_message(
             f"Correct! You won **{format_coins(MINIGAME_REWARD)}**.\n\n"
-            f"{xp_notification_text(xp_grant)}",
+            f"{xp_notification_text(xp_grant, include_level_up=not leveled_up)}",
+            embed=(
+                xp_level_up_embed(xp_grant, user=interaction.user)
+                if leveled_up
+                else None
+            ),
             ephemeral=True,
         )
         await self._disable_prompt_button()
