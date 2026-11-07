@@ -23,6 +23,7 @@ from commands.common import (
     resolve_card_image,
 )
 from commands.draft import DraftSessionView
+from commands.xp import xp_notification_text
 from database import (
     DRAFT_COOLDOWN_SECONDS,
     Database,
@@ -152,6 +153,7 @@ class IndividualMinigameView(discord.ui.View):
             return
 
         attempt_key = (self.game_id, int(interaction.user.id))
+        xp_grant = None
         async with self._lock:
             if self.finished:
                 result = "finished"
@@ -163,16 +165,29 @@ class IndividualMinigameView(discord.ui.View):
                 self.attempted_user_game_ids.add(attempt_key)
                 self.answer_button.disabled = True
                 if _normalize_answer(answer) != _normalize_answer(self.player.name):
-                    result = "incorrect"
-                    balance = None
-                else:
                     try:
-                        balance = self.database.add_coins(
+                        balance, xp_grant = self.database.complete_guess_who(
                             self.owner_id,
-                            MINIGAME_REWARD,
+                            self.game_id,
+                            correct=False,
+                            coin_reward=MINIGAME_REWARD,
                         )
                     except Exception:
-                        LOGGER.exception("Could not save a minigame reward.")
+                        LOGGER.exception("Could not save Guess Who completion XP.")
+                        result = "reward_error"
+                        balance = None
+                    else:
+                        result = "incorrect"
+                else:
+                    try:
+                        balance, xp_grant = self.database.complete_guess_who(
+                            self.owner_id,
+                            self.game_id,
+                            correct=True,
+                            coin_reward=MINIGAME_REWARD,
+                        )
+                    except Exception:
+                        LOGGER.exception("Could not save Guess Who rewards.")
                         result = "reward_error"
                         balance = None
                     else:
@@ -193,22 +208,24 @@ class IndividualMinigameView(discord.ui.View):
             return
         if result == "incorrect":
             await interaction.response.send_message(
-                "That answer is incorrect. Your one attempt has been used.",
+                "That answer is incorrect. Your one attempt has been used.\n\n"
+                f"{xp_notification_text(xp_grant)}",
                 ephemeral=True,
             )
             await self._disable_prompt_button()
             return
         if result == "reward_error":
             await interaction.response.send_message(
-                "That answer is correct, but the reward could not be saved. "
-                "Your one attempt has been used.",
+                "Your attempt was used, but its completion reward could not "
+                "be saved.",
                 ephemeral=True,
             )
             await self._disable_prompt_button()
             return
 
         await interaction.response.send_message(
-            f"Correct! You won **{format_coins(MINIGAME_REWARD)}**.",
+            f"Correct! You won **{format_coins(MINIGAME_REWARD)}**.\n\n"
+            f"{xp_notification_text(xp_grant)}",
             ephemeral=True,
         )
         await self._disable_prompt_button()

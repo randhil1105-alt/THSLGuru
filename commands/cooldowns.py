@@ -6,6 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
+from commands.xp import mark_successful_command
 from database import Database
 
 
@@ -77,6 +78,7 @@ class CooldownCommands(discord_commands.Cog):
             )
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        mark_successful_command(interaction)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

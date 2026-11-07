@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from commands.common import format_coins
+from commands.xp import mark_successful_command
 from database import (
     Database,
     DuplicateSaleItem,
@@ -234,6 +235,7 @@ class DuplicateSaleCommands(discord_commands.Cog):
                     "card will always be kept."
                 )
             await interaction.response.send_message(message, ephemeral=True)
+            mark_successful_command(interaction)
             return
 
         sale_id = str(getattr(interaction, "id", None) or uuid.uuid4().hex)
@@ -252,6 +254,7 @@ class DuplicateSaleCommands(discord_commands.Cog):
             view.message = await interaction.original_response()
         except (AttributeError, discord.HTTPException):
             LOGGER.debug("Could not save the duplicate-sale preview message.")
+        mark_successful_command(interaction)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

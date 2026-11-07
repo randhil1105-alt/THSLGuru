@@ -286,6 +286,8 @@ class MatchDatabaseTests(unittest.TestCase):
         )
         self.assertEqual(self.database.get_balance("u1"), MATCH_REWARD)
         self.assertEqual(self.database.get_balance("u2"), 0)
+        self.assertEqual(self.database.get_xp_profile("u1").total_xp, 200)
+        self.assertEqual(self.database.get_xp_profile("u2").total_xp, 50)
 
         reloaded = Database(self.path)
         reloaded.initialize(load_player_seed())
@@ -294,6 +296,8 @@ class MatchDatabaseTests(unittest.TestCase):
         self.assertEqual(match["reward_amount"], MATCH_REWARD)
         self.assertEqual(match["result"], result)
         self.assertEqual(reloaded.get_balance("u1"), MATCH_REWARD)
+        self.assertEqual(reloaded.get_xp_profile("u1").total_xp, 200)
+        self.assertEqual(reloaded.get_xp_profile("u2").total_xp, 50)
 
     def test_database_rejects_a_draw_or_goal_less_completed_result(self) -> None:
         self._assign_balanced_lineup("u1")
@@ -314,6 +318,7 @@ class MatchDatabaseTests(unittest.TestCase):
             )
         self.assertEqual(self.database.get_match("match-1")["status"], "ACTIVE")
         self.assertEqual(self.database.get_balance("u1"), 0)
+        self.assertEqual(self.database.get_xp_profile("u1").total_xp, 0)
 
     def test_restart_and_user_cancellation_never_award_reward(self) -> None:
         self._assign_balanced_lineup("u1")
@@ -332,6 +337,8 @@ class MatchDatabaseTests(unittest.TestCase):
             )
         )
         self.assertEqual(self.database.get_balance("u1"), 0)
+        self.assertEqual(self.database.get_xp_profile("u1").total_xp, 0)
+        self.assertEqual(self.database.get_xp_profile("u2").total_xp, 0)
 
         self._invite("match-2", now=200)
         cancelled = self.database.cancel_match_for_user(

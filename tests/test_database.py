@@ -794,8 +794,9 @@ class DatabaseTests(unittest.TestCase):
 
         totw_cards = self.database.get_players(rarity="TOTW")
         totw_odds = calculate_pack_odds(totw_cards)
-        self.assertEqual(len(totw_cards), 2)
-        self.assertEqual(set(totw_odds.values()), {50.0})
+        self.assertEqual(len(totw_cards), 5)
+        self.assertAlmostEqual(sum(totw_odds.values()), 100.0)
+        self.assertGreater(max(totw_odds.values()), min(totw_odds.values()))
 
         self.database.add_player(
             {

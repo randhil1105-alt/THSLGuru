@@ -547,5 +547,59 @@
     },
     "image_path": "cards/frozend_gold_supplied.png",
     "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Cryptic",
+    "overall": 97,
+    "position": "WI",
+    "country": "Canada 🇨🇦",
+    "team": "Anaheim Ducks",
+    "rarity": "TOTW",
+    "value": 27000000,
+    "stats": {
+      "SHO": 97,
+      "DRI": 96,
+      "SAV": 72,
+      "PAS": 90,
+      "DEF": 80,
+      "ACT": 93
+    },
+    "image_path": "cards/cryptic_totw.png"
+  },
+  {
+    "name": "Hala (TOTW 98)",
+    "overall": 98,
+    "position": "C",
+    "country": "Scotland 🏴",
+    "team": "Ottawa Senators",
+    "rarity": "TOTW",
+    "value": 27000000,
+    "stats": {
+      "SHO": 91,
+      "DRI": 99,
+      "SAV": 85,
+      "PAS": 93,
+      "DEF": 95,
+      "ACT": 95
+    },
+    "image_path": "cards/hala_totw_98.png"
+  },
+  {
+    "name": "Xavier",
+    "overall": 99,
+    "position": "W",
+    "country": "England 🏴",
+    "team": "Dallas Stars",
+    "rarity": "TOTW",
+    "value": 45000000,
+    "stats": {
+      "SHO": 97,
+      "DRI": 99,
+      "SAV": 82,
+      "PAS": 80,
+      "DEF": 95,
+      "ACT": 96
+    },
+    "image_path": "cards/xavier_totw_99.png"
   }
 ]

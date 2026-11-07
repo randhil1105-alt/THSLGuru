@@ -62,6 +62,7 @@ EXPECTED_COMMANDS = {
     "claim",
     "cooldowns",
     "sellduplicates",
+    "profile",
     "balance",
     "leaderboard",
     "inventory",
@@ -220,7 +221,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(command.default_permissions)
                     self.assertFalse(command.checks)
 
-        for name in ("claim", "minigame", "cooldowns", "sellduplicates"):
+        for name in (
+            "claim",
+            "minigame",
+            "cooldowns",
+            "sellduplicates",
+            "profile",
+        ):
             with self.subTest(public_command=name):
                 self.assertIsNone(commands[name].default_permissions)
                 self.assertFalse(commands[name].checks)
@@ -1276,6 +1283,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 display_name = {
                     "Hala (Gold 90)": "Hala",
                     "Licha (Gold 90)": "Licha",
+                    "Hala (TOTW 98)": "Hala",
                 }.get(player.name, player.name)
                 self.assertEqual(
                     label,
@@ -3451,6 +3459,7 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(view.finished)
         self.assertTrue(view.answer_button.disabled)
         self.assertEqual(self.database.get_balance(1601), 0)
+        self.assertEqual(self.database.get_xp_profile(1601).total_xp, 0)
         self.assertEqual(len(channel.messages), 1)
         reveal = channel.messages[0]
         self.assertIn("Time is up", reveal["embed"].description)

@@ -15,6 +15,7 @@ COMMAND_MODULES = (
     "commands.team",
     "commands.admin",
     "commands.information",
+    "commands.profile",
     "commands.minigame",
     "commands.match",
 )

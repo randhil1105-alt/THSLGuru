@@ -188,10 +188,12 @@ class DraftDatabaseTests(unittest.TestCase):
         self.assertEqual(DRAFT_WIN_REWARD, 200_000)
         self.assertEqual(self.database.get_balance("winner"), 7_347_502)
         self.assertEqual(self.database.get_inventory("winner"), before_inventory)
+        self.assertEqual(self.database.get_xp_profile("winner").total_xp, 200)
 
         reopened = Database(self.path)
         reopened.initialize(load_player_seed())
         self.assertEqual(reopened.get_balance("winner"), 7_347_502)
+        self.assertEqual(reopened.get_xp_profile("winner").total_xp, 200)
         self.assertEqual(
             reopened.finish_draft_session(
                 "win",
@@ -216,6 +218,7 @@ class DraftDatabaseTests(unittest.TestCase):
         self.assertTrue(completed)
         self.assertEqual(balance, 12_345)
         self.assertEqual(self.database.get_balance("loser"), 12_345)
+        self.assertEqual(self.database.get_xp_profile("loser").total_xp, 200)
 
         self.database.start_draft_session(
             "cancelled",
@@ -230,6 +233,7 @@ class DraftDatabaseTests(unittest.TestCase):
             )
         )
         self.assertEqual(self.database.get_balance("cancelled"), 0)
+        self.assertEqual(self.database.get_xp_profile("cancelled").total_xp, 0)
         self.assertFalse(
             self.database.finish_draft_session(
                 "cancel",

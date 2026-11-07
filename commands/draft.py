@@ -12,6 +12,7 @@ from typing import Any
 import discord
 
 from commands.common import format_coins, player_card_label, resolve_card_image
+from commands.xp import xp_notification_text
 from database import (
     DRAFT_COOLDOWN_SECONDS,
     DRAFT_WIN_REWARD,
@@ -161,6 +162,7 @@ class DraftSessionView(discord.ui.View):
         ai_team_name: str,
         match: DraftMatchResult,
         new_balance: int,
+        xp_notice: str | None = None,
     ) -> discord.Embed:
         embed = discord.Embed(
             title="Draft match result",
@@ -212,6 +214,8 @@ class DraftSessionView(discord.ui.View):
                 value="No coins were awarded.",
                 inline=False,
             )
+        if xp_notice:
+            embed.add_field(name="XP", value=xp_notice, inline=False)
         return embed
 
     def _result_artwork(
@@ -365,6 +369,9 @@ class DraftSessionView(discord.ui.View):
             )
             return
 
+        xp_grant = self.database.get_xp_event(
+            f"draft-completion:{self.game_id}:{self.owner_id}"
+        )
         result_embed = self._result_embed(
             user_squad=user_squad,
             ai_squad=ai_squad,
@@ -373,6 +380,7 @@ class DraftSessionView(discord.ui.View):
             ai_team_name=ai_team_name,
             match=match,
             new_balance=balance,
+            xp_notice=xp_notification_text(xp_grant) if xp_grant else None,
         )
         artwork_embeds, artwork_files = self._result_artwork(user_squad)
         self.stop()

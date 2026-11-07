@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from commands.init import load_command_modules
+from commands.xp import award_marked_command_xp
 from config import PROJECT_ROOT, Settings, load_settings
 from database import Database
 
@@ -199,6 +200,14 @@ def create_bot(
                 message,
                 ephemeral=not public_response,
             )
+
+    @bot.listen()
+    async def on_app_command_completion(
+        interaction: discord.Interaction,
+        command: app_commands.Command,
+    ) -> None:
+        del command
+        await award_marked_command_xp(interaction, database)
 
     return bot
 

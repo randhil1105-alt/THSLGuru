@@ -9,6 +9,7 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from commands.common import format_coins, player_card_label, send_player_card
+from commands.xp import mark_successful_command
 from database import (
     CooldownActive,
     Database,
@@ -60,6 +61,7 @@ class EconomyCommands(discord_commands.Cog):
                 f"Next claim: <t:{next_claim_at}:R>."
             ),
         )
+        mark_successful_command(interaction)
 
     @app_commands.command(name="balance", description="Check your coin balance.")
     async def balance(self, interaction: discord.Interaction) -> None:
@@ -68,6 +70,7 @@ class EconomyCommands(discord_commands.Cog):
             f"Your balance: **{format_coins(amount)}**.",
             ephemeral=False,
         )
+        mark_successful_command(interaction)
 
     @app_commands.command(name="leaderboard", description="See the top coin balances.")
     async def leaderboard(self, interaction: discord.Interaction) -> None:
@@ -87,6 +90,7 @@ class EconomyCommands(discord_commands.Cog):
             embed=embed,
             allowed_mentions=discord.AllowedMentions.none(),
         )
+        mark_successful_command(interaction)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

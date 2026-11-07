@@ -6,6 +6,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
+from commands.xp import mark_successful_command
+
 
 class InformationCommands(discord_commands.Cog):
     @app_commands.command(name="help", description="Show the bot command guide.")
@@ -24,6 +26,7 @@ class InformationCommands(discord_commands.Cog):
                 "`/collection` · Browse the catalog\n"
                 "`/minigame mode` · Play Guess Who or start Draft\n"
                 "`/cooldowns` · Check your personal timers\n"
+                "`/profile` · View your level and XP progress\n"
                 "`/auction browse` · Browse and bid on other players' cards\n"
                 "`/auction sell` · List one of your cards for auction\n"
                 "`/auction myauctions` · View your active and completed auctions\n"
@@ -59,6 +62,7 @@ class InformationCommands(discord_commands.Cog):
             inline=False,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        mark_successful_command(interaction)
 
     @app_commands.command(name="botinfo", description="Show bot and economy information.")
     async def botinfo(self, interaction: discord.Interaction) -> None:
@@ -76,6 +80,7 @@ class InformationCommands(discord_commands.Cog):
         )
         embed.add_field(name="Storage", value="Persistent SQLite", inline=True)
         await interaction.response.send_message(embed=embed)
+        mark_successful_command(interaction)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

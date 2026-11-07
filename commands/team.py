@@ -29,6 +29,7 @@ from commands.lineup_image import (
     LineupImageError,
     render_lineup_image,
 )
+from commands.xp import mark_successful_command
 
 POSITION_LABELS = {
     "WING1": "Wing 1",
@@ -152,6 +153,7 @@ class TeamCommands(discord_commands.Cog):
             embed=embed,
             file=discord.File(io.BytesIO(image), filename=OUTPUT_FILENAME),
         )
+        mark_successful_command(interaction)
 
     @app_commands.command(
         name="set",
@@ -187,6 +189,7 @@ class TeamCommands(discord_commands.Cog):
                 else f"**{position.value}** was already empty."
             )
             await interaction.response.send_message(message, ephemeral=True)
+            mark_successful_command(interaction)
             return
 
         try:
@@ -209,6 +212,7 @@ class TeamCommands(discord_commands.Cog):
             f"({POSITION_LABELS[position.value]}).",
             ephemeral=True,
         )
+        mark_successful_command(interaction)
 
     @set_position.autocomplete("player")
     async def set_player_autocomplete(
@@ -303,6 +307,7 @@ class TeamCommands(discord_commands.Cog):
         if notices:
             message += "\nSaved lineup adjustments: " + " ".join(notices)
         await interaction.response.send_message(message, ephemeral=True)
+        mark_successful_command(interaction)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

@@ -17,6 +17,7 @@ from commands.common import (
     player_card_label,
     resolve_card_image,
 )
+from commands.xp import mark_successful_command
 from database import (
     AUCTION_DURATIONS_SECONDS,
     Auction,
@@ -561,6 +562,7 @@ class AuctionCommands(discord_commands.Cog):
                 "Your auction was saved and will be posted automatically.",
                 ephemeral=True,
             )
+        mark_successful_command(interaction)
 
     @auction.command(name="browse", description="Browse active auctions from other players.")
     async def browse(self, interaction: discord.Interaction) -> None:
@@ -573,6 +575,7 @@ class AuctionCommands(discord_commands.Cog):
                 "There are no active auctions from other players right now.",
                 ephemeral=False,
             )
+            mark_successful_command(interaction)
             return
         view = AuctionBrowseView(self, auctions)
         auction = auctions[0]
@@ -589,6 +592,7 @@ class AuctionCommands(discord_commands.Cog):
         finally:
             if upload is not None:
                 upload.close()
+        mark_successful_command(interaction)
 
     @auction.command(name="myauctions", description="View your active and completed auctions.")
     async def myauctions(self, interaction: discord.Interaction) -> None:
@@ -621,6 +625,7 @@ class AuctionCommands(discord_commands.Cog):
             if len(auctions) > 25:
                 embed.set_footer(text="Showing the 25 most recent of your auctions.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        mark_successful_command(interaction)
 
     @auction.command(name="cancel", description="Cancel an active auction with no bids.")
     @app_commands.describe(auction_id="Choose an active auction you created")
@@ -657,6 +662,7 @@ class AuctionCommands(discord_commands.Cog):
             "The card is back in your inventory.",
             ephemeral=True,
         )
+        mark_successful_command(interaction)
         await self._update_auction_post(auction)
 
 

@@ -15,6 +15,7 @@ from commands.common import (
     resolve_card_image,
     send_player_card,
 )
+from commands.xp import mark_successful_command
 from database import (
     GOLD_PACK_COST,
     MAX_PACK_QUANTITY,
@@ -318,6 +319,7 @@ class PackCommands(discord_commands.Cog):
         quantity: app_commands.Range[int, 1, MAX_PACK_QUANTITY] = 1,
     ) -> None:
         await self._send_pack_menu(interaction, quantity=quantity)
+        mark_successful_command(interaction)
 
     @app_commands.command(
         name="pack",
@@ -336,6 +338,7 @@ class PackCommands(discord_commands.Cog):
         pack_type: app_commands.Choice[str],
     ) -> None:
         await self._send_pack_menu(interaction, only_rarity=pack_type.value)
+        mark_successful_command(interaction)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

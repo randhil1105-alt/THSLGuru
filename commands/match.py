@@ -23,6 +23,7 @@ from database import (
     MatchNotFound,
     MatchNotPending,
 )
+from commands.xp import xp_notification_text
 from match_simulation import (
     MatchEvent,
     MatchResult,
@@ -32,6 +33,7 @@ from match_simulation import (
     play_match_clock,
     simulate_match,
 )
+from xp_system import XPGrant
 
 LOGGER = logging.getLogger("thsl_guru.match")
 
@@ -207,7 +209,11 @@ def _cancelled_embed(match: dict[str, Any], reason: str) -> discord.Embed:
     return embed
 
 
-def _completed_embed(match: dict[str, Any]) -> discord.Embed:
+def _completed_embed(
+    match: dict[str, Any],
+    *,
+    xp_grants: list[XPGrant] | None = None,
+) -> discord.Embed:
     result = match.get("result") or {}
     home_id = str(match["challenger_id"])
     away_id = str(match["opponent_id"])
@@ -268,6 +274,15 @@ def _completed_embed(match: dict[str, Any]) -> discord.Embed:
         value=f"**{MATCH_REWARD:,} coins** awarded to {winner_name}.",
         inline=False,
     )
+    if xp_grants:
+        embed.add_field(
+            name="XP earned",
+            value="\n".join(
+                f"<@{grant.user_id}> · {xp_notification_text(grant)}"
+                for grant in xp_grants
+            ),
+            inline=False,
+        )
     return embed
 
 
@@ -802,9 +817,20 @@ class MatchCommands(discord_commands.Cog):
     ) -> None:
         if match.get("result") is None:
             return
+        xp_grants = [
+            grant
+            for user_id in (match["challenger_id"], match["opponent_id"])
+            if (
+                grant := self.database.get_xp_event(
+                    f"match:{match['match_id']}:{user_id}"
+                )
+            )
+            is not None
+        ]
+        completed_embed = _completed_embed(match, xp_grants=xp_grants)
         sent = await self._edit_match_message(
             match,
-            _completed_embed(match),
+            completed_embed,
             message=message,
         )
         if not sent:
@@ -812,7 +838,7 @@ class MatchCommands(discord_commands.Cog):
                 channel, _message = await self._resolve_message(match)
                 if channel is not None:
                     await channel.send(
-                        embed=_completed_embed(match),
+                        embed=completed_embed,
                         allowed_mentions=discord.AllowedMentions.none(),
                     )
                     sent = True

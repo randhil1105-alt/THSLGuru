@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from commands.common import format_coins, player_card_label
+from commands.xp import mark_successful_command
 from database import (
     Database,
     EconomyError,
@@ -101,6 +102,7 @@ class AdminCommands(discord_commands.Cog):
             f"Added **{player_card_label(player)}** to the catalog.",
             ephemeral=True,
         )
+        mark_successful_command(interaction)
 
     @app_commands.command(name="setbalance", description="Set a member's coin balance.")
     @app_commands.default_permissions(administrator=True)
@@ -118,6 +120,7 @@ class AdminCommands(discord_commands.Cog):
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),
         )
+        mark_successful_command(interaction)
 
     @app_commands.command(name="grantcoins", description="Grant coins to a member.")
     @app_commands.default_permissions(administrator=True)
@@ -140,6 +143,7 @@ class AdminCommands(discord_commands.Cog):
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),
         )
+        mark_successful_command(interaction)
 
     @app_commands.command(name="grantcard", description="Grant a player card to a member.")
     @app_commands.default_permissions(administrator=True)
@@ -170,6 +174,7 @@ class AdminCommands(discord_commands.Cog):
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),
         )
+        mark_successful_command(interaction)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

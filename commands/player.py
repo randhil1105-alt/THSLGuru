@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from commands.common import player_card_label, send_player_card
+from commands.xp import mark_successful_command
 from database import Database
 
 
@@ -28,6 +29,7 @@ class PlayerCommands(discord_commands.Cog):
             )
             return
         await send_player_card(interaction, record)
+        mark_successful_command(interaction)
 
     @card.autocomplete("player")
     async def card_player_autocomplete(

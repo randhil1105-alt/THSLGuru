@@ -11,6 +11,15 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, Sequence
 
+from xp_system import (
+    MATCH_DEFEAT_XP,
+    MATCH_VICTORY_XP,
+    MINIGAME_COMPLETION_XP,
+    XPGrant,
+    XPProgress,
+    calculate_xp_progress,
+)
+
 CLAIM_COOLDOWN_SECONDS = 30 * 60
 GOLD_PACK_COST = 5_000_000
 TOTW_PACK_COST = 20_000_000
@@ -701,6 +710,7 @@ class Database:
         finally:
             connection.close()
 
+        self.ensure_xp_schema()
         for player in seed_players:
             try:
                 self.add_player(player)
@@ -708,6 +718,41 @@ class Database:
                 # Existing administrator edits are the source of truth after first seed.
                 continue
         self._migrate_legacy_team_data()
+
+    def ensure_xp_schema(self) -> None:
+        """Create XP tables additively without touching existing player data."""
+        with self._transaction() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS player_xp (
+                    user_id TEXT PRIMARY KEY
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    total_xp INTEGER NOT NULL DEFAULT 0 CHECK (total_xp >= 0),
+                    updated_at INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS xp_transactions (
+                    event_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    amount INTEGER NOT NULL CHECK (amount > 0),
+                    reason TEXT NOT NULL,
+                    total_after INTEGER NOT NULL CHECK (total_after >= 0),
+                    level_before INTEGER NOT NULL CHECK (level_before >= 1),
+                    level_after INTEGER NOT NULL CHECK (level_after >= 1),
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_xp_transactions_user_created
+                    ON xp_transactions(user_id, created_at DESC)
+                """
+            )
 
     def _migrate_legacy_team_data(self) -> None:
         """Copy compatible legacy lineup data without changing legacy records."""
@@ -990,6 +1035,209 @@ class Database:
             (user_id,),
         )
 
+    @staticmethod
+    def _award_xp_locked(
+        connection: sqlite3.Connection,
+        *,
+        user_id: str,
+        event_id: str,
+        amount: int,
+        reason: str,
+        now: int,
+    ) -> XPGrant:
+        existing = connection.execute(
+            "SELECT * FROM xp_transactions WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        if existing is not None:
+            if (
+                str(existing["user_id"]) != user_id
+                or int(existing["amount"]) != amount
+                or str(existing["reason"]) != reason
+            ):
+                raise InvalidAmount("That XP event identifier has already been used.")
+            return XPGrant(
+                event_id=event_id,
+                user_id=user_id,
+                amount=int(existing["amount"]),
+                reason=str(existing["reason"]),
+                total_xp=int(existing["total_after"]),
+                level_before=int(existing["level_before"]),
+                level_after=int(existing["level_after"]),
+                is_new=False,
+            )
+
+        Database._ensure_user(connection, user_id)
+        row = connection.execute(
+            "SELECT total_xp FROM player_xp WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        previous_xp = int(row["total_xp"]) if row is not None else 0
+        if previous_xp + amount > SQLITE_INT_MAX:
+            raise InvalidAmount("Your XP total cannot exceed the supported maximum.")
+        previous_level = calculate_xp_progress(previous_xp).level
+        total_xp = previous_xp + amount
+        new_level = calculate_xp_progress(total_xp).level
+
+        connection.execute(
+            """
+            INSERT INTO player_xp(user_id, total_xp, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET total_xp = excluded.total_xp,
+                          updated_at = excluded.updated_at
+            """,
+            (user_id, total_xp, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO xp_transactions
+                (event_id, user_id, amount, reason, total_after,
+                 level_before, level_after, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                user_id,
+                amount,
+                reason,
+                total_xp,
+                previous_level,
+                new_level,
+                now,
+            ),
+        )
+        return XPGrant(
+            event_id=event_id,
+            user_id=user_id,
+            amount=amount,
+            reason=reason,
+            total_xp=total_xp,
+            level_before=previous_level,
+            level_after=new_level,
+            is_new=True,
+        )
+
+    def get_xp_profile(self, user_id: str | int) -> XPProgress:
+        normalized_id = self._validate_user_id(user_id)
+        with self._read_connection() as connection:
+            row = connection.execute(
+                "SELECT total_xp FROM player_xp WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+        return calculate_xp_progress(int(row["total_xp"]) if row else 0)
+
+    def award_xp(
+        self,
+        user_id: str | int,
+        event_id: str | int,
+        amount: int,
+        reason: str,
+        *,
+        now: int | None = None,
+    ) -> XPGrant:
+        normalized_id = self._validate_user_id(user_id)
+        normalized_event_id = str(event_id).strip()
+        normalized_reason = str(reason).strip()
+        try:
+            normalized_amount = int(amount)
+        except (TypeError, ValueError) as exc:
+            raise InvalidAmount("XP awards must be positive whole numbers.") from exc
+        if (
+            not normalized_event_id
+            or len(normalized_event_id) > 200
+            or not normalized_reason
+            or len(normalized_reason) > 80
+            or normalized_amount <= 0
+            or normalized_amount > SQLITE_INT_MAX
+        ):
+            raise InvalidAmount("XP award details are invalid.")
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            return self._award_xp_locked(
+                connection,
+                user_id=normalized_id,
+                event_id=normalized_event_id,
+                amount=normalized_amount,
+                reason=normalized_reason,
+                now=current_time,
+            )
+
+    def get_xp_event(self, event_id: str | int) -> XPGrant | None:
+        normalized_event_id = str(event_id).strip()
+        with self._read_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM xp_transactions WHERE event_id = ?",
+                (normalized_event_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return XPGrant(
+            event_id=str(row["event_id"]),
+            user_id=str(row["user_id"]),
+            amount=int(row["amount"]),
+            reason=str(row["reason"]),
+            total_xp=int(row["total_after"]),
+            level_before=int(row["level_before"]),
+            level_after=int(row["level_after"]),
+            is_new=False,
+        )
+
+    def complete_guess_who(
+        self,
+        user_id: str | int,
+        game_id: str,
+        *,
+        correct: bool,
+        coin_reward: int,
+        now: int | None = None,
+    ) -> tuple[int, XPGrant]:
+        """Settle one Guess Who attempt and its completion XP atomically."""
+        normalized_id = self._validate_user_id(user_id)
+        normalized_game_id = str(game_id).strip()
+        if not normalized_game_id or len(normalized_game_id) > 160:
+            raise InvalidAmount("A valid Guess Who game ID is required.")
+        reward = self._validate_amount(coin_reward)
+        event_id = f"guess-who:{normalized_game_id}:{normalized_id}"
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            existing = connection.execute(
+                "SELECT * FROM xp_transactions WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            self._ensure_user(connection, normalized_id)
+            balance_row = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            balance = int(balance_row["balance"])
+            if existing is not None:
+                grant = self._award_xp_locked(
+                    connection,
+                    user_id=normalized_id,
+                    event_id=event_id,
+                    amount=MINIGAME_COMPLETION_XP,
+                    reason="minigame_guess_who",
+                    now=current_time,
+                )
+                return balance, grant
+            if correct and balance + reward > SQLITE_INT_MAX:
+                raise InvalidAmount("Your balance cannot accept the Guess Who reward.")
+            if correct and reward:
+                connection.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                    (reward, normalized_id),
+                )
+            grant = self._award_xp_locked(
+                connection,
+                user_id=normalized_id,
+                event_id=event_id,
+                amount=MINIGAME_COMPLETION_XP,
+                reason="minigame_guess_who",
+                now=current_time,
+            )
+            return balance + (reward if correct else 0), grant
+
     def add_player(self, player: Mapping[str, Any]) -> Player:
         normalized = self._validate_player_values(player)
         with self._transaction() as connection:
@@ -1197,6 +1445,14 @@ class Database:
             reward = DRAFT_WIN_REWARD if won else 0
             if current_balance + reward > SQLITE_INT_MAX:
                 raise InvalidAmount("Your balance cannot accept the Draft reward.")
+            self._award_xp_locked(
+                connection,
+                user_id=normalized_id,
+                event_id=f"draft-completion:{normalized_game_id}:{normalized_id}",
+                amount=MINIGAME_COMPLETION_XP,
+                reason="minigame_draft",
+                now=current_time,
+            )
             if reward:
                 connection.execute(
                     "UPDATE users SET balance = balance + ? WHERE user_id = ?",
@@ -2377,7 +2633,6 @@ class Database:
         """Award the fixed prize and persist the result exactly once."""
         normalized_winner = self._validate_user_id(winner_id)
         current_time = int(time.time() if now is None else now)
-        serialized_result = json.dumps(result, separators=(",", ":"))
         with self._transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM matches WHERE match_id = ?",
@@ -2435,10 +2690,36 @@ class Database:
                 raise InvalidAmount(
                     "The winner's balance cannot accept the match reward."
                 )
+            participants = (
+                str(row["challenger_id"]),
+                str(row["opponent_id"]),
+            )
+            loser_id = next(
+                participant
+                for participant in participants
+                if participant != normalized_winner
+            )
+            winner_xp = self._award_xp_locked(
+                connection,
+                user_id=normalized_winner,
+                event_id=f"match:{match_id}:{normalized_winner}",
+                amount=MATCH_VICTORY_XP,
+                reason="match_victory",
+                now=current_time,
+            )
+            loser_xp = self._award_xp_locked(
+                connection,
+                user_id=loser_id,
+                event_id=f"match:{match_id}:{loser_id}",
+                amount=MATCH_DEFEAT_XP,
+                reason="match_defeat",
+                now=current_time,
+            )
             connection.execute(
                 "UPDATE users SET balance = balance + ? WHERE user_id = ?",
                 (MATCH_REWARD, normalized_winner),
             )
+            serialized_result = json.dumps(result, separators=(",", ":"))
             connection.execute(
                 """
                 UPDATE matches

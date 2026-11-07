@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from commands.common import format_coins, inventory_embed, player_card_label
+from commands.xp import mark_successful_command
 from database import (
     Database,
     EconomyError,
@@ -26,18 +27,21 @@ class InventoryCommands(discord_commands.Cog):
         if not entries:
             embed.description = "Your inventory is empty. Claim coins or open a pack to get started."
         await interaction.response.send_message(embed=embed, ephemeral=False)
+        mark_successful_command(interaction)
 
     @app_commands.command(name="collection", description="See the card catalog and your collection.")
     async def collection(self, interaction: discord.Interaction) -> None:
         entries = self.database.get_collection(interaction.user.id)
         embed = inventory_embed("Player Collection", entries, collection=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        mark_successful_command(interaction)
 
     @app_commands.command(name="cards", description="Browse the full player card catalog.")
     async def cards(self, interaction: discord.Interaction) -> None:
         entries = self.database.get_collection(interaction.user.id)
         embed = inventory_embed("Card Catalog", entries, collection=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        mark_successful_command(interaction)
 
     @app_commands.command(name="sell", description="Sell owned copies of a player card.")
     @app_commands.describe(
@@ -72,6 +76,7 @@ class InventoryCommands(discord_commands.Cog):
             f"Your balance is now {format_coins(balance)}.",
             ephemeral=True,
         )
+        mark_successful_command(interaction)
 
 
 async def setup(bot: discord_commands.Bot) -> None:
