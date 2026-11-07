@@ -51,7 +51,7 @@ class XPDatabaseTests(unittest.TestCase):
                 "overall": 97,
                 "position": "WI",
                 "country": "Canada 🇨🇦",
-                "rarity": "TOTW",
+                "rarity": "S2 TOTS",
                 "value": 27_000_000,
                 "stats": {
                     "SHO": 97,
@@ -61,13 +61,13 @@ class XPDatabaseTests(unittest.TestCase):
                     "DEF": 80,
                     "ACT": 93,
                 },
-                "image": "cards/cryptic_totw.png",
+                "image": "cards/cryptic_s2_tots.png",
             },
-            "Hala (TOTW 98)": {
+            "Hala (S2 TOTS 98)": {
                 "overall": 98,
                 "position": "C",
                 "country": "Scotland 🏴",
-                "rarity": "TOTW",
+                "rarity": "S2 TOTS",
                 "value": 27_000_000,
                 "stats": {
                     "SHO": 91,
@@ -77,13 +77,13 @@ class XPDatabaseTests(unittest.TestCase):
                     "DEF": 95,
                     "ACT": 95,
                 },
-                "image": "cards/hala_totw_98.png",
+                "image": "cards/hala_s2_tots_98.png",
             },
             "Xavier": {
                 "overall": 99,
                 "position": "W",
                 "country": "England 🏴",
-                "rarity": "TOTW",
+                "rarity": "S2 TOTS",
                 "value": 45_000_000,
                 "stats": {
                     "SHO": 97,
@@ -93,7 +93,7 @@ class XPDatabaseTests(unittest.TestCase):
                     "DEF": 95,
                     "ACT": 96,
                 },
-                "image": "cards/xavier_totw_99.png",
+                "image": "cards/xavier_s2_tots_99.png",
             },
         }
         for name, values in expected.items():
@@ -125,13 +125,74 @@ class XPDatabaseTests(unittest.TestCase):
         all_names = [player.name for player in self.database.get_players()]
         for name in expected:
             self.assertEqual(sum(item == name for item in all_names), 1)
+        self.assertEqual(
+            len(self.database.get_players(rarity="S2 TOTS")),
+            3,
+        )
+
+    def test_legacy_cards_migrate_in_place_without_losing_owned_copies(self) -> None:
+        legacy_seed = load_player_seed()
+        legacy_images = {
+            "Cryptic": "cards/cryptic_totw.png",
+            "Hala (S2 TOTS 98)": "cards/hala_totw_98.png",
+            "Xavier": "cards/xavier_totw_99.png",
+        }
+        for record in legacy_seed:
+            if record["name"] in legacy_images:
+                record["rarity"] = "TOTW"
+                record["image_path"] = legacy_images[str(record["name"])]
+                if record["name"] == "Hala (S2 TOTS 98)":
+                    record["name"] = "Hala (TOTW 98)"
+
+        legacy_path = Path(self.temp_dir.name) / "legacy-cards.sqlite3"
+        legacy_database = Database(legacy_path)
+        legacy_database.initialize(legacy_seed)
+        legacy_database.set_balance("legacy-owner", 123_456)
+        expected_ids = {}
+        for name in ("Cryptic", "Hala (TOTW 98)", "Xavier"):
+            legacy_database.add_inventory("legacy-owner", name, 2)
+            expected_ids[name] = legacy_database.get_player(name).id
+
+        legacy_database.initialize(load_player_seed())
+
+        migrated_names = {
+            "Cryptic": "Cryptic",
+            "Hala (TOTW 98)": "Hala (S2 TOTS 98)",
+            "Xavier": "Xavier",
+        }
+        for old_name, new_name in migrated_names.items():
+            with self.subTest(card=old_name):
+                player = legacy_database.get_player(new_name)
+                self.assertIsNotNone(player)
+                assert player is not None
+                self.assertEqual(player.rarity, "S2 TOTS")
+                self.assertEqual(player.id, expected_ids[old_name])
+                self.assertEqual(
+                    sum(
+                        item.name == new_name
+                        for item in legacy_database.get_players()
+                    ),
+                    1,
+                )
+        self.assertEqual(legacy_database.get_balance("legacy-owner"), 123_456)
+        self.assertEqual(
+            {
+                entry.player.name: entry.quantity
+                for entry in legacy_database.get_inventory("legacy-owner")
+            },
+            {
+                "Cryptic": 2,
+                "Hala (S2 TOTS 98)": 2,
+                "Xavier": 2,
+            },
+        )
 
     def test_new_cards_respect_existing_lineup_position_rules(self) -> None:
         self.database.add_inventory("cryptic-user", "Cryptic")
-        self.database.add_inventory("hala-user", "Hala (TOTW 98)")
+        self.database.add_inventory("hala-user", "Hala (S2 TOTS 98)")
         self.database.add_inventory("xavier-user", "Xavier")
         self.database.set_lineup_position("cryptic-user", "WING1", "Cryptic")
-        self.database.set_lineup_position("hala-user", "CM1", "Hala (TOTW 98)")
+        self.database.set_lineup_position("hala-user", "CM1", "Hala (S2 TOTS 98)")
         self.database.set_lineup_position("xavier-user", "WING1", "Xavier")
         with self.assertRaises(InvalidLineupPosition):
             self.database.set_lineup_position("cryptic-user", "CM1", "Cryptic")
@@ -209,6 +270,13 @@ class XPDatabaseTests(unittest.TestCase):
         self.assertEqual(wrong_grant.amount, 200)
         self.assertEqual(self.database.get_balance("wrong"), 0)
         self.assertEqual(self.database.get_xp_profile("wrong").total_xp, 200)
+
+    def test_cancelled_minigame_does_not_award_completion_xp(self) -> None:
+        self.database.start_draft_session("unfinished", "unfinished-game")
+        self.assertTrue(
+            self.database.cancel_draft_session("unfinished-game", "unfinished")
+        )
+        self.assertEqual(self.database.get_xp_profile("unfinished").total_xp, 0)
 
     def test_simultaneous_xp_awards_are_not_lost_or_duplicated(self) -> None:
         def award(index: int):

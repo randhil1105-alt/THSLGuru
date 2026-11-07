@@ -44,7 +44,7 @@ class InformationCommands(discord_commands.Cog):
                 "`/claim` · Claim a GOLD player card every 30 minutes\n"
                 "`/balance` · Check your balance\n"
                 "`/leaderboard` · See top balances\n"
-                "`/pack pack_type` · Choose GOLD or TOTW, then confirm purchase\n"
+                "`/pack pack_type` · Choose GOLD, TOTW, or S2 TOTS\n"
                 "`/packs quantity` · View packs and buy up to 10 at once\n"
                 "`/sell player quantity` · Sell cards at listed value\n"
                 "`/sellduplicates` · Review and sell extra copies"

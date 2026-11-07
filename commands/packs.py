@@ -19,12 +19,15 @@ from commands.xp import mark_successful_command
 from database import (
     GOLD_PACK_COST,
     MAX_PACK_QUANTITY,
+    S2_TOTS_PACK_COST,
     TOTW_PACK_COST,
     Database,
     InsufficientFunds,
     InvalidAmount,
     NoEligibleCards,
     Player,
+    calculate_pack_odds,
+    format_card_type,
 )
 
 LOGGER = logging.getLogger("thsl_guru.packs")
@@ -32,6 +35,7 @@ LOGGER = logging.getLogger("thsl_guru.packs")
 PACKS = (
     ("GOLD", GOLD_PACK_COST),
     ("TOTW", TOTW_PACK_COST),
+    ("S2 TOTS", S2_TOTS_PACK_COST),
 )
 
 
@@ -77,6 +81,7 @@ class PackPurchaseView(discord.ui.View):
         *,
         only_rarity: str | None = None,
         quantity: int = 1,
+        balance: int = 0,
     ) -> None:
         super().__init__(timeout=180)
         self.command = command
@@ -94,7 +99,10 @@ class PackPurchaseView(discord.ui.View):
                     rarity,
                     cost,
                     quantity,
-                    disabled=not bool(cards_by_rarity.get(rarity)),
+                    disabled=(
+                        not bool(cards_by_rarity.get(rarity))
+                        or balance < cost * quantity
+                    ),
                 )
             )
 
@@ -204,7 +212,7 @@ class PackCommands(discord_commands.Cog):
             )
             return
 
-        card_type = "Gold" if rarity == "GOLD" else "TOTW"
+        card_type = format_card_type(rarity)
         embeds: list[discord.Embed] = []
         files: list[discord.File] = []
         for index, player in enumerate(players, start=1):
@@ -253,6 +261,7 @@ class PackCommands(discord_commands.Cog):
         quantity: int = 1,
     ) -> None:
         cards_by_rarity = self._pack_cards()
+        balance = self.database.get_balance(interaction.user.id)
         visible_packs = [
             (rarity, cost)
             for rarity, cost in PACKS
@@ -261,7 +270,7 @@ class PackCommands(discord_commands.Cog):
         embed = discord.Embed(
             title="Available Card Packs" if only_rarity is None else f"{only_rarity} Pack",
             description=(
-                f"Your balance: **{format_coins(self.database.get_balance(interaction.user.id))}**\n"
+                f"Your balance: **{format_coins(balance)}**\n"
                 f"Choose a pack button to buy {quantity} pack"
                 f"{'' if quantity == 1 else 's'} at once. This menu can be used once.\n"
                 "Each pack contains one random player card of its listed rarity."
@@ -273,12 +282,18 @@ class PackCommands(discord_commands.Cog):
             cards = cards_by_rarity[rarity]
             if not cards:
                 contents = f"No eligible cards are currently available in the {rarity} catalog."
+                odds_text = "No card odds are available."
             else:
-                card_type = "Gold" if rarity == "GOLD" else "TOTW"
+                card_type = format_card_type(rarity)
                 contents = (
                     f"Contains one random {card_type} player card."
                     if quantity == 1
                     else f"Contains one random {card_type} player card per pack."
+                )
+                odds = calculate_pack_odds(cards)
+                odds_text = "Card odds: " + " · ".join(
+                    f"{card.name} {odds[card.id]:.2f}%"
+                    for card in cards
                 )
 
             total_cost = cost * quantity
@@ -287,7 +302,8 @@ class PackCommands(discord_commands.Cog):
                 value=(
                     f"{contents}\n"
                     f"Price: {format_coins(cost)}. Requires an eligible {rarity} "
-                    f"card in the catalog.\nTotal for {quantity}: "
+                    f"card in the catalog and {format_coins(total_cost)} in your "
+                    f"balance.\n{odds_text}\nTotal for {quantity}: "
                     f"{format_coins(total_cost)}."
                 ),
                 inline=False,
@@ -299,6 +315,7 @@ class PackCommands(discord_commands.Cog):
             cards_by_rarity,
             only_rarity=only_rarity,
             quantity=quantity,
+            balance=balance,
         )
         await interaction.response.send_message(
             embed=embed,
@@ -325,11 +342,12 @@ class PackCommands(discord_commands.Cog):
         name="pack",
         description="Choose and purchase a card pack.",
     )
-    @app_commands.describe(pack_type="Choose a GOLD or TOTW pack")
+    @app_commands.describe(pack_type="Choose a GOLD, TOTW, or S2 TOTS pack")
     @app_commands.choices(
         pack_type=[
             app_commands.Choice(name="GOLD Pack", value="GOLD"),
             app_commands.Choice(name="TOTW Pack", value="TOTW"),
+            app_commands.Choice(name="S2 TOTS Pack", value="S2 TOTS"),
         ]
     )
     async def pack(

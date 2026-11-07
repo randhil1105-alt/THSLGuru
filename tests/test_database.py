@@ -14,6 +14,7 @@ from database import (
     FORMATION_STARTERS,
     GOLD_PACK_COST,
     LINEUP_POSITIONS,
+    S2_TOTS_PACK_COST,
     SUBSTITUTE_POSITIONS,
     TEAM_FORMATIONS,
     TOTW_PACK_COST,
@@ -794,9 +795,16 @@ class DatabaseTests(unittest.TestCase):
 
         totw_cards = self.database.get_players(rarity="TOTW")
         totw_odds = calculate_pack_odds(totw_cards)
-        self.assertEqual(len(totw_cards), 5)
+        self.assertEqual(len(totw_cards), 2)
         self.assertAlmostEqual(sum(totw_odds.values()), 100.0)
-        self.assertGreater(max(totw_odds.values()), min(totw_odds.values()))
+        self.assertEqual(set(totw_odds.values()), {50.0})
+        s2_tots_cards = self.database.get_players(rarity="S2 TOTS")
+        s2_tots_odds = calculate_pack_odds(s2_tots_cards)
+        self.assertEqual(
+            {card.name for card in s2_tots_cards},
+            {"Cryptic", "Hala (S2 TOTS 98)", "Xavier"},
+        )
+        self.assertAlmostEqual(sum(s2_tots_odds.values()), 100.0)
 
         self.database.add_player(
             {
@@ -1131,6 +1139,103 @@ class DatabaseTests(unittest.TestCase):
         inventory = self.database.get_inventory("totw-user")
         self.assertEqual(inventory[0].player.rarity, "TOTW")
         self.assertEqual(inventory[0].quantity, 1)
+
+    def test_s2_tots_pack_awards_only_s2_tots_cards_and_is_idempotent(self) -> None:
+        user_id = "s2-tots-user"
+        self.database.set_balance(user_id, S2_TOTS_PACK_COST + 17)
+        first, balance = self.database.open_pack(
+            user_id,
+            "S2 TOTS",
+            S2_TOTS_PACK_COST,
+            rng=random.Random(8),
+            purchase_id="s2-tots-single",
+        )
+        replayed, replayed_balance = self.database.open_pack(
+            user_id,
+            "S2 TOTS",
+            S2_TOTS_PACK_COST,
+            rng=random.Random(9),
+            purchase_id="s2-tots-single",
+        )
+        self.assertEqual(first.rarity, "S2 TOTS")
+        self.assertIn(first, self.database.get_players(rarity="S2 TOTS"))
+        self.assertEqual(replayed.id, first.id)
+        self.assertEqual(balance, 17)
+        self.assertEqual(replayed_balance, 17)
+        self.assertEqual(self.database.get_balance(user_id), 17)
+        self.assertEqual(self.database.get_inventory(user_id)[0].quantity, 1)
+
+        batch_user = "s2-tots-batch-user"
+        self.database.set_balance(batch_user, 2 * S2_TOTS_PACK_COST + 23)
+        cards, batch_balance = self.database.open_packs(
+            batch_user,
+            "S2 TOTS",
+            S2_TOTS_PACK_COST,
+            2,
+            rng=random.Random(10),
+            purchase_id="s2-tots-batch",
+        )
+        self.assertEqual(len(cards), 2)
+        self.assertTrue(all(card.rarity == "S2 TOTS" for card in cards))
+        self.assertEqual(batch_balance, 23)
+        self.assertEqual(self.database.get_balance(batch_user), 23)
+
+    def test_pack_receipt_migration_preserves_existing_rows(self) -> None:
+        user_id = "legacy-pack-user"
+        card = self.database.get_player("Dan")
+        self.database.set_balance(user_id, 100)
+        connection = sqlite3.connect(self.database.path)
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("DROP TABLE pack_purchases")
+            connection.execute(
+                """
+                CREATE TABLE pack_purchases (
+                    interaction_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    player_id INTEGER NOT NULL REFERENCES players(id),
+                    rarity TEXT NOT NULL CHECK (rarity IN ('GOLD', 'TOTW')),
+                    cost INTEGER NOT NULL CHECK (cost > 0),
+                    balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO pack_purchases
+                    (interaction_id, user_id, player_id, rarity, cost,
+                     balance_after, created_at)
+                VALUES (?, ?, ?, 'GOLD', ?, ?, ?)
+                """,
+                ("legacy-pack-receipt", user_id, card.id, GOLD_PACK_COST, 100, 1),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self.database.ensure_pack_purchase_schema()
+        connection = sqlite3.connect(self.database.path)
+        try:
+            preserved = connection.execute(
+                "SELECT user_id, player_id, rarity FROM pack_purchases "
+                "WHERE interaction_id = ?",
+                ("legacy-pack-receipt",),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(preserved, (user_id, card.id, "GOLD"))
+
+        self.database.set_balance(user_id, S2_TOTS_PACK_COST + 10)
+        awarded, new_balance = self.database.open_pack(
+            user_id,
+            "S2 TOTS",
+            S2_TOTS_PACK_COST,
+            rng=random.Random(11),
+            purchase_id="new-s2-tots-receipt",
+        )
+        self.assertEqual(awarded.rarity, "S2 TOTS")
+        self.assertEqual(new_balance, 10)
 
     def test_replayed_pack_purchase_id_does_not_charge_or_award_twice(self) -> None:
         self.database.set_balance("replay-user", GOLD_PACK_COST + 100)

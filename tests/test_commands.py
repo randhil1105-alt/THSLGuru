@@ -50,6 +50,7 @@ from database import (
     GOLD_PACK_COST,
     InventoryEntry,
     LINEUP_POSITIONS,
+    S2_TOTS_PACK_COST,
     SUBSTITUTE_POSITIONS,
     TOTW_PACK_COST,
     format_card_type,
@@ -129,20 +130,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.close()
         self.temp_dir.cleanup()
 
-    def assert_pack_menu_hides_card_pool(self, embed: discord.Embed) -> None:
-        rendered = "\n".join(
-            [
-                embed.title or "",
-                embed.description or "",
-                *(f"{field.name}\n{field.value}" for field in embed.fields),
-            ]
-        )
-        normalized = rendered.casefold()
-        for player in self.database.get_players():
-            self.assertNotIn(player.name.casefold(), normalized)
-        self.assertNotRegex(rendered, r"\b\d+(?:\.\d+)?%")
-        self.assertNotIn("odds", normalized)
-        self.assertNotIn("weight", normalized)
+    def assert_pack_menu_shows_odds(self, embed: discord.Embed) -> None:
+        for field in embed.fields:
+            self.assertIn("Card odds:", field.value)
+            self.assertRegex(field.value, r"\b\d+\.\d+%")
 
     async def test_modules_load_once_and_register_expected_commands(self) -> None:
         self.assertEqual(len(COMMAND_MODULES), len(set(COMMAND_MODULES)))
@@ -271,7 +262,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(
             [choice.value for choice in pack_parameters["pack_type"].choices],
-            ["GOLD", "TOTW"],
+            ["GOLD", "TOTW", "S2 TOTS"],
         )
 
     async def test_help_lists_the_combined_pack_command(self) -> None:
@@ -635,7 +626,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
         self.assertIn("Contains one random Gold player card.", gold_field)
-        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
+        self.assert_pack_menu_shows_odds(pack_response.messages[0]["embed"])
 
         team_cog = TeamCommands(self.database)
         self.database.set_formation(user_id, "Offensive")
@@ -875,7 +866,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
         self.assertIn("Contains one random Gold player card.", gold_field)
-        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
+        self.assert_pack_menu_shows_odds(pack_response.messages[0]["embed"])
 
         team_cog = TeamCommands(self.database)
         self.database.set_formation(user_id, "Offensive")
@@ -1065,7 +1056,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         pack_text = "\n".join(field.value for field in pack_response.messages[0]["embed"].fields)
         self.assertIn("Contains one random Gold player card.", pack_text)
-        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
+        self.assert_pack_menu_shows_odds(pack_response.messages[0]["embed"])
         for name in expected:
             card = self.database.get_player(name)
             self.assertIsNotNone(card)
@@ -1200,7 +1191,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             for field in packs_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
         self.assertIn("Contains one random Gold player card.", gold_field)
-        self.assert_pack_menu_hides_card_pool(packs_response.messages[0]["embed"])
+        self.assert_pack_menu_shows_odds(packs_response.messages[0]["embed"])
         self.assertIn(
             self.database.get_player("Fadi"),
             self.database.get_players(rarity="GOLD"),
@@ -1283,7 +1274,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 display_name = {
                     "Hala (Gold 90)": "Hala",
                     "Licha (Gold 90)": "Licha",
-                    "Hala (TOTW 98)": "Hala",
+                    "Hala (S2 TOTS 98)": "Hala",
                 }.get(player.name, player.name)
                 self.assertEqual(
                     label,
@@ -1415,7 +1406,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
         self.assertIn("Contains one random Gold player card.", gold_field)
-        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
+        self.assert_pack_menu_shows_odds(pack_response.messages[0]["embed"])
 
         self.assertIn("CM1", LINEUP_POSITIONS)
         set_command = {
@@ -1725,7 +1716,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             for field in pack_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
         self.assertIn("Contains one random Gold player card.", gold_field)
-        self.assert_pack_menu_hides_card_pool(pack_response.messages[0]["embed"])
+        self.assert_pack_menu_shows_odds(pack_response.messages[0]["embed"])
 
         set_response = FakeResponse()
         team_cog = TeamCommands(self.database)
@@ -2210,7 +2201,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 slot.y for key, slot in formation.items() if key != "GK"
             ))
 
-    async def test_packs_menu_hides_card_pool_and_confirms_once(self) -> None:
+    async def test_packs_menu_shows_prices_and_odds_and_confirms_once(self) -> None:
         user_id = "packs-menu-user"
         self.database.set_balance(user_id, GOLD_PACK_COST + 250)
         command_response = FakeResponse()
@@ -2232,6 +2223,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             {
                 "GOLD · 5,000,000 coins",
                 "TOTW · 20,000,000 coins",
+                "S2 TOTS · 50,000,000 coins",
             },
         )
         self.assertIn(
@@ -2242,11 +2234,24 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Contains one random TOTW player card.",
             field_values["TOTW · 20,000,000 coins"],
         )
+        self.assertIn(
+            "Contains one random S2 TOTS player card.",
+            field_values["S2 TOTS · 50,000,000 coins"],
+        )
+        self.assertIn(
+            "Cryptic 33.33%",
+            field_values["S2 TOTS · 50,000,000 coins"],
+        )
         self.assertIn("Price: 5,000,000 coins.", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Price: 20,000,000 coins.", field_values["TOTW · 20,000,000 coins"])
-        self.assert_pack_menu_hides_card_pool(menu["embed"])
+        self.assertIn("50,000,000 coins", field_values["S2 TOTS · 50,000,000 coins"])
+        self.assert_pack_menu_shows_odds(menu["embed"])
 
         view = menu["view"]
+        s2_tots_button = next(
+            button for button in view.children if button.rarity == "S2 TOTS"
+        )
+        self.assertTrue(s2_tots_button.disabled)
         gold_button = next(
             button for button in view.children if button.rarity == "GOLD"
         )
@@ -2290,10 +2295,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_inventory(user_id)[0].quantity, 1)
         uploaded_file.close()
 
-    async def test_pack_command_selects_and_purchases_both_pack_types(self) -> None:
+    async def test_pack_command_selects_and_purchases_each_pack_type(self) -> None:
         pack_cases = (
             ("GOLD", GOLD_PACK_COST, "Contains one random Gold player card."),
             ("TOTW", TOTW_PACK_COST, "Contains one random TOTW player card."),
+            ("S2 TOTS", S2_TOTS_PACK_COST, "Contains one random S2 TOTS player card."),
         )
         for index, (rarity, cost, offer) in enumerate(pack_cases):
             with self.subTest(rarity=rarity):
@@ -2316,7 +2322,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(set(fields), {pack_field})
                 self.assertIn(offer, fields[pack_field])
                 self.assertIn(f"Price: {cost:,} coins.", fields[pack_field])
-                self.assert_pack_menu_hides_card_pool(menu["embed"])
+                self.assert_pack_menu_shows_odds(menu["embed"])
 
                 view = menu["view"]
                 self.assertEqual(len(view.children), 1)
@@ -2879,7 +2885,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             for field in packs_response.messages[0]["embed"].fields
         }["GOLD · 5,000,000 coins"]
         self.assertIn("Contains one random Gold player card.", gold_pack_text)
-        self.assert_pack_menu_hides_card_pool(packs_response.messages[0]["embed"])
+        self.assert_pack_menu_shows_odds(packs_response.messages[0]["embed"])
         for name in expected:
             player = self.database.get_player(name)
             self.assertIsNotNone(player)

@@ -554,7 +554,7 @@
     "position": "WI",
     "country": "Canada 🇨🇦",
     "team": "Anaheim Ducks",
-    "rarity": "TOTW",
+    "rarity": "S2 TOTS",
     "value": 27000000,
     "stats": {
       "SHO": 97,
@@ -564,15 +564,15 @@
       "DEF": 80,
       "ACT": 93
     },
-    "image_path": "cards/cryptic_totw.png"
+    "image_path": "cards/cryptic_s2_tots.png"
   },
   {
-    "name": "Hala (TOTW 98)",
+    "name": "Hala (S2 TOTS 98)",
     "overall": 98,
     "position": "C",
     "country": "Scotland 🏴",
     "team": "Ottawa Senators",
-    "rarity": "TOTW",
+    "rarity": "S2 TOTS",
     "value": 27000000,
     "stats": {
       "SHO": 91,
@@ -582,7 +582,7 @@
       "DEF": 95,
       "ACT": 95
     },
-    "image_path": "cards/hala_totw_98.png"
+    "image_path": "cards/hala_s2_tots_98.png"
   },
   {
     "name": "Xavier",
@@ -590,7 +590,7 @@
     "position": "W",
     "country": "England 🏴",
     "team": "Dallas Stars",
-    "rarity": "TOTW",
+    "rarity": "S2 TOTS",
     "value": 45000000,
     "stats": {
       "SHO": 97,
@@ -600,6 +600,6 @@
       "DEF": 95,
       "ACT": 96
     },
-    "image_path": "cards/xavier_totw_99.png"
+    "image_path": "cards/xavier_s2_tots_99.png"
   }
 ]
