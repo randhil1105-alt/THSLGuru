@@ -23,6 +23,7 @@ persistent SQLite database.
 | `/pack pack_type` | Choose a GOLD, TOTW, S2 TOTS, S1 TOTS, or S1 TOTY pack |
 | `/packs` | View weighted card odds, rating bands, prices, and purchase buttons |
 | `/sell player quantity` | Sell owned copies at the card's listed value |
+| `/sellall` | Review and sell extra copies while keeping one of each card |
 | `/team` | View your three starters, two substitutes, team value, and rink image |
 | `/set position player` | Choose an owned card version for a compatible slot |
 | `/formation formation` | Choose Balanced, Offensive, or Defensive |
@@ -138,8 +139,8 @@ and substitutes.
 
 `/pack pack_type` opens a confirmation menu for the selected pack. `/packs`
 lists all five pack types, prices, weighted per-card odds, and purchase buttons.
-The S1 TOTY PACK costs 60,000,000 coins and contains Ebs, Hala, and Cam at
-33.33% odds each. Per-card weights are 4 for ratings up to
+The S1 TOTY PACK costs 60,000,000 coins and contains Ebs, Hala, Cam, Road,
+Matrix, and Lauren at 16.67% odds each. Per-card weights are 4 for ratings up to
 84, 2 for 85–89, 1 for 90–94, and 0.25 for 95+. Each pack filters to its own
 rarity before weighted selection. Clicking a buy button makes one purchase;
 each menu is single-use.

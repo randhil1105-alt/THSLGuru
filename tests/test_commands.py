@@ -68,6 +68,7 @@ EXPECTED_COMMANDS = {
     "claim",
     "cooldowns",
     "sellduplicates",
+    "sellall",
     "profile",
     "balance",
     "leaderboard",
@@ -222,6 +223,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "minigame",
             "cooldowns",
             "sellduplicates",
+            "sellall",
             "profile",
         ):
             with self.subTest(public_command=name):
@@ -1875,6 +1877,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Ebs (S1 TOTY 98)": "Ebs",
             "Hala (S1 TOTY 99)": "Hala",
             "Cam (S1 TOTY 97)": "Cam",
+            "Road (S1 TOTY 98)": "Road",
+            "Matrix (S1 TOTY 97)": "Matrix",
+            "Lauren (S1 TOTY 97)": "Lauren",
                 }.get(player.name, player.name)
                 self.assertEqual(
                     label,
@@ -2869,8 +2874,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Ebs (S1 TOTY 98)",
             "Hala (S1 TOTY 99)",
             "Cam (S1 TOTY 97)",
+            "Road (S1 TOTY 98)",
+            "Matrix (S1 TOTY 97)",
+            "Lauren (S1 TOTY 97)",
         ):
-            self.assertIn(f"{name} 33.33%", s1_toty_field)
+            self.assertIn(f"{name} 16.67%", s1_toty_field)
         self.assert_pack_menu_shows_odds(menu["embed"])
 
         view = menu["view"]
@@ -3813,6 +3821,9 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
                 "Ebs (S1 TOTY 98)",
                 "Hala (S1 TOTY 99)",
                 "Cam (S1 TOTY 97)",
+                "Road (S1 TOTY 98)",
+                "Matrix (S1 TOTY 97)",
+                "Lauren (S1 TOTY 97)",
             )
         ):
             player = self.database.get_player(name)
@@ -3834,7 +3845,11 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(fields["Card Type"], player.rarity)
 
         class PrioritizeS1Cards:
+            def __init__(self):
+                self.populations = []
+
             def sample(self, population, count):
+                self.populations.append(tuple(population))
                 selected = [
                     player
                     for player in population
@@ -3846,9 +3861,10 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
                 )
                 return selected[:count]
 
+        captured = PrioritizeS1Cards()
         groups = generate_draft_groups(
             self.database.get_players(),
-            rng=PrioritizeS1Cards(),
+            rng=captured,
         )
         self.assertTrue(
             {"Dan (S1 TOTS 96)", "Gamer (S1 TOTS 97)"}
@@ -3863,8 +3879,24 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
             <= {player.name for group in groups[2:] for player in group}
         )
         self.assertTrue(
-            {"Ebs (S1 TOTY 98)", "Hala (S1 TOTY 99)", "Cam (S1 TOTY 97)"}
+            {
+                "Ebs (S1 TOTY 98)",
+                "Hala (S1 TOTY 99)",
+                "Cam (S1 TOTY 97)",
+            }
             <= {player.name for group in groups[2:] for player in group}
+        )
+        self.assertIn(
+            "Road (S1 TOTY 98)",
+            {player.name for player in captured.populations[0]},
+        )
+        self.assertIn(
+            "Lauren (S1 TOTY 97)",
+            {player.name for player in captured.populations[0]},
+        )
+        self.assertIn(
+            "Matrix (S1 TOTY 97)",
+            {player.name for player in captured.populations[1]},
         )
 
     async def submit_answer(

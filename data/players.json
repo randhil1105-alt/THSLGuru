@@ -823,5 +823,62 @@
     },
     "image_path": "cards/cam_s1_toty_97.png",
     "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Road (S1 TOTY 98)",
+    "overall": 98,
+    "position": "GK",
+    "country": "Malta 🇲🇹",
+    "team": "Pittsburgh Penguins",
+    "rarity": "S1 TOTY",
+    "value": 40000000,
+    "stats": {
+      "SAV": 97,
+      "DIV": 96,
+      "PAS": 93,
+      "CLE": 95,
+      "SWE": 99,
+      "ACT": 99
+    },
+    "image_path": "cards/road_s1_toty_98.png",
+    "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Matrix (S1 TOTY 97)",
+    "overall": 97,
+    "position": "C",
+    "country": "Germany 🇩🇪",
+    "team": "Pittsburgh Penguins",
+    "rarity": "S1 TOTY",
+    "value": 35000000,
+    "stats": {
+      "SHO": 99,
+      "DRI": 96,
+      "SAV": 84,
+      "PAS": 95,
+      "DEF": 96,
+      "ACT": 95
+    },
+    "image_path": "cards/matrix_s1_toty_97.png",
+    "allowed_lineup_positions": ["CM1", "CM2"]
+  },
+  {
+    "name": "Lauren (S1 TOTY 97)",
+    "overall": 97,
+    "position": "GK",
+    "country": "England 🏴",
+    "team": "New York Rangers",
+    "rarity": "S1 TOTY",
+    "value": 38000000,
+    "stats": {
+      "SAV": 99,
+      "DIV": 98,
+      "PAS": 94,
+      "SWE": 95,
+      "CLE": 96,
+      "ACT": 95
+    },
+    "image_path": "cards/lauren_s1_toty_97.png",
+    "allowed_lineup_positions": ["GK"]
   }
 ]

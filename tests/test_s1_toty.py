@@ -36,6 +36,7 @@ S1_TOTY_CARDS = {
         "stats": {"SHO": 97, "DRI": 98, "SAV": 80, "PAS": 95, "DEF": 93, "ACT": 88},
         "image_path": "cards/ebs_s1_toty_98.png",
         "allowed": ("WING1", "WING2"),
+        "role": "WING",
     },
     "Hala (S1 TOTY 99)": {
         "overall": 99,
@@ -45,6 +46,7 @@ S1_TOTY_CARDS = {
         "stats": {"SHO": 99, "DRI": 99, "SAV": 83, "PAS": 97, "DEF": 87, "ACT": 86},
         "image_path": "cards/hala_s1_toty_99.png",
         "allowed": ("WING1", "WING2"),
+        "role": "WING",
     },
     "Cam (S1 TOTY 97)": {
         "overall": 97,
@@ -54,6 +56,37 @@ S1_TOTY_CARDS = {
         "stats": {"SHO": 99, "DRI": 98, "SAV": 87, "PAS": 93, "DEF": 87, "ACT": 85},
         "image_path": "cards/cam_s1_toty_97.png",
         "allowed": ("WING1", "WING2"),
+        "role": "WING",
+    },
+    "Road (S1 TOTY 98)": {
+        "overall": 98,
+        "position": "GK",
+        "country": "Malta 🇲🇹",
+        "value": 40_000_000,
+        "stats": {"SAV": 97, "DIV": 96, "PAS": 93, "CLE": 95, "SWE": 99, "ACT": 99},
+        "image_path": "cards/road_s1_toty_98.png",
+        "allowed": ("GK",),
+        "role": "GK",
+    },
+    "Matrix (S1 TOTY 97)": {
+        "overall": 97,
+        "position": "C",
+        "country": "Germany 🇩🇪",
+        "value": 35_000_000,
+        "stats": {"SHO": 99, "DRI": 96, "SAV": 84, "PAS": 95, "DEF": 96, "ACT": 95},
+        "image_path": "cards/matrix_s1_toty_97.png",
+        "allowed": ("CM1", "CM2"),
+        "role": "CM",
+    },
+    "Lauren (S1 TOTY 97)": {
+        "overall": 97,
+        "position": "GK",
+        "country": "England 🏴",
+        "value": 38_000_000,
+        "stats": {"SAV": 99, "DIV": 98, "PAS": 94, "SWE": 95, "CLE": 96, "ACT": 95},
+        "image_path": "cards/lauren_s1_toty_97.png",
+        "allowed": ("GK",),
+        "role": "GK",
     },
 }
 
@@ -61,6 +94,9 @@ S1_TOTY_SOURCE_ARTWORK = {
     "Ebs (S1 TOTY 98)": "attached_assets/Firefly_(21)_1794057314441.png",
     "Hala (S1 TOTY 99)": "attached_assets/Firefly_(20)_1794057314470.png",
     "Cam (S1 TOTY 97)": "attached_assets/Firefly_(17)_1794057314483.png",
+    "Road (S1 TOTY 98)": "attached_assets/Firefly_(11)_1794062387703.png",
+    "Matrix (S1 TOTY 97)": "attached_assets/Firefly_(16)_1794062387649.png",
+    "Lauren (S1 TOTY 97)": "attached_assets/Firefly_(3)_1794062387721.png",
 }
 
 
@@ -80,7 +116,7 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
             {card.name for card in cards},
             set(S1_TOTY_CARDS),
         )
-        self.assertEqual(len(cards), 3)
+        self.assertEqual(len(cards), 6)
 
         for name, expected in S1_TOTY_CARDS.items():
             with self.subTest(card=name):
@@ -109,7 +145,10 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
                         expected["allowed"],
                     ),
                 )
-                self.assertEqual(card_position_role(card.position), "WING")
+                self.assertEqual(
+                    card_position_role(card.position),
+                    expected["role"],
+                )
                 image = resolve_card_image(card)
                 self.assertIsNotNone(image)
                 assert image is not None
@@ -125,7 +164,7 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
         self.database.initialize(self.seed)
         self.assertEqual(
             sum(card.name in S1_TOTY_CARDS for card in self.database.get_players()),
-            3,
+            6,
         )
         self.assertEqual(self.database.get_balance(user_id), 123)
         self.assertEqual(
@@ -138,7 +177,7 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
         odds = calculate_pack_odds(cards)
         self.assertEqual(set(odds), {card.id for card in cards})
         for probability in odds.values():
-            self.assertAlmostEqual(probability, 100 / 3)
+            self.assertAlmostEqual(probability, 100 / 6)
         self.assertAlmostEqual(sum(odds.values()), 100)
 
         class CaptureChoice:
@@ -172,7 +211,7 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(card.name, rng.candidates[-1]["name"])
         self.assertEqual(
             rng.weights,
-            [0.25, 0.25, 0.25],
+            [0.25] * 6,
         )
         self.assertEqual(rng.assert_k, 1)
         self.assertEqual(replayed.id, card.id)
@@ -236,15 +275,24 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
                         user=SimpleNamespace(id=team_user),
                         response=set_response,
                     ),
-                    discord.app_commands.Choice(name="WING1", value="WING1"),
+                    discord.app_commands.Choice(
+                        name=expected["allowed"][0],
+                        value=expected["allowed"][0],
+                    ),
                     name,
                 )
                 self.assertIn("Assigned", set_response.messages[0]["content"])
+                lineup_position = expected["allowed"][0]
+                invalid_position = "CM1" if expected["role"] == "GK" else "GK"
                 with self.assertRaises(InvalidLineupPosition):
-                    self.database.set_lineup_position(team_user, "CM1", name)
+                    self.database.set_lineup_position(
+                        team_user,
+                        invalid_position,
+                        name,
+                    )
 
                 lineup = self.database.get_lineup(team_user)
-                image_uri = _player_image_uri(lineup["WING1"])
+                image_uri = _player_image_uri(lineup[lineup_position])
                 self.assertIsNotNone(image_uri)
                 self.assertIn(
                     image_uri,
@@ -334,7 +382,12 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Rarity: S1 TOTY.", menu_fields[field_name])
         for name in S1_TOTY_CARDS:
             self.assertIn(name, menu_fields[field_name])
-        self.assertTrue(all(f"{name} 33.33%" in menu_fields[field_name] for name in S1_TOTY_CARDS))
+        self.assertTrue(
+            all(
+                f"{name} 16.67%" in menu_fields[field_name]
+                for name in S1_TOTY_CARDS
+            )
+        )
 
         pack_response = FakeResponse()
         pack_cog = PackCommands(self.database)

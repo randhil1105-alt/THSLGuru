@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import discord
 
+from commands.common import player_card_label
 from commands.duplicate_sales import (
     DuplicateSaleCommands,
     DuplicateSaleConfirmationView,
@@ -247,3 +248,41 @@ class DuplicateSaleCommandTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(interaction.response.messages[0]["ephemeral"])
             self.assertIn("no duplicate cards", str(interaction.response.messages[0]["content"]))
+
+    async def test_sellall_alias_sells_new_s1_toty_duplicates_at_catalog_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "sellall.sqlite3")
+            database.initialize(load_player_seed())
+            card_names = (
+                "Road (S1 TOTY 98)",
+                "Matrix (S1 TOTY 97)",
+                "Lauren (S1 TOTY 97)",
+            )
+            expected_earnings = 0
+            for name in card_names:
+                card = database.get_player(name)
+                self.assertIsNotNone(card)
+                assert card is not None
+                database.add_inventory(77, name, 2)
+                expected_earnings += card.value
+
+            cog = DuplicateSaleCommands(database)
+            interaction = FakeInteraction(77)
+            await cog.sellall.callback(cog, interaction)  # type: ignore[arg-type]
+
+            response = interaction.response.messages[0]
+            embed = response["embed"]
+            self.assertIsInstance(embed, discord.Embed)
+            for name in card_names:
+                card = database.get_player(name)
+                assert card is not None
+                self.assertIn(player_card_label(card), str(embed.fields[0].value))
+            view = response["view"]
+            self.assertIsInstance(view, DuplicateSaleConfirmationView)
+            await view.confirm_sale(interaction)  # type: ignore[union-attr,arg-type]
+
+            self.assertEqual(database.get_balance(77), expected_earnings)
+            self.assertEqual(
+                {entry.player.name: entry.quantity for entry in database.get_inventory(77)},
+                {name: 1 for name in card_names},
+            )

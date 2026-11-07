@@ -212,11 +212,7 @@ class DuplicateSaleCommands(discord_commands.Cog):
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    @app_commands.command(
-        name="sellduplicates",
-        description="Review and sell extra copies of your unassigned cards.",
-    )
-    async def sellduplicates(self, interaction: discord.Interaction) -> None:
+    async def _review_sale(self, interaction: discord.Interaction) -> None:
         try:
             preview = self.database.get_duplicate_sale_preview(interaction.user.id)
         except EconomyError as exc:
@@ -255,6 +251,20 @@ class DuplicateSaleCommands(discord_commands.Cog):
         except (AttributeError, discord.HTTPException):
             LOGGER.debug("Could not save the duplicate-sale preview message.")
         mark_successful_command(interaction)
+
+    @app_commands.command(
+        name="sellduplicates",
+        description="Review and sell extra copies of your unassigned cards.",
+    )
+    async def sellduplicates(self, interaction: discord.Interaction) -> None:
+        await self._review_sale(interaction)
+
+    @app_commands.command(
+        name="sellall",
+        description="Review and sell extra copies while keeping one of each card.",
+    )
+    async def sellall(self, interaction: discord.Interaction) -> None:
+        await self._review_sale(interaction)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

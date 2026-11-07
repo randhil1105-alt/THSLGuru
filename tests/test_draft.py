@@ -268,6 +268,7 @@ class DraftSimulationTests(unittest.TestCase):
         groups = generate_draft_groups(self.catalog, rng=captured)
         self.assertEqual(len(groups), 4)
         goalkeeper_names = {player.name for player in captured.populations[0]}
+        center_names = {player.name for player in captured.populations[1]}
         winger_names = {player.name for player in captured.populations[2]}
         self.assertIn("Jaycob (S2 TOTS 96)", goalkeeper_names)
         self.assertIn("Licha (S2 TOTS 96)", goalkeeper_names)
@@ -278,6 +279,9 @@ class DraftSimulationTests(unittest.TestCase):
             "Cam (S1 TOTY 97)",
         ):
             self.assertIn(name, winger_names)
+        for name in ("Road (S1 TOTY 98)", "Lauren (S1 TOTY 97)"):
+            self.assertIn(name, goalkeeper_names)
+        self.assertIn("Matrix (S1 TOTY 97)", center_names)
 
     def test_draft_generates_exactly_three_cards_per_position_group(self) -> None:
         groups = generate_draft_groups(self.catalog, rng=random.Random(23))
