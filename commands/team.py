@@ -241,6 +241,7 @@ class TeamCommands(discord_commands.Cog):
             player = entry.player
             if (
                 selected_position
+                and selected_position not in SUBSTITUTE_POSITIONS
                 and player.allowed_lineup_positions is not None
                 and selected_position not in player.allowed_lineup_positions
             ):

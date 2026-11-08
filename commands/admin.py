@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
+from datetime import datetime, timezone
+
 import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
@@ -17,7 +22,146 @@ from database import (
     SUPPORTED_STATS,
 )
 
+LOGGER = logging.getLogger("thsl_guru.admin")
 STAT_HELP = "Comma-separated key=value pairs, such as SHO=83,DRI=88."
+
+
+def _is_server_administrator(interaction: discord.Interaction) -> bool:
+    permissions = getattr(interaction.user, "guild_permissions", None)
+    return interaction.guild is not None and bool(
+        getattr(permissions, "administrator", False)
+    )
+
+
+class ResetAllConfirmationView(discord.ui.View):
+    """User-bound confirmation for the destructive global reset."""
+
+    def __init__(
+        self,
+        command: "AdminCommands",
+        *,
+        administrator_id: int,
+        guild_id: int,
+    ) -> None:
+        super().__init__(timeout=120)
+        self.command = command
+        self.administrator_id = int(administrator_id)
+        self.guild_id = int(guild_id)
+        self._handled = False
+        self._lock = asyncio.Lock()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if int(interaction.user.id) != self.administrator_id:
+            await interaction.response.send_message(
+                "Only the administrator who started this reset can use these buttons.",
+                ephemeral=True,
+            )
+            return False
+        if self._handled:
+            await interaction.response.send_message(
+                "This reset confirmation has already been handled.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(
+        label="🔴 Confirm Reset",
+        style=discord.ButtonStyle.danger,
+    )
+    async def confirm_reset(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        del button
+        async with self._lock:
+            if self._handled:
+                await interaction.response.send_message(
+                    "This reset confirmation has already been handled.",
+                    ephemeral=True,
+                )
+                return
+            if not _is_server_administrator(interaction):
+                await interaction.response.send_message(
+                    "You need server administrator permission to confirm this reset.",
+                    ephemeral=True,
+                )
+                return
+
+            self._handled = True
+            for child in self.children:
+                child.disabled = True
+            reset_at = int(time.time())
+            try:
+                affected_players = self.command.database.reset_all_player_progress(
+                    self.administrator_id,
+                    self.guild_id,
+                    now=reset_at,
+                )
+            except Exception:
+                LOGGER.exception(
+                    "The global player-data reset failed for administrator %s.",
+                    self.administrator_id,
+                )
+                await interaction.response.edit_message(
+                    content=(
+                        "Reset failed. No partial data changes were saved; "
+                        "check the server logs before trying again."
+                    ),
+                    view=None,
+                )
+                self.stop()
+                return
+
+            await self.command._cancel_active_sessions()
+            reset_timestamp = datetime.fromtimestamp(
+                reset_at,
+                timezone.utc,
+            ).isoformat(timespec="seconds")
+            LOGGER.info(
+                "Global player-data reset confirmed by administrator %s in guild "
+                "%s at %s; registered players reset: %d.",
+                self.administrator_id,
+                self.guild_id,
+                reset_timestamp,
+                affected_players,
+            )
+            await interaction.response.edit_message(
+                content=(
+                    f"Reset complete. Cleared game progress for "
+                    f"**{affected_players}** registered players. "
+                    "The card catalogue and server configuration were preserved."
+                ),
+                view=None,
+            )
+            self.stop()
+
+    @discord.ui.button(
+        label="🟢 Cancel",
+        style=discord.ButtonStyle.success,
+    )
+    async def cancel_reset(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        del button
+        async with self._lock:
+            if self._handled:
+                await interaction.response.send_message(
+                    "This reset confirmation has already been handled.",
+                    ephemeral=True,
+                )
+                return
+            self._handled = True
+            for child in self.children:
+                child.disabled = True
+            await interaction.response.edit_message(
+                content="Reset cancelled. No player data was changed.",
+                view=None,
+            )
+            self.stop()
 
 
 def parse_stats(value: str | None) -> dict[str, int]:
@@ -42,8 +186,65 @@ def parse_stats(value: str | None) -> dict[str, int]:
 
 
 class AdminCommands(discord_commands.Cog):
-    def __init__(self, database: Database) -> None:
+    def __init__(
+        self,
+        database: Database,
+        bot: discord_commands.Bot | None = None,
+    ) -> None:
         self.database = database
+        self.bot = bot
+
+    async def _cancel_active_sessions(self) -> None:
+        if self.bot is None:
+            return
+        get_cog = getattr(self.bot, "get_cog", None)
+        if get_cog is None:
+            return
+        for cog_name in ("MatchCommands", "MinigameCommands"):
+            cog = get_cog(cog_name)
+            cancel = getattr(cog, "cancel_active_sessions", None)
+            if cancel is None:
+                continue
+            try:
+                await cancel()
+            except Exception:
+                LOGGER.exception(
+                    "Could not cancel in-memory %s sessions after reset.",
+                    cog_name,
+                )
+
+    @app_commands.command(
+        name="resetall",
+        description="Reset all registered players' game progress.",
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def resetall(self, interaction: discord.Interaction) -> None:
+        if not _is_server_administrator(interaction):
+            await interaction.response.send_message(
+                "You need server administrator permission to use this command.",
+                ephemeral=True,
+            )
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "This command can only be used inside a server.",
+                ephemeral=True,
+            )
+            return
+        view = ResetAllConfirmationView(
+            self,
+            administrator_id=interaction.user.id,
+            guild_id=interaction.guild.id,
+        )
+        await interaction.response.send_message(
+            content=(
+                "⚠️ **RESET ALL PLAYER DATA**\n\n"
+                "Are you sure you want to reset EVERY player's progress?"
+            ),
+            view=view,
+            ephemeral=True,
+        )
 
     @app_commands.command(name="addplayer", description="Add a player card to the catalog.")
     @app_commands.default_permissions(administrator=True)
@@ -178,4 +379,4 @@ class AdminCommands(discord_commands.Cog):
 
 
 async def setup(bot: discord_commands.Bot) -> None:
-    await bot.add_cog(AdminCommands(bot.database))
+    await bot.add_cog(AdminCommands(bot.database, bot))

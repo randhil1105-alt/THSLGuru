@@ -436,6 +436,16 @@ class MatchCommands(discord_commands.Cog):
         self._expiry_tasks.clear()
         self._match_tasks.clear()
 
+    async def cancel_active_sessions(self) -> None:
+        """Cancel running match and invitation tasks after a global reset."""
+        tasks = tuple((*self._expiry_tasks.values(), *self._match_tasks.values()))
+        for task in tasks:
+            task.cancel()
+        self._expiry_tasks.clear()
+        self._match_tasks.clear()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     @discord_commands.Cog.listener()
     async def on_ready(self) -> None:
         if self._startup_recovery_done:

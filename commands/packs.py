@@ -80,7 +80,10 @@ class PackBuyButton(discord.ui.Button["PackPurchaseView"]):
 
 class FreePackOpenButton(discord.ui.Button["PackPurchaseView"]):
     def __init__(self, rarity: str, quantity: int) -> None:
-        label = f"Open Free {format_card_type(rarity)} ×{quantity}"
+        label = (
+            f"Open Free {format_card_type(rarity)} Pack · "
+            f"{quantity} available"
+        )
         super().__init__(
             label=label[:80],
             style=discord.ButtonStyle.success,
@@ -379,6 +382,11 @@ class PackCommands(discord_commands.Cog):
         free_pack_counts = self.database.get_free_pack_inventory(
             interaction.user.id
         )
+        free_pack_lines = "\n".join(
+            f"- {format_card_type(rarity)} Packs: "
+            f"{free_pack_counts.get(rarity, 0)}"
+            for rarity, _cost in PACKS
+        )
         visible_packs = [
             (rarity, cost)
             for rarity, cost in PACKS
@@ -394,7 +402,10 @@ class PackCommands(discord_commands.Cog):
                 f"Your balance: **{format_coins(balance)}**\n"
                 f"Choose a pack button to buy {quantity} pack"
                 f"{'' if quantity == 1 else 's'} at once. This menu can be used once.\n"
-                "Each pack contains one random player card of its listed rarity."
+                "Each pack contains one random player card of its listed rarity.\n\n"
+                "🎁 **Your Available Free Packs**\n"
+                f"{free_pack_lines}\n"
+                "A free-pack button opens exactly one pack."
             ),
             color=discord.Color.gold() if only_rarity == "GOLD" else discord.Color.dark_purple(),
         )

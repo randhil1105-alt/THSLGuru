@@ -7,7 +7,12 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from commands.xp import xp_level_up_embed, xp_notification_text
-from database import Database, EconomyError
+from database import (
+    PACK_COST_BY_RARITY,
+    Database,
+    EconomyError,
+    format_card_type,
+)
 from xp_system import NORMAL_COMMAND_XP
 
 
@@ -35,6 +40,12 @@ class ProfileCommands(discord_commands.Cog):
                 "command",
             )
             progress = self.database.get_xp_profile(user_id)
+            free_packs = self.database.get_free_pack_inventory(user_id)
+            free_pack_lines = "\n".join(
+                f"- {format_card_type(rarity)} Packs: "
+                f"**{free_packs.get(rarity, 0)}**"
+                for rarity in PACK_COST_BY_RARITY
+            )
         except EconomyError as exc:
             await interaction.response.send_message(str(exc), ephemeral=False)
             return
@@ -64,6 +75,11 @@ class ProfileCommands(discord_commands.Cog):
         embed.add_field(
             name=f"Level {progress.level + 1} progress",
             value=progress_line,
+            inline=False,
+        )
+        embed.add_field(
+            name="🎁 Available Free Packs",
+            value=free_pack_lines,
             inline=False,
         )
         embed.add_field(

@@ -354,6 +354,42 @@ class MinigameCommands(discord_commands.Cog):
         if self._active_drafts_by_owner.get(game.owner_id) is game:
             self._active_drafts_by_owner.pop(game.owner_id, None)
 
+    async def cancel_active_sessions(self) -> None:
+        """Stop live guessing and draft views after a global data reset."""
+        games = tuple(self._active_games.values())
+        drafts = tuple(self._active_drafts_by_owner.values())
+
+        for game in games:
+            game._finish()
+        for draft in drafts:
+            draft.finished = True
+            draft.stop()
+            self._remove_draft(draft)
+
+        for game in games:
+            if game.message is None:
+                continue
+            try:
+                await game.message.edit(
+                    content="This game was cancelled by a server administrator.",
+                    embed=None,
+                    view=None,
+                )
+            except discord.HTTPException:
+                LOGGER.debug("Could not update a cancelled minigame message.")
+        for draft in drafts:
+            if draft.message is None:
+                continue
+            try:
+                await draft.message.edit(
+                    content="This Draft was cancelled by a server administrator.",
+                    embeds=[],
+                    attachments=[],
+                    view=None,
+                )
+            except discord.HTTPException:
+                LOGGER.debug("Could not update a cancelled Draft message.")
+
     async def _start_draft(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None or interaction.channel is None:
             await interaction.response.send_message(

@@ -707,6 +707,14 @@ class Database:
                     created_at INTEGER NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS admin_reset_audit (
+                    reset_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    administrator_id TEXT NOT NULL,
+                    guild_id TEXT NOT NULL,
+                    affected_players INTEGER NOT NULL CHECK (affected_players >= 0),
+                    created_at INTEGER NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_players_rarity_name
                     ON players(rarity, name);
                 CREATE INDEX IF NOT EXISTS idx_users_balance
@@ -1584,6 +1592,102 @@ class Database:
             )
         return amount
 
+    def reset_all_player_progress(
+        self,
+        administrator_id: str | int,
+        guild_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> int:
+        """Reset every registered player's progression in one transaction."""
+        normalized_administrator_id = self._validate_user_id(administrator_id)
+        normalized_guild_id = self._validate_user_id(guild_id)
+        current_time = int(time.time() if now is None else now)
+
+        with self._transaction() as connection:
+            registered_players = int(
+                connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            )
+            active_auction_ids = [
+                str(row["auction_id"])
+                for row in connection.execute(
+                    "SELECT auction_id FROM auctions WHERE status = 'ACTIVE'"
+                ).fetchall()
+            ]
+            if active_auction_ids:
+                placeholders = ", ".join("?" for _ in active_auction_ids)
+                connection.execute(
+                    f"DELETE FROM auction_bids WHERE auction_id IN ({placeholders})",
+                    active_auction_ids,
+                )
+                connection.execute(
+                    """
+                    UPDATE auctions
+                    SET status = 'CANCELLED',
+                        highest_bid = NULL,
+                        highest_bidder_id = NULL,
+                        highest_bidder_name = NULL,
+                        completed_at = ?
+                    WHERE status = 'ACTIVE'
+                    """,
+                    (current_time,),
+                )
+
+            connection.execute(
+                """
+                UPDATE matches
+                SET status = 'CANCELLED',
+                    finished_at = ?,
+                    lineups_json = NULL,
+                    result_json = NULL,
+                    winner_id = NULL,
+                    reward_amount = 0,
+                    cancel_reason = 'Game reset by a server administrator.'
+                WHERE status IN ('PENDING', 'ACTIVE')
+                """,
+                (current_time,),
+            )
+            connection.execute("DELETE FROM active_match_users")
+
+            for table in (
+                "inventory",
+                "lineup_slots",
+                "center_slots",
+                "substitute_slots",
+                "team_starters",
+                "team_settings",
+                "team_settings_v2",
+                "team_migration_notices",
+                "draft_cooldowns",
+                "draft_sessions",
+                "free_pack_inventory",
+                "free_pack_redemptions",
+                "xp_level_rewards",
+                "xp_transactions",
+                "player_xp",
+                "pack_purchases",
+                "duplicate_sale_receipts",
+            ):
+                connection.execute(f"DELETE FROM {table}")
+
+            connection.execute(
+                "UPDATE users SET balance = 0, last_claim_at = NULL"
+            )
+            connection.execute(
+                """
+                INSERT INTO admin_reset_audit
+                    (administrator_id, guild_id, affected_players, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    normalized_administrator_id,
+                    normalized_guild_id,
+                    registered_players,
+                    current_time,
+                ),
+            )
+            return registered_players
+
     def add_coins(self, user_id: str | int, amount: int) -> int:
         normalized_id = self._validate_user_id(user_id)
         amount = self._validate_amount(amount, allow_zero=True)
@@ -2378,10 +2482,7 @@ class Database:
         for row in rows:
             position = str(row["lineup_position"])
             player = self._player_from_row(row)
-            if position in SUBSTITUTE_POSITIONS and (
-                player.allowed_lineup_positions is None
-                or position in player.allowed_lineup_positions
-            ):
+            if position in SUBSTITUTE_POSITIONS:
                 result[position] = player
             elif (
                 position in active_positions
@@ -3094,7 +3195,10 @@ class Database:
                 raise PlayerNotFound(lookup)
 
             player_id = int(player["id"])
-            if player["allowed_lineup_positions_json"] is not None:
+            if (
+                normalized_position not in SUBSTITUTE_POSITIONS
+                and player["allowed_lineup_positions_json"] is not None
+            ):
                 allowed_positions = tuple(
                     json.loads(player["allowed_lineup_positions_json"])
                 )
@@ -3687,14 +3791,23 @@ class Database:
                 raise InvalidAmount("That card inventory quantity is too large.")
 
             self._ensure_user(connection, normalized_id)
-            connection.execute(
-                """
-                UPDATE free_pack_inventory
-                SET quantity = quantity - 1
-                WHERE user_id = ? AND rarity = ? AND quantity > 0
-                """,
-                (normalized_id, expected_rarity),
-            )
+            if int(available["quantity"]) == 1:
+                connection.execute(
+                    """
+                    DELETE FROM free_pack_inventory
+                    WHERE user_id = ? AND rarity = ? AND quantity = 1
+                    """,
+                    (normalized_id, expected_rarity),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE free_pack_inventory
+                    SET quantity = quantity - 1
+                    WHERE user_id = ? AND rarity = ? AND quantity > 1
+                    """,
+                    (normalized_id, expected_rarity),
+                )
             remaining = connection.execute(
                 """
                 SELECT quantity FROM free_pack_inventory
@@ -3703,14 +3816,6 @@ class Database:
                 (normalized_id, expected_rarity),
             ).fetchone()
             remaining_count = int(remaining["quantity"]) if remaining else 0
-            if remaining_count == 0:
-                connection.execute(
-                    """
-                    DELETE FROM free_pack_inventory
-                    WHERE user_id = ? AND rarity = ?
-                    """,
-                    (normalized_id, expected_rarity),
-                )
             connection.execute(
                 """
                 INSERT INTO inventory(user_id, player_id, quantity)

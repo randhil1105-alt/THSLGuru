@@ -578,6 +578,7 @@ class XPCommandTests(unittest.IsolatedAsyncioTestCase):
             id=6001,
             user=SimpleNamespace(id=55, name="player_handle", bot=False),
             response=_FakeResponse(),
+            followup=_FakeFollowup(),
         )
         command = ProfileCommands(self.database)
         await ProfileCommands.profile.callback(command, interaction)
@@ -587,7 +588,17 @@ class XPCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("player\\_handle", embed.description)
         self.assertTrue(any(field.name == "Level" and field.value == "**2**" for field in embed.fields))
         self.assertTrue(any("0 / 700 XP" in field.value for field in embed.fields))
-        self.assertIn("LEVEL UP", next(field.value for field in embed.fields if field.name == "XP earned"))
+        free_packs = next(
+            field for field in embed.fields if field.name == "🎁 Available Free Packs"
+        )
+        self.assertIn("Gold Packs: **1**", free_packs.value)
+        self.assertIn("TOTW Packs: **0**", free_packs.value)
+        self.assertIn("S1 TOTY Packs: **0**", free_packs.value)
+        self.assertIn("+50 XP", next(field.value for field in embed.fields if field.name == "XP earned"))
+        self.assertEqual(
+            interaction.followup.messages[0]["embed"].title,
+            "🎉 LEVEL UP!",
+        )
 
     async def test_bot_users_do_not_receive_command_xp(self) -> None:
         interaction = SimpleNamespace(

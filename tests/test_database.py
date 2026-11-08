@@ -86,6 +86,148 @@ class DatabaseTests(unittest.TestCase):
         )
         self.assertEqual(dan.image_path, "cards/dan.png")
 
+    def test_global_reset_clears_progress_and_preserves_catalog_and_user_ids(self) -> None:
+        first_user = "reset-player-one"
+        second_user = "reset-player-two"
+        self.database.set_balance(first_user, GOLD_PACK_COST + 500)
+        self.database.set_balance(second_user, 2_000)
+        self.database.add_inventory(first_user, "Dan")
+        self.database.add_inventory(first_user, "Fadi")
+        self.database.add_inventory(second_user, "Gamer")
+        self.database.set_lineup_position(first_user, "CM1", "Dan")
+        self.database.claim_gold_card(first_user, now=1_000)
+        self.database.award_xp(first_user, "reset-xp", 11_700, "test")
+        self.database.start_draft_session(first_user, "reset-draft", now=1_000)
+        self.database.create_match_invitation(
+            "reset-match",
+            first_user,
+            second_user,
+            "Player One",
+            "Player Two",
+            "123",
+            "456",
+            now=1_000,
+            expires_at=1_100,
+        )
+
+        fadi = self.database.get_player("Fadi")
+        assert fadi is not None
+        self.database.create_auction(
+            first_user,
+            "Player One",
+            fadi.id,
+            100,
+            1_800,
+            "reset-auction",
+            "456",
+            now=1_000,
+        )
+        self.database.place_auction_bid(
+            "reset-auction",
+            second_user,
+            "Player Two",
+            100,
+            "reset-bid",
+            now=1_001,
+        )
+        self.database.open_pack(
+            first_user,
+            "GOLD",
+            GOLD_PACK_COST,
+            purchase_id="reset-pack-purchase",
+        )
+
+        catalog_before = self.database.get_players()
+        reset_count = self.database.reset_all_player_progress(
+            "administrator",
+            "123",
+            now=5_000_000,
+        )
+
+        self.assertEqual(reset_count, 2)
+        self.assertEqual(self.database.get_balance(first_user), 0)
+        self.assertEqual(self.database.get_balance(second_user), 0)
+        self.assertEqual(self.database.get_inventory(first_user), [])
+        self.assertEqual(self.database.get_inventory(second_user), [])
+        self.assertEqual(self.database.get_lineup(first_user), {})
+        self.assertEqual(self.database.get_xp_profile(first_user).total_xp, 0)
+        self.assertEqual(self.database.get_xp_profile(first_user).level, 1)
+        self.assertEqual(
+            self.database.get_free_pack_inventory(first_user),
+            {"GOLD": 0, "TOTW": 0},
+        )
+        cooldowns = self.database.get_cooldown_status(first_user, now=5_000_000)
+        self.assertIsNone(cooldowns.claim_last_used_at)
+        self.assertIsNone(cooldowns.draft_last_started_at)
+        self.assertFalse(cooldowns.draft_active)
+        self.assertEqual(self.database.get_auction("reset-auction").status, "CANCELLED")
+        self.assertEqual(self.database.get_match("reset-match")["status"], "CANCELLED")
+        with self.database._read_connection() as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM active_match_users").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM auction_bids").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM draft_sessions").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM pack_purchases").fetchone()[0],
+                0,
+            )
+            audit = connection.execute(
+                """
+                SELECT administrator_id, guild_id, affected_players, created_at
+                FROM admin_reset_audit
+                """
+            ).fetchone()
+            self.assertEqual(
+                tuple(audit),
+                ("administrator", "123", 2, 5_000_000),
+            )
+            user_ids = {
+                str(row["user_id"])
+                for row in connection.execute("SELECT user_id FROM users")
+            }
+        self.assertEqual(user_ids, {first_user, second_user})
+        self.assertEqual(self.database.get_players(), catalog_before)
+
+    def test_global_reset_rolls_back_every_table_on_failure(self) -> None:
+        user_id = "atomic-reset-player"
+        self.database.set_balance(user_id, 321)
+        self.database.add_inventory(user_id, "Dan")
+        self.database.award_xp(user_id, "atomic-reset-xp", 500, "test")
+        with self.database._transaction() as connection:
+            connection.execute(
+                """
+                CREATE TRIGGER fail_global_reset
+                BEFORE DELETE ON inventory
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced reset failure');
+                END
+                """
+            )
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.database.reset_all_player_progress(
+                "administrator",
+                "123",
+                now=9_000,
+            )
+
+        self.assertEqual(self.database.get_balance(user_id), 321)
+        self.assertEqual(len(self.database.get_inventory(user_id)), 1)
+        self.assertEqual(self.database.get_xp_profile(user_id).total_xp, 500)
+        with self.database._read_connection() as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM admin_reset_audit").fetchone()[0],
+                0,
+            )
+
     def test_xavier_seed_card_has_exact_data_and_is_gold_pack_eligible(self) -> None:
         xavier = self.database.get_player("XavierCapone9")
         self.assertIsNotNone(xavier)
@@ -410,28 +552,28 @@ class DatabaseTests(unittest.TestCase):
                 )
                 self.assertIn(card, gold_cards)
 
-    def test_new_gold_cards_only_assign_to_their_allowed_lineup_positions(self) -> None:
+    def test_new_gold_cards_keep_starter_restrictions_but_can_use_the_bench(self) -> None:
         for name, allowed_positions, forbidden in (
-            ("Megan", ("GK",), ("WING1", "CM1", "SUB1", "SUB2")),
-            ("Jaycob", ("GK",), ("WING1", "CM1", "SUB1", "SUB2")),
-            ("Karuwrld", ("WING1", "WING2"), ("GK", "CM1", "SUB1", "SUB2")),
-            ("HHH", ("WING1", "WING2"), ("GK", "CM1", "SUB1", "SUB2")),
-            ("Apex", ("WING1", "WING2"), ("GK", "CM1", "SUB1", "SUB2")),
-            ("R4ze", ("GK",), ("WING1", "CM1", "SUB1", "SUB2")),
+            ("Megan", ("GK",), ("WING1", "CM1")),
+            ("Jaycob", ("GK",), ("WING1", "CM1")),
+            ("Karuwrld", ("WING1", "WING2"), ("GK", "CM1")),
+            ("HHH", ("WING1", "WING2"), ("GK", "CM1")),
+            ("Apex", ("WING1", "WING2"), ("GK", "CM1")),
+            ("R4ze", ("GK",), ("WING1", "CM1")),
             (
                 "Chicken",
                 ("CM1", "CM2"),
-                ("WING1", "WING2", "GK", "SUB1", "SUB2"),
+                ("WING1", "WING2", "GK"),
             ),
             (
                 "Sluckz",
                 ("WING1", "WING2"),
-                ("CM1", "CM2", "GK", "SUB1", "SUB2"),
+                ("CM1", "CM2", "GK"),
             ),
             (
                 "Frozend",
                 ("GK",),
-                ("WING1", "WING2", "CM1", "CM2", "SUB1", "SUB2"),
+                ("WING1", "WING2", "CM1", "CM2"),
             ),
         ):
             user_id = f"lineup-rule-invalid-{name.lower()}"
@@ -453,6 +595,64 @@ class DatabaseTests(unittest.TestCase):
                     ).name,
                     name,
                 )
+            for index, substitute in enumerate(SUBSTITUTE_POSITIONS):
+                bench_user_id = f"lineup-bench-{name.lower()}-{index}"
+                self.database.add_inventory(bench_user_id, name)
+                assigned = self.database.set_lineup_position(
+                    bench_user_id,
+                    substitute,
+                    name,
+                )
+                self.assertEqual(assigned.name, name)
+                self.assertEqual(
+                    self.database.get_lineup(bench_user_id)[substitute].name,
+                    name,
+                )
+
+    def test_all_rarities_and_future_rarities_are_allowed_on_bench(self) -> None:
+        for rarity in ("GOLD", "TOTW", "S1 TOTS", "S2 TOTS", "S1 TOTY"):
+            card = next(
+                player for player in self.database.get_players(rarity=rarity)
+            )
+            user_id = f"bench-rarity-{rarity.lower().replace(' ', '-')}"
+            self.database.add_inventory(user_id, card.name)
+            assigned = self.database.set_lineup_position(
+                user_id,
+                "SUB1",
+                str(card.id),
+            )
+            self.assertEqual(assigned.rarity, rarity)
+            self.assertEqual(self.database.get_lineup(user_id)["SUB1"].id, card.id)
+
+        future = self.database.add_player(
+            {
+                "name": "Future Rarity Card",
+                "overall": 88,
+                "position": "WI",
+                "country": "Italy",
+                "team": "Future Team",
+                "rarity": "FUTURE SPECIAL",
+                "value": 1_000,
+                "stats": {},
+                "allowed_lineup_positions": ["WING1"],
+            }
+        )
+        self.database.add_inventory("future-bench-user", future.name)
+        self.database.set_lineup_position(
+            "future-bench-user",
+            "SUB1",
+            str(future.id),
+        )
+        self.assertEqual(
+            self.database.get_lineup("future-bench-user")["SUB1"].rarity,
+            "FUTURE SPECIAL",
+        )
+        with self.assertRaises(InvalidLineupPosition):
+            self.database.set_lineup_position(
+                "future-bench-user",
+                "WING2",
+                str(future.id),
+            )
 
     def test_chicken_sluckz_and_frozend_have_exact_seed_data(self) -> None:
         expected = {

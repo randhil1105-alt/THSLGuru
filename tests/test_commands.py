@@ -40,10 +40,10 @@ from commands.minigame import (
     IndividualMinigameView,
     MinigameCommands,
 )
-from commands.packs import PackBuyButton, PackCommands
+from commands.packs import FreePackOpenButton, PackBuyButton, PackCommands
 from commands.player import PlayerCommands
 from commands.profile import ProfileCommands
-from commands.team import TeamCommands
+from commands.team import TeamCommands, lineup_card_label
 from commands.information import InformationCommands
 from draft_simulation import generate_draft_groups
 from database import (
@@ -86,6 +86,7 @@ EXPECTED_COMMANDS = {
     "setbalance",
     "grantcoins",
     "grantcard",
+    "resetall",
     "minigame",
     "match",
     "auction",
@@ -107,6 +108,13 @@ class FakeResponse:
 
     async def defer(self, **kwargs: object) -> None:
         self.deferred = True
+
+    async def edit_message(
+        self,
+        content: str | None = None,
+        **kwargs: object,
+    ) -> None:
+        self.messages.append({"content": content, **kwargs, "edited": True})
 
     async def send_modal(self, modal: discord.ui.Modal) -> None:
         self.modals.append(modal)
@@ -198,7 +206,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         commands = {
             command.name: command for command in self.bot.tree.get_commands()
         }
-        admin_only = {"addplayer", "setbalance", "grantcoins", "grantcard"}
+        admin_only = {
+            "addplayer",
+            "setbalance",
+            "grantcoins",
+            "grantcard",
+            "resetall",
+        }
         self.assertEqual(set(commands), EXPECTED_COMMANDS)
         self.assertTrue({"packs", "pack", "inventory", "balance"} <= set(commands))
 
@@ -271,6 +285,267 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             [choice.value for choice in pack_parameters["pack_type"].choices],
             ["GOLD", "TOTW", "S2 TOTS", "S1 TOTS", "S1 TOTY"],
         )
+
+    async def test_resetall_denies_non_admin_and_cancel_preserves_progress(self) -> None:
+        user_id = "reset-cancel-user"
+        self.database.set_balance(user_id, 500)
+        self.database.add_inventory(user_id, "Dan")
+        cog = AdminCommands(self.database)
+
+        denied_response = FakeResponse()
+        await AdminCommands.resetall.callback(
+            cog,
+            SimpleNamespace(
+                user=SimpleNamespace(
+                    id=301,
+                    guild_permissions=SimpleNamespace(administrator=False),
+                ),
+                guild=SimpleNamespace(id=401),
+                response=denied_response,
+            ),
+        )
+        self.assertIn("administrator permission", denied_response.messages[0]["content"])
+        self.assertEqual(self.database.get_balance(user_id), 500)
+
+        admin = SimpleNamespace(
+            id=302,
+            guild_permissions=SimpleNamespace(administrator=True),
+        )
+        command_response = FakeResponse()
+        await AdminCommands.resetall.callback(
+            cog,
+            SimpleNamespace(
+                user=admin,
+                guild=SimpleNamespace(id=401),
+                response=command_response,
+            ),
+        )
+        warning = command_response.messages[0]
+        self.assertTrue(warning["ephemeral"])
+        self.assertIn("⚠️ **RESET ALL PLAYER DATA**", warning["content"])
+        view = warning["view"]
+        self.assertEqual(
+            [button.label for button in view.children],
+            ["🔴 Confirm Reset", "🟢 Cancel"],
+        )
+
+        outsider_response = FakeResponse()
+        allowed = await view.interaction_check(
+            SimpleNamespace(
+                user=SimpleNamespace(id=999),
+                response=outsider_response,
+            )
+        )
+        self.assertFalse(allowed)
+        self.assertIn("Only the administrator", outsider_response.messages[0]["content"])
+
+        cancel_interaction = SimpleNamespace(
+            user=admin,
+            guild=SimpleNamespace(id=401),
+            response=FakeResponse(),
+        )
+        self.assertTrue(await view.interaction_check(cancel_interaction))
+        cancel_button = next(button for button in view.children if button.label == "🟢 Cancel")
+        await cancel_button.callback(cancel_interaction)
+        self.assertIn(
+            "Reset cancelled",
+            cancel_interaction.response.messages[0]["content"],
+        )
+        self.assertEqual(self.database.get_balance(user_id), 500)
+        self.assertEqual(len(self.database.get_inventory(user_id)), 1)
+
+    async def test_resetall_confirm_button_resets_everyone_and_audits_admin(self) -> None:
+        self.database.set_balance("reset-confirm-one", 900)
+        self.database.set_balance("reset-confirm-two", 1_200)
+        self.database.add_inventory("reset-confirm-one", "Dan")
+        self.database.award_xp("reset-confirm-one", "confirm-xp", 500, "test")
+
+        admin = SimpleNamespace(
+            id=303,
+            guild_permissions=SimpleNamespace(administrator=True),
+        )
+        command_response = FakeResponse()
+        cog = AdminCommands(self.database)
+        await AdminCommands.resetall.callback(
+            cog,
+            SimpleNamespace(
+                user=admin,
+                guild=SimpleNamespace(id=402),
+                response=command_response,
+            ),
+        )
+        view = command_response.messages[0]["view"]
+        confirm_interaction = SimpleNamespace(
+            user=admin,
+            guild=SimpleNamespace(id=402),
+            response=FakeResponse(),
+        )
+        self.assertTrue(await view.interaction_check(confirm_interaction))
+        confirm_button = next(
+            button for button in view.children if button.label == "🔴 Confirm Reset"
+        )
+        await confirm_button.callback(confirm_interaction)
+
+        result = confirm_interaction.response.messages[0]
+        self.assertIn("Reset complete", result["content"])
+        self.assertIn("**2** registered players", result["content"])
+        self.assertEqual(self.database.get_balance("reset-confirm-one"), 0)
+        self.assertEqual(self.database.get_balance("reset-confirm-two"), 0)
+        self.assertEqual(self.database.get_inventory("reset-confirm-one"), [])
+        self.assertEqual(self.database.get_xp_profile("reset-confirm-one").level, 1)
+        self.assertIsNotNone(self.database.get_player("Dan"))
+        with self.database._read_connection() as connection:
+            audit = connection.execute(
+                "SELECT administrator_id, guild_id, affected_players "
+                "FROM admin_reset_audit"
+            ).fetchone()
+        self.assertEqual(tuple(audit), ("303", "402", 2))
+
+    async def test_free_gold_and_totw_level_packs_open_once_without_coins(self) -> None:
+        cog = PackCommands(self.database)
+        gold_user = "free-gold-packs"
+        self.database.award_xp(gold_user, "gold-pack-levels", 1_200, "test")
+        self.assertEqual(self.database.get_free_pack_inventory(gold_user)["GOLD"], 2)
+        self.assertEqual(self.database.get_balance(gold_user), 0)
+
+        gold_menu_response = FakeResponse()
+        await PackCommands.pack.callback(
+            cog,
+            SimpleNamespace(
+                user=SimpleNamespace(id=gold_user),
+                response=gold_menu_response,
+            ),
+            discord.app_commands.Choice(name="GOLD Pack", value="GOLD"),
+        )
+        gold_menu = gold_menu_response.messages[0]
+        self.assertIn("- Gold Packs: 2", gold_menu["embed"].description)
+        gold_button = next(
+            button
+            for button in gold_menu["view"].children
+            if isinstance(button, FreePackOpenButton)
+        )
+        self.assertEqual(gold_button.quantity, 2)
+
+        first_open = SimpleNamespace(
+            user=SimpleNamespace(id=gold_user),
+            response=FakeResponse(),
+            id=70_001,
+            message=FakeMessage(),
+        )
+        await gold_button.callback(first_open)
+        first_result = first_open.response.messages[0]
+        self.assertIn("FREE Gold Pack", first_result["content"])
+        self.assertEqual(self.database.get_balance(gold_user), 0)
+        self.assertEqual(self.database.get_free_pack_inventory(gold_user)["GOLD"], 1)
+        self.assertEqual(
+            sum(entry.quantity for entry in self.database.get_inventory(gold_user)),
+            1,
+        )
+        first_card = first_result["embed"]
+        gold_inventory = self.database.get_inventory(gold_user)
+        self.assertIn(str(gold_inventory[0].player.overall), first_card.title)
+        card_fields = {field.name: field.value for field in first_card.fields}
+        self.assertIn("Country", card_fields)
+        self.assertIn("Card Type", card_fields)
+        self.assertIn("Stats", card_fields)
+        self.assertIsNotNone(first_result.get("file"))
+        first_result["file"].close()
+
+        repeat_open = SimpleNamespace(
+            user=SimpleNamespace(id=gold_user),
+            response=FakeResponse(),
+            id=70_002,
+            message=FakeMessage(),
+        )
+        await gold_button.callback(repeat_open)
+        self.assertIn("already been used", repeat_open.response.messages[0]["content"])
+        self.assertEqual(self.database.get_free_pack_inventory(gold_user)["GOLD"], 1)
+        self.assertEqual(
+            sum(entry.quantity for entry in self.database.get_inventory(gold_user)),
+            1,
+        )
+
+        totw_user = "free-totw-packs"
+        self.database.award_xp(totw_user, "totw-pack-levels", 11_700, "test")
+        self.assertEqual(self.database.get_free_pack_inventory(totw_user)["TOTW"], 1)
+        self.assertEqual(self.database.get_balance(totw_user), 0)
+        totw_menu_response = FakeResponse()
+        await PackCommands.pack.callback(
+            cog,
+            SimpleNamespace(
+                user=SimpleNamespace(id=totw_user),
+                response=totw_menu_response,
+            ),
+            discord.app_commands.Choice(name="TOTW Pack", value="TOTW"),
+        )
+        totw_button = next(
+            button
+            for button in totw_menu_response.messages[0]["view"].children
+            if isinstance(button, FreePackOpenButton)
+        )
+        totw_open = SimpleNamespace(
+            user=SimpleNamespace(id=totw_user),
+            response=FakeResponse(),
+            id=70_003,
+            message=FakeMessage(),
+        )
+        await totw_button.callback(totw_open)
+        self.assertIn("FREE TOTW Pack", totw_open.response.messages[0]["content"])
+        self.assertEqual(self.database.get_balance(totw_user), 0)
+        self.assertEqual(self.database.get_free_pack_inventory(totw_user)["TOTW"], 0)
+        self.assertEqual(
+            sum(entry.quantity for entry in self.database.get_inventory(totw_user)),
+            1,
+        )
+        totw_open.response.messages[0]["file"].close()
+
+    async def test_special_rarity_bench_cards_work_through_set_and_team(self) -> None:
+        user_id = "special-rarity-bench-command"
+        selected_cards = (
+            ("SUB1", self.database.get_players(rarity="TOTW")[0]),
+            ("SUB2", self.database.get_players(rarity="S1 TOTY")[0]),
+        )
+        cog = TeamCommands(self.database)
+        for position, card in selected_cards:
+            self.database.add_inventory(user_id, card.name)
+            choices = await TeamCommands.set_player_autocomplete(
+                cog,
+                SimpleNamespace(
+                    user=SimpleNamespace(id=user_id),
+                    namespace=SimpleNamespace(position=position),
+                ),
+                card.name.split()[0],
+            )
+            self.assertIn(str(card.id), [choice.value for choice in choices])
+            response = FakeResponse()
+            await TeamCommands.set_position.callback(
+                cog,
+                SimpleNamespace(
+                    user=SimpleNamespace(id=user_id),
+                    response=response,
+                ),
+                discord.app_commands.Choice(name=position, value=position),
+                str(card.id),
+            )
+            self.assertIn("Assigned", response.messages[0]["content"])
+
+        team_interaction = SimpleNamespace(
+            user=SimpleNamespace(id=user_id, display_name="Bench Test"),
+            response=FakeResponse(),
+            followup=FakeFollowup(),
+        )
+        await TeamCommands.team.callback(cog, team_interaction)
+        team_embed = team_interaction.followup.messages[0]["embed"]
+        slot_values = {field.name: field.value for field in team_embed.fields}
+        self.assertIn(
+            lineup_card_label(selected_cards[0][1]),
+            slot_values["SUB1 · Substitute 1"],
+        )
+        self.assertIn(
+            lineup_card_label(selected_cards[1][1]),
+            slot_values["SUB2 · Substitute 2"],
+        )
+        team_interaction.followup.messages[0]["file"].close()
 
     async def test_help_lists_the_combined_pack_command(self) -> None:
         response = FakeResponse()
@@ -887,7 +1162,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                         player.allowed_lineup_positions,
                         position_restrictions[name],
                     )
-                    testable_positions = ("WING1", "CM1", "GK", "SUB1", "SUB2")
+                    testable_positions = ("WING1", "CM1", "GK")
                     for forbidden in (
                         slot
                         for slot in testable_positions
@@ -3392,7 +3667,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "country": "Canada",
                 "team": "Colorado Avalanche",
                 "allowed": ("GK",),
-                "forbidden": ("WING1", "CM1", "SUB1", "SUB2"),
+                "forbidden": ("WING1", "CM1"),
                 "image": "cards/megan_gold.png",
                 "value": 560_000,
                 "stats": {"SAV": 85, "DIV": 85, "PAS": 82, "CLE": 82, "SWE": 83, "ACT": 85},
@@ -3403,7 +3678,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "country": "England",
                 "team": "New York Rangers",
                 "allowed": ("GK",),
-                "forbidden": ("WING1", "CM1", "SUB1", "SUB2"),
+                "forbidden": ("WING1", "CM1"),
                 "image": "cards/jaycob_gold.png",
                 "value": 1_300_000,
                 "stats": {"SAV": 90, "DIV": 90, "PAS": 85, "CLE": 85, "SWE": 87, "ACT": 89},
@@ -3414,7 +3689,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "country": "Scotland",
                 "team": "Colorado Avalanche",
                 "allowed": ("WING1", "WING2"),
-                "forbidden": ("GK", "CM1", "SUB1", "SUB2"),
+                "forbidden": ("GK", "CM1"),
                 "image": "cards/karuwrld_gold.png",
                 "value": 460_000,
                 "stats": {"SHO": 84, "DRI": 78, "SAV": 77, "PAS": 80, "DEF": 82, "ACT": 76},
@@ -3425,7 +3700,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "country": "England",
                 "team": "Anaheim Ducks",
                 "allowed": ("WING1", "WING2"),
-                "forbidden": ("GK", "CM1", "SUB1", "SUB2"),
+                "forbidden": ("GK", "CM1"),
                 "image": "cards/hhh_gold.png",
                 "value": 450_000,
                 "stats": {"SHO": 89, "DRI": 85, "SAV": 77, "PAS": 84, "DEF": 78, "ACT": 82},
@@ -3436,7 +3711,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "country": "England",
                 "team": "Buffalo Sabres",
                 "allowed": ("WING1", "WING2"),
-                "forbidden": ("GK", "CM1", "SUB1", "SUB2"),
+                "forbidden": ("GK", "CM1"),
                 "image": "cards/apex_gold.png",
                 "value": 1_500_000,
                 "stats": {"SHO": 91, "DRI": 88, "SAV": 76, "PAS": 86, "DEF": 80, "ACT": 82},
@@ -3447,7 +3722,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "country": "Georgia",
                 "team": "Florida Panthers",
                 "allowed": ("GK",),
-                "forbidden": ("WING1", "CM1", "SUB1", "SUB2"),
+                "forbidden": ("WING1", "CM1"),
                 "image": "cards/r4ze_gold.png",
                 "value": 430_000,
                 "stats": {"SAV": 87, "DIV": 85, "PAS": 81, "CLE": 83, "SWE": 80, "ACT": 84},
