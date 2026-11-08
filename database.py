@@ -40,6 +40,8 @@ MATCH_REWARD = 5_000_000
 MATCH_INVITATION_SECONDS = 60
 DRAFT_COOLDOWN_SECONDS = 10 * 60
 DRAFT_WIN_REWARD = 200_000
+TRADE_REQUEST_SECONDS = 2 * 60
+TRADE_INACTIVE_SECONDS = 30 * 60
 AUCTION_DURATIONS_SECONDS = (30 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60)
 SQLITE_INT_MAX = (1 << 63) - 1
 SUPPORTED_STATS = ("SHO", "DRI", "SAV", "PAS", "DEF", "ACT", "DIV", "CLE", "SWE")
@@ -209,6 +211,30 @@ class DraftSessionUnauthorized(EconomyError):
 
 class MatchError(EconomyError):
     """Base class for expected match and invitation errors."""
+
+
+class TradeError(EconomyError):
+    """Base class for expected trade and invitation errors."""
+
+
+class TradeAlreadyActive(TradeError):
+    pass
+
+
+class TradeNotFound(TradeError):
+    pass
+
+
+class TradeNotActive(TradeError):
+    pass
+
+
+class TradeActionUnauthorized(TradeError):
+    pass
+
+
+class TradeExpired(TradeError):
+    pass
 
 
 class MatchAlreadyActive(MatchError):
@@ -715,6 +741,53 @@ class Database:
                     created_at INTEGER NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS trades (
+                    trade_id TEXT PRIMARY KEY,
+                    initiator_id TEXT NOT NULL REFERENCES users(user_id),
+                    invitee_id TEXT NOT NULL REFERENCES users(user_id),
+                    initiator_name TEXT NOT NULL,
+                    invitee_name TEXT NOT NULL,
+                    guild_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    message_id TEXT,
+                    status TEXT NOT NULL CHECK (
+                        status IN (
+                            'REQUESTED', 'ACTIVE', 'COMPLETED', 'DECLINED',
+                            'CANCELLED', 'EXPIRED'
+                        )
+                    ),
+                    initiator_coins INTEGER NOT NULL DEFAULT 0
+                        CHECK (initiator_coins >= 0),
+                    invitee_coins INTEGER NOT NULL DEFAULT 0
+                        CHECK (invitee_coins >= 0),
+                    initiator_confirmed INTEGER NOT NULL DEFAULT 0
+                        CHECK (initiator_confirmed IN (0, 1)),
+                    invitee_confirmed INTEGER NOT NULL DEFAULT 0
+                        CHECK (invitee_confirmed IN (0, 1)),
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    completed_at INTEGER,
+                    completed_details_json TEXT,
+                    CHECK (initiator_id <> invitee_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS trade_cards (
+                    trade_id TEXT NOT NULL REFERENCES trades(trade_id)
+                        ON DELETE CASCADE,
+                    user_id TEXT NOT NULL REFERENCES users(user_id),
+                    player_id INTEGER NOT NULL REFERENCES players(id),
+                    quantity INTEGER NOT NULL CHECK (quantity > 0),
+                    PRIMARY KEY (trade_id, user_id, player_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS active_trade_users (
+                    user_id TEXT PRIMARY KEY REFERENCES users(user_id)
+                        ON DELETE CASCADE,
+                    trade_id TEXT NOT NULL REFERENCES trades(trade_id)
+                        ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_players_rarity_name
                     ON players(rarity, name);
                 CREATE INDEX IF NOT EXISTS idx_users_balance
@@ -729,6 +802,10 @@ class Database:
                     ON auctions(seller_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_auction_bids_auction_status
                     ON auction_bids(auction_id, status);
+                CREATE INDEX IF NOT EXISTS idx_trades_status_expiry
+                    ON trades(status, expires_at);
+                CREATE INDEX IF NOT EXISTS idx_trade_cards_trade
+                    ON trade_cards(trade_id, user_id);
                 """
             )
             player_columns = {
@@ -4469,3 +4546,896 @@ class Database:
                 total_earnings=total_earned,
                 new_balance=current_balance + total_earned,
             )
+
+    @staticmethod
+    def _release_trade_users_locked(
+        connection: sqlite3.Connection,
+        trade_id: str,
+    ) -> None:
+        connection.execute(
+            "DELETE FROM active_trade_users WHERE trade_id = ?",
+            (trade_id,),
+        )
+
+    @staticmethod
+    def _trade_snapshot_locked(
+        connection: sqlite3.Connection,
+        trade_id: str,
+    ) -> dict[str, Any] | None:
+        row = connection.execute(
+            "SELECT * FROM trades WHERE trade_id = ?",
+            (trade_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        trade = dict(row)
+        cards = connection.execute(
+            """
+            SELECT tc.user_id, tc.quantity, p.*
+            FROM trade_cards AS tc
+            JOIN players AS p ON p.id = tc.player_id
+            WHERE tc.trade_id = ?
+            ORDER BY tc.user_id, p.name COLLATE NOCASE
+            """,
+            (trade_id,),
+        ).fetchall()
+        trade["cards"] = [
+            {
+                "user_id": str(card["user_id"]),
+                "quantity": int(card["quantity"]),
+                "player": Database._player_from_row(card),
+            }
+            for card in cards
+        ]
+        details = trade.get("completed_details_json")
+        trade["completed_details"] = (
+            json.loads(str(details)) if details is not None else None
+        )
+        return trade
+
+    @staticmethod
+    def _expire_stale_trades_locked(
+        connection: sqlite3.Connection,
+        now: int,
+    ) -> None:
+        rows = connection.execute(
+            """
+            SELECT trade_id FROM trades
+            WHERE status IN ('REQUESTED', 'ACTIVE') AND expires_at <= ?
+            """,
+            (now,),
+        ).fetchall()
+        for row in rows:
+            trade_id = str(row["trade_id"])
+            connection.execute(
+                """
+                UPDATE trades
+                SET status = 'EXPIRED', updated_at = ?
+                WHERE trade_id = ? AND status IN ('REQUESTED', 'ACTIVE')
+                """,
+                (now, trade_id),
+            )
+            Database._release_trade_users_locked(connection, trade_id)
+
+    @staticmethod
+    def _trade_participant_column(
+        trade: sqlite3.Row,
+        user_id: str,
+    ) -> str:
+        if user_id == str(trade["initiator_id"]):
+            return "initiator"
+        if user_id == str(trade["invitee_id"]):
+            return "invitee"
+        raise TradeActionUnauthorized("You are not a participant in this trade.")
+
+    @staticmethod
+    def _ensure_active_trade_locked(
+        connection: sqlite3.Connection,
+        trade_id: str,
+        user_id: str,
+        now: int,
+    ) -> tuple[sqlite3.Row, str]:
+        trade = connection.execute(
+            "SELECT * FROM trades WHERE trade_id = ?",
+            (trade_id,),
+        ).fetchone()
+        if trade is None:
+            raise TradeNotFound("This trade could not be found.")
+        participant = Database._trade_participant_column(trade, user_id)
+        if str(trade["status"]) != "ACTIVE":
+            raise TradeNotActive("This trade is no longer active.")
+        if int(trade["expires_at"]) <= now:
+            raise TradeExpired("This trade has expired from inactivity.")
+        return trade, participant
+
+    def create_trade_request(
+        self,
+        trade_id: str,
+        initiator_id: str | int,
+        invitee_id: str | int,
+        initiator_name: str,
+        invitee_name: str,
+        guild_id: str | int,
+        channel_id: str | int,
+        *,
+        now: int | None = None,
+        request_seconds: int = TRADE_REQUEST_SECONDS,
+    ) -> dict[str, Any]:
+        normalized_trade_id = str(trade_id).strip()
+        first_id = self._validate_user_id(initiator_id)
+        second_id = self._validate_user_id(invitee_id)
+        if not normalized_trade_id or len(normalized_trade_id) > 128:
+            raise InvalidAmount("That trade request is invalid.")
+        if first_id == second_id:
+            raise TradeActionUnauthorized("You cannot trade with yourself.")
+        if request_seconds <= 0:
+            raise InvalidAmount("The trade request timeout must be positive.")
+        names = (str(initiator_name).strip(), str(invitee_name).strip())
+        if any(not name or len(name) > 100 for name in names):
+            raise InvalidAmount("A valid name is required for each trader.")
+        guild_key = self._validate_user_id(guild_id)
+        channel_key = self._validate_user_id(channel_id)
+        current_time = int(time.time() if now is None else now)
+
+        with self._transaction() as connection:
+            self._expire_stale_trades_locked(connection, current_time)
+            busy = connection.execute(
+                """
+                SELECT user_id FROM active_trade_users
+                WHERE user_id IN (?, ?) LIMIT 1
+                """,
+                (first_id, second_id),
+            ).fetchone()
+            if busy is not None:
+                raise TradeAlreadyActive(
+                    "One of you already has a pending request or active trade."
+                )
+            self._ensure_user(connection, first_id)
+            self._ensure_user(connection, second_id)
+            connection.execute(
+                """
+                INSERT INTO trades
+                    (trade_id, initiator_id, invitee_id, initiator_name,
+                     invitee_name, guild_id, channel_id, status, created_at,
+                     updated_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?, ?, ?)
+                """,
+                (
+                    normalized_trade_id,
+                    first_id,
+                    second_id,
+                    names[0],
+                    names[1],
+                    guild_key,
+                    channel_key,
+                    current_time,
+                    current_time,
+                    current_time + request_seconds,
+                ),
+            )
+            connection.executemany(
+                """
+                INSERT INTO active_trade_users(user_id, trade_id)
+                VALUES (?, ?)
+                """,
+                ((first_id, normalized_trade_id), (second_id, normalized_trade_id)),
+            )
+            snapshot = self._trade_snapshot_locked(
+                connection,
+                normalized_trade_id,
+            )
+            assert snapshot is not None
+            return snapshot
+
+    def get_trade(self, trade_id: str) -> dict[str, Any] | None:
+        normalized_trade_id = str(trade_id).strip()
+        with self._read_connection() as connection:
+            return self._trade_snapshot_locked(connection, normalized_trade_id)
+
+    def get_recoverable_trades(self) -> list[dict[str, Any]]:
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT trade_id FROM trades
+                WHERE status IN ('REQUESTED', 'ACTIVE') AND message_id IS NOT NULL
+                ORDER BY created_at
+                """
+            ).fetchall()
+            return [
+                snapshot
+                for row in rows
+                if (
+                    snapshot := self._trade_snapshot_locked(
+                        connection,
+                        str(row["trade_id"]),
+                    )
+                )
+                is not None
+            ]
+
+    def set_trade_message(self, trade_id: str, message_id: str | int) -> None:
+        normalized_trade_id = str(trade_id).strip()
+        normalized_message_id = self._validate_user_id(message_id)
+        with self._transaction() as connection:
+            updated = connection.execute(
+                """
+                UPDATE trades SET message_id = ?
+                WHERE trade_id = ? AND status IN ('REQUESTED', 'ACTIVE')
+                """,
+                (normalized_message_id, normalized_trade_id),
+            )
+            if updated.rowcount != 1:
+                raise TradeNotActive("This trade is no longer active.")
+
+    def accept_trade_request(
+        self,
+        trade_id: str,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+        inactive_seconds: int = TRADE_INACTIVE_SECONDS,
+    ) -> dict[str, Any]:
+        normalized_trade_id = str(trade_id).strip()
+        normalized_user_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        if inactive_seconds <= 0:
+            raise InvalidAmount("The trade inactivity timeout must be positive.")
+        with self._transaction() as connection:
+            trade = connection.execute(
+                "SELECT * FROM trades WHERE trade_id = ?",
+                (normalized_trade_id,),
+            ).fetchone()
+            if trade is None:
+                raise TradeNotFound("This trade request could not be found.")
+            if normalized_user_id != str(trade["invitee_id"]):
+                raise TradeActionUnauthorized(
+                    "Only the invited player can accept this request."
+                )
+            if str(trade["status"]) != "REQUESTED":
+                raise TradeNotActive("This trade request is no longer pending.")
+            if int(trade["expires_at"]) <= current_time:
+                connection.execute(
+                    """
+                    UPDATE trades SET status = 'EXPIRED', updated_at = ?
+                    WHERE trade_id = ? AND status = 'REQUESTED'
+                    """,
+                    (current_time, normalized_trade_id),
+                )
+                self._release_trade_users_locked(connection, normalized_trade_id)
+                snapshot = self._trade_snapshot_locked(
+                    connection,
+                    normalized_trade_id,
+                )
+                assert snapshot is not None
+                return snapshot
+            connection.execute(
+                """
+                UPDATE trades
+                SET status = 'ACTIVE', updated_at = ?, expires_at = ?
+                WHERE trade_id = ? AND status = 'REQUESTED'
+                """,
+                (
+                    current_time,
+                    current_time + inactive_seconds,
+                    normalized_trade_id,
+                ),
+            )
+            snapshot = self._trade_snapshot_locked(
+                connection,
+                normalized_trade_id,
+            )
+            assert snapshot is not None
+            return snapshot
+
+    def decline_trade_request(
+        self,
+        trade_id: str,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_trade_id = str(trade_id).strip()
+        normalized_user_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            trade = connection.execute(
+                "SELECT * FROM trades WHERE trade_id = ?",
+                (normalized_trade_id,),
+            ).fetchone()
+            if trade is None:
+                raise TradeNotFound("This trade request could not be found.")
+            if normalized_user_id != str(trade["invitee_id"]):
+                raise TradeActionUnauthorized(
+                    "Only the invited player can decline this request."
+                )
+            if str(trade["status"]) != "REQUESTED":
+                raise TradeNotActive("This trade request is no longer pending.")
+            status = (
+                "EXPIRED"
+                if int(trade["expires_at"]) <= current_time
+                else "DECLINED"
+            )
+            connection.execute(
+                "UPDATE trades SET status = ?, updated_at = ? WHERE trade_id = ?",
+                (status, current_time, normalized_trade_id),
+            )
+            self._release_trade_users_locked(connection, normalized_trade_id)
+            snapshot = self._trade_snapshot_locked(
+                connection,
+                normalized_trade_id,
+            )
+            assert snapshot is not None
+            return snapshot
+
+    def cancel_trade(
+        self,
+        trade_id: str,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_trade_id = str(trade_id).strip()
+        normalized_user_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            trade = connection.execute(
+                "SELECT * FROM trades WHERE trade_id = ?",
+                (normalized_trade_id,),
+            ).fetchone()
+            if trade is None:
+                raise TradeNotFound("This trade could not be found.")
+            self._trade_participant_column(trade, normalized_user_id)
+            if str(trade["status"]) not in {"REQUESTED", "ACTIVE"}:
+                raise TradeNotActive("This trade is already closed.")
+            status = (
+                "EXPIRED"
+                if int(trade["expires_at"]) <= current_time
+                else "CANCELLED"
+            )
+            connection.execute(
+                "UPDATE trades SET status = ?, updated_at = ? WHERE trade_id = ?",
+                (status, current_time, normalized_trade_id),
+            )
+            self._release_trade_users_locked(connection, normalized_trade_id)
+            snapshot = self._trade_snapshot_locked(
+                connection,
+                normalized_trade_id,
+            )
+            assert snapshot is not None
+            return snapshot
+
+    def expire_trade(
+        self,
+        trade_id: str,
+        *,
+        now: int | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_trade_id = str(trade_id).strip()
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            trade = connection.execute(
+                "SELECT status, expires_at FROM trades WHERE trade_id = ?",
+                (normalized_trade_id,),
+            ).fetchone()
+            if (
+                trade is None
+                or str(trade["status"]) not in {"REQUESTED", "ACTIVE"}
+                or int(trade["expires_at"]) > current_time
+            ):
+                return None
+            connection.execute(
+                "UPDATE trades SET status = 'EXPIRED', updated_at = ? "
+                "WHERE trade_id = ? AND status IN ('REQUESTED', 'ACTIVE')",
+                (current_time, normalized_trade_id),
+            )
+            self._release_trade_users_locked(connection, normalized_trade_id)
+            return self._trade_snapshot_locked(connection, normalized_trade_id)
+
+    def set_trade_coins(
+        self,
+        trade_id: str,
+        user_id: str | int,
+        amount: int,
+        *,
+        now: int | None = None,
+        inactive_seconds: int = TRADE_INACTIVE_SECONDS,
+    ) -> dict[str, Any]:
+        normalized_trade_id = str(trade_id).strip()
+        normalized_user_id = self._validate_user_id(user_id)
+        normalized_amount = self._validate_amount(amount, allow_zero=True)
+        current_time = int(time.time() if now is None else now)
+        if inactive_seconds <= 0:
+            raise InvalidAmount("The trade inactivity timeout must be positive.")
+        with self._transaction() as connection:
+            _, participant = self._ensure_active_trade_locked(
+                connection,
+                normalized_trade_id,
+                normalized_user_id,
+                current_time,
+            )
+            connection.execute(
+                f"""
+                UPDATE trades SET {participant}_coins = ?,
+                    initiator_confirmed = 0, invitee_confirmed = 0,
+                    updated_at = ?, expires_at = ?
+                WHERE trade_id = ?
+                """,
+                (
+                    normalized_amount,
+                    current_time,
+                    current_time + inactive_seconds,
+                    normalized_trade_id,
+                ),
+            )
+            snapshot = self._trade_snapshot_locked(
+                connection,
+                normalized_trade_id,
+            )
+            assert snapshot is not None
+            return snapshot
+
+    def add_trade_card(
+        self,
+        trade_id: str,
+        user_id: str | int,
+        player_id: int,
+        quantity: int = 1,
+        *,
+        now: int | None = None,
+        inactive_seconds: int = TRADE_INACTIVE_SECONDS,
+    ) -> Player:
+        normalized_trade_id = str(trade_id).strip()
+        normalized_user_id = self._validate_user_id(user_id)
+        normalized_quantity = self._validate_amount(quantity)
+        if isinstance(player_id, bool) or not isinstance(player_id, int) or player_id < 1:
+            raise InvalidAmount("Choose a valid card.")
+        current_time = int(time.time() if now is None else now)
+        if inactive_seconds <= 0:
+            raise InvalidAmount("The trade inactivity timeout must be positive.")
+        with self._transaction() as connection:
+            _, _ = self._ensure_active_trade_locked(
+                connection,
+                normalized_trade_id,
+                normalized_user_id,
+                current_time,
+            )
+            player_row = connection.execute(
+                "SELECT * FROM players WHERE id = ?",
+                (player_id,),
+            ).fetchone()
+            if player_row is None:
+                raise PlayerNotFound("That card is no longer in the catalog.")
+            owned = connection.execute(
+                """
+                SELECT quantity FROM inventory
+                WHERE user_id = ? AND player_id = ?
+                """,
+                (normalized_user_id, player_id),
+            ).fetchone()
+            owned_quantity = int(owned["quantity"]) if owned is not None else 0
+            offered = connection.execute(
+                """
+                SELECT quantity FROM trade_cards
+                WHERE trade_id = ? AND user_id = ? AND player_id = ?
+                """,
+                (normalized_trade_id, normalized_user_id, player_id),
+            ).fetchone()
+            offered_quantity = int(offered["quantity"]) if offered is not None else 0
+            if offered_quantity + normalized_quantity > owned_quantity:
+                raise InsufficientCards(
+                    f"You only own {owned_quantity:,} copy/copies of "
+                    f"{player_row['name']} and already offer {offered_quantity:,}."
+                )
+            if offered_quantity + normalized_quantity > SQLITE_INT_MAX:
+                raise InvalidAmount("That card quantity is too large.")
+            connection.execute(
+                """
+                INSERT INTO trade_cards(trade_id, user_id, player_id, quantity)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(trade_id, user_id, player_id)
+                DO UPDATE SET quantity = trade_cards.quantity + excluded.quantity
+                """,
+                (
+                    normalized_trade_id,
+                    normalized_user_id,
+                    player_id,
+                    normalized_quantity,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE trades
+                SET initiator_confirmed = 0, invitee_confirmed = 0,
+                    updated_at = ?, expires_at = ?
+                WHERE trade_id = ?
+                """,
+                (
+                    current_time,
+                    current_time + inactive_seconds,
+                    normalized_trade_id,
+                ),
+            )
+            return self._player_from_row(player_row)
+
+    def remove_trade_card(
+        self,
+        trade_id: str,
+        user_id: str | int,
+        player_id: int,
+        quantity: int = 1,
+        *,
+        now: int | None = None,
+        inactive_seconds: int = TRADE_INACTIVE_SECONDS,
+    ) -> dict[str, Any]:
+        normalized_trade_id = str(trade_id).strip()
+        normalized_user_id = self._validate_user_id(user_id)
+        normalized_quantity = self._validate_amount(quantity)
+        if isinstance(player_id, bool) or not isinstance(player_id, int) or player_id < 1:
+            raise InvalidAmount("Choose a valid card.")
+        current_time = int(time.time() if now is None else now)
+        if inactive_seconds <= 0:
+            raise InvalidAmount("The trade inactivity timeout must be positive.")
+        with self._transaction() as connection:
+            self._ensure_active_trade_locked(
+                connection,
+                normalized_trade_id,
+                normalized_user_id,
+                current_time,
+            )
+            offered = connection.execute(
+                """
+                SELECT quantity FROM trade_cards
+                WHERE trade_id = ? AND user_id = ? AND player_id = ?
+                """,
+                (normalized_trade_id, normalized_user_id, player_id),
+            ).fetchone()
+            if offered is None or int(offered["quantity"]) < normalized_quantity:
+                raise InsufficientCards("That card is not in your trade offer.")
+            remaining = int(offered["quantity"]) - normalized_quantity
+            if remaining:
+                connection.execute(
+                    """
+                    UPDATE trade_cards SET quantity = ?
+                    WHERE trade_id = ? AND user_id = ? AND player_id = ?
+                    """,
+                    (
+                        remaining,
+                        normalized_trade_id,
+                        normalized_user_id,
+                        player_id,
+                    ),
+                )
+            else:
+                connection.execute(
+                    """
+                    DELETE FROM trade_cards
+                    WHERE trade_id = ? AND user_id = ? AND player_id = ?
+                    """,
+                    (normalized_trade_id, normalized_user_id, player_id),
+                )
+            connection.execute(
+                """
+                UPDATE trades
+                SET initiator_confirmed = 0, invitee_confirmed = 0,
+                    updated_at = ?, expires_at = ?
+                WHERE trade_id = ?
+                """,
+                (
+                    current_time,
+                    current_time + inactive_seconds,
+                    normalized_trade_id,
+                ),
+            )
+            snapshot = self._trade_snapshot_locked(
+                connection,
+                normalized_trade_id,
+            )
+            assert snapshot is not None
+            return snapshot
+
+    def confirm_trade(
+        self,
+        trade_id: str,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+        inactive_seconds: int = TRADE_INACTIVE_SECONDS,
+    ) -> dict[str, Any]:
+        """Confirm the current offer and transfer all assets atomically once."""
+        normalized_trade_id = str(trade_id).strip()
+        normalized_user_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        if inactive_seconds <= 0:
+            raise InvalidAmount("The trade inactivity timeout must be positive.")
+        with self._transaction() as connection:
+            trade, participant = self._ensure_active_trade_locked(
+                connection,
+                normalized_trade_id,
+                normalized_user_id,
+                current_time,
+            )
+            connection.execute(
+                f"""
+                UPDATE trades SET {participant}_confirmed = 1,
+                    updated_at = ?, expires_at = ?
+                WHERE trade_id = ? AND status = 'ACTIVE'
+                """,
+                (
+                    current_time,
+                    current_time + inactive_seconds,
+                    normalized_trade_id,
+                ),
+            )
+            trade = connection.execute(
+                "SELECT * FROM trades WHERE trade_id = ?",
+                (normalized_trade_id,),
+            ).fetchone()
+            assert trade is not None
+            if not (
+                bool(trade["initiator_confirmed"])
+                and bool(trade["invitee_confirmed"])
+            ):
+                snapshot = self._trade_snapshot_locked(
+                    connection,
+                    normalized_trade_id,
+                )
+                assert snapshot is not None
+                return {"completed": False, "error": None, "trade": snapshot}
+
+            initiator_id = str(trade["initiator_id"])
+            invitee_id = str(trade["invitee_id"])
+            initiator_coins = int(trade["initiator_coins"])
+            invitee_coins = int(trade["invitee_coins"])
+            card_rows = connection.execute(
+                """
+                SELECT tc.user_id, tc.player_id, tc.quantity, p.name
+                FROM trade_cards AS tc
+                JOIN players AS p ON p.id = tc.player_id
+                WHERE tc.trade_id = ?
+                """,
+                (normalized_trade_id,),
+            ).fetchall()
+            if not card_rows and not initiator_coins and not invitee_coins:
+                connection.execute(
+                    """
+                    UPDATE trades SET initiator_confirmed = 0,
+                        invitee_confirmed = 0, updated_at = ?
+                    WHERE trade_id = ?
+                    """,
+                    (current_time, normalized_trade_id),
+                )
+                snapshot = self._trade_snapshot_locked(
+                    connection,
+                    normalized_trade_id,
+                )
+                assert snapshot is not None
+                return {
+                    "completed": False,
+                    "error": "empty_offer",
+                    "trade": snapshot,
+                }
+
+            user_ids = (initiator_id, invitee_id)
+            balances = {
+                str(row["user_id"]): int(row["balance"])
+                for row in connection.execute(
+                    "SELECT user_id, balance FROM users WHERE user_id IN (?, ?)",
+                    user_ids,
+                )
+            }
+            if (
+                balances.get(initiator_id, 0) < initiator_coins
+                or balances.get(invitee_id, 0) < invitee_coins
+            ):
+                connection.execute(
+                    """
+                    UPDATE trades SET initiator_confirmed = 0,
+                        invitee_confirmed = 0, updated_at = ?
+                    WHERE trade_id = ?
+                    """,
+                    (current_time, normalized_trade_id),
+                )
+                snapshot = self._trade_snapshot_locked(
+                    connection,
+                    normalized_trade_id,
+                )
+                assert snapshot is not None
+                return {
+                    "completed": False,
+                    "error": "insufficient_coins",
+                    "trade": snapshot,
+                }
+
+            card_balances: dict[tuple[str, int], int] = {}
+            for card in card_rows:
+                owner_id = str(card["user_id"])
+                player_id = int(card["player_id"])
+                owned = connection.execute(
+                    """
+                    SELECT quantity FROM inventory
+                    WHERE user_id = ? AND player_id = ?
+                    """,
+                    (owner_id, player_id),
+                ).fetchone()
+                owned_quantity = int(owned["quantity"]) if owned is not None else 0
+                card_balances[(owner_id, player_id)] = owned_quantity
+                if owned_quantity < int(card["quantity"]):
+                    connection.execute(
+                        """
+                        UPDATE trades SET initiator_confirmed = 0,
+                            invitee_confirmed = 0, updated_at = ?
+                        WHERE trade_id = ?
+                        """,
+                        (current_time, normalized_trade_id),
+                    )
+                    snapshot = self._trade_snapshot_locked(
+                        connection,
+                        normalized_trade_id,
+                    )
+                    assert snapshot is not None
+                    return {
+                        "completed": False,
+                        "error": "missing_cards",
+                        "trade": snapshot,
+                    }
+
+            outgoing: dict[tuple[str, int], int] = {}
+            incoming: dict[tuple[str, int], int] = {}
+            for card in card_rows:
+                owner_id = str(card["user_id"])
+                recipient_id = (
+                    invitee_id if owner_id == initiator_id else initiator_id
+                )
+                player_id = int(card["player_id"])
+                quantity = int(card["quantity"])
+                outgoing[(owner_id, player_id)] = quantity
+                incoming[(recipient_id, player_id)] = quantity
+
+            projected_cards = set(outgoing) | set(incoming)
+            final_card_balances: dict[tuple[str, int], int] = {}
+            for key in projected_cards:
+                current_quantity = card_balances.get(key)
+                if current_quantity is None:
+                    row = connection.execute(
+                        """
+                        SELECT quantity FROM inventory
+                        WHERE user_id = ? AND player_id = ?
+                        """,
+                        key,
+                    ).fetchone()
+                    current_quantity = int(row["quantity"]) if row else 0
+                final_quantity = (
+                    current_quantity
+                    - outgoing.get(key, 0)
+                    + incoming.get(key, 0)
+                )
+                if final_quantity < 0:
+                    connection.execute(
+                        """
+                        UPDATE trades SET initiator_confirmed = 0,
+                            invitee_confirmed = 0, updated_at = ?
+                        WHERE trade_id = ?
+                        """,
+                        (current_time, normalized_trade_id),
+                    )
+                    snapshot = self._trade_snapshot_locked(
+                        connection,
+                        normalized_trade_id,
+                    )
+                    assert snapshot is not None
+                    return {
+                        "completed": False,
+                        "error": "missing_cards",
+                        "trade": snapshot,
+                    }
+                if final_quantity > SQLITE_INT_MAX:
+                    connection.execute(
+                        """
+                        UPDATE trades SET initiator_confirmed = 0,
+                            invitee_confirmed = 0, updated_at = ?
+                        WHERE trade_id = ?
+                        """,
+                        (current_time, normalized_trade_id),
+                    )
+                    snapshot = self._trade_snapshot_locked(
+                        connection,
+                        normalized_trade_id,
+                    )
+                    assert snapshot is not None
+                    return {
+                        "completed": False,
+                        "error": "inventory_limit",
+                        "trade": snapshot,
+                    }
+                final_card_balances[key] = final_quantity
+
+            initiator_final = (
+                balances[initiator_id] - initiator_coins + invitee_coins
+            )
+            invitee_final = (
+                balances[invitee_id] - invitee_coins + initiator_coins
+            )
+            if max(initiator_final, invitee_final) > SQLITE_INT_MAX:
+                connection.execute(
+                    """
+                    UPDATE trades SET initiator_confirmed = 0,
+                        invitee_confirmed = 0, updated_at = ?
+                    WHERE trade_id = ?
+                    """,
+                    (current_time, normalized_trade_id),
+                )
+                snapshot = self._trade_snapshot_locked(
+                    connection,
+                    normalized_trade_id,
+                )
+                assert snapshot is not None
+                return {
+                    "completed": False,
+                    "error": "balance_limit",
+                    "trade": snapshot,
+                }
+
+            for user_id, balance in (
+                (initiator_id, initiator_final),
+                (invitee_id, invitee_final),
+            ):
+                connection.execute(
+                    "UPDATE users SET balance = ? WHERE user_id = ?",
+                    (balance, user_id),
+                )
+            for (owner_id, player_id), quantity in final_card_balances.items():
+                if quantity:
+                    connection.execute(
+                        """
+                        INSERT INTO inventory(user_id, player_id, quantity)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(user_id, player_id)
+                        DO UPDATE SET quantity = excluded.quantity
+                        """,
+                        (owner_id, player_id, quantity),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        DELETE FROM inventory
+                        WHERE user_id = ? AND player_id = ?
+                        """,
+                        (owner_id, player_id),
+                    )
+
+            details = {
+                "initiator_coins": initiator_coins,
+                "invitee_coins": invitee_coins,
+                "cards": [
+                    {
+                        "user_id": str(card["user_id"]),
+                        "player_id": int(card["player_id"]),
+                        "player_name": str(card["name"]),
+                        "quantity": int(card["quantity"]),
+                    }
+                    for card in card_rows
+                ],
+            }
+            connection.execute(
+                """
+                UPDATE trades
+                SET status = 'COMPLETED', completed_at = ?, updated_at = ?,
+                    completed_details_json = ?
+                WHERE trade_id = ? AND status = 'ACTIVE'
+                    AND initiator_confirmed = 1 AND invitee_confirmed = 1
+                """,
+                (
+                    current_time,
+                    current_time,
+                    json.dumps(details, separators=(",", ":")),
+                    normalized_trade_id,
+                ),
+            )
+            self._release_trade_users_locked(connection, normalized_trade_id)
+            snapshot = self._trade_snapshot_locked(
+                connection,
+                normalized_trade_id,
+            )
+            assert snapshot is not None
+            return {"completed": True, "error": None, "trade": snapshot}

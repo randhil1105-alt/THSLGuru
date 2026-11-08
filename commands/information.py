@@ -32,6 +32,7 @@ class InformationCommands(discord_commands.Cog):
                 "`/auction myauctions` · View your active and completed auctions\n"
                 "`/auction cancel` · Cancel an unbid auction you created\n"
                 "`/match opponent` · Challenge another player to a 45-second match\n"
+                "`/trade player` · Offer cards, coins, or both to another player\n"
                 "`/team` · View three starters, two substitutes, and team value\n"
                 "`/set position player` · Assign an owned card to a compatible slot\n"
                 "`/formation formation` · Choose Balanced, Offensive, or Defensive"

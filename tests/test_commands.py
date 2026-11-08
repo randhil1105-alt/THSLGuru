@@ -89,6 +89,7 @@ EXPECTED_COMMANDS = {
     "resetall",
     "minigame",
     "match",
+    "trade",
     "auction",
 }
 
@@ -239,6 +240,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "sellduplicates",
             "sellall",
             "profile",
+            "trade",
         ):
             with self.subTest(public_command=name):
                 self.assertIsNone(commands[name].default_permissions)
@@ -559,6 +561,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`/pack pack_type`", help_text)
         self.assertIn("`/packs quantity`", help_text)
         self.assertIn("`/match opponent`", help_text)
+        self.assertIn("`/trade player`", help_text)
         self.assertIn("`/claim` · Claim a GOLD player card every 30 minutes", help_text)
         self.assertNotIn("Claim 5,000 coins", help_text)
         self.assertNotIn("/goldpack", help_text)

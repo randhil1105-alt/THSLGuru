@@ -39,10 +39,50 @@ LOGGER = logging.getLogger("thsl_guru.minigame")
 MINIGAME_REWARD = 500_000
 MINIGAME_DURATION_SECONDS = 180
 
+SPECIAL_PLAYER_ALIASES = {
+    "chicken": frozenset({"Chicken", "chicken", "Chicken Calamari", "Calamari", "calamari"}),
+    "road": frozenset({"Road", "road"}),
+    "licha": frozenset({"Licha", "licha"}),
+    "cam": frozenset({"Cam", "can", "cameronvikes2"}),
+    "ebs": frozenset({"EBS", "ebs", "Ebs"}),
+}
+CARD_VERSION_SUFFIX = re.compile(
+    r"\s+\((?:gold|totw|s\d+\s+(?:toty|tots))\b[^)]*\)$",
+    re.IGNORECASE,
+)
+
 
 def _normalize_answer(value: str) -> str:
     """Compare names case-insensitively and collapse extra whitespace."""
     return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def _canonical_player_name(player_name: str) -> str:
+    """Remove only recognized card-edition suffixes from catalog card names."""
+    return CARD_VERSION_SUFFIX.sub("", str(player_name).strip()).strip()
+
+
+def accepted_player_answers(player_name: str) -> frozenset[str]:
+    """Return exact, normalized answers for a catalog player/card name."""
+    stored_name = str(player_name).strip()
+    canonical_name = _canonical_player_name(stored_name)
+    aliases = {
+        stored_name[:1].upper() + stored_name[1:],
+        stored_name[:1].lower() + stored_name[1:],
+        canonical_name[:1].upper() + canonical_name[1:],
+        canonical_name[:1].lower() + canonical_name[1:],
+    }
+    canonical_key = _normalize_answer(canonical_name)
+    for identity, identity_aliases in SPECIAL_PLAYER_ALIASES.items():
+        if canonical_key == identity:
+            aliases.update(identity_aliases)
+            break
+    return frozenset(_normalize_answer(alias) for alias in aliases if alias)
+
+
+def answer_matches_player(answer: str, player_name: str) -> bool:
+    """Match complete registered aliases, never arbitrary partial names."""
+    return _normalize_answer(answer) in accepted_player_answers(player_name)
 
 
 class IndividualMinigameView(discord.ui.View):
@@ -164,7 +204,7 @@ class IndividualMinigameView(discord.ui.View):
             else:
                 self.attempted_user_game_ids.add(attempt_key)
                 self.answer_button.disabled = True
-                if _normalize_answer(answer) != _normalize_answer(self.player.name):
+                if not answer_matches_player(answer, self.player.name):
                     try:
                         balance, xp_grant = self.database.complete_guess_who(
                             self.owner_id,

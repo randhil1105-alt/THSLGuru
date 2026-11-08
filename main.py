@@ -177,6 +177,7 @@ def create_bot(
             "claim",
             "minigame",
             "match",
+            "trade",
             "profile",
         }
         if isinstance(error, app_commands.MissingPermissions):

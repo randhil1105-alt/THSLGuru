@@ -18,6 +18,7 @@ COMMAND_MODULES = (
     "commands.profile",
     "commands.minigame",
     "commands.match",
+    "commands.trade",
 )
 
 if len(COMMAND_MODULES) != len(set(COMMAND_MODULES)):
