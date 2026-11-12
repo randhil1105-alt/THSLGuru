@@ -21,6 +21,7 @@ from database import (
     MAX_PACK_QUANTITY,
     S1_TOTS_PACK_COST,
     S1_TOTY_PACK_COST,
+    S1_FUTURE_STARS_PACK_COST,
     S2_TOTS_PACK_COST,
     TOTW_PACK_COST,
     Database,
@@ -41,8 +42,12 @@ PACKS = (
     ("S2 TOTS", S2_TOTS_PACK_COST),
     ("S1 TOTS", S1_TOTS_PACK_COST),
     ("S1 TOTY", S1_TOTY_PACK_COST),
+    ("S1 FUTURE STARS", S1_FUTURE_STARS_PACK_COST),
 )
-PACK_DISPLAY_NAMES = {"S1 TOTY": "S1 TOTY PACK"}
+PACK_DISPLAY_NAMES = {
+    "S1 TOTY": "S1 TOTY PACK",
+    "S1 FUTURE STARS": "S1 FUTURE STARS PACK",
+}
 
 
 class PackBuyButton(discord.ui.Button["PackPurchaseView"]):
@@ -488,7 +493,10 @@ class PackCommands(discord_commands.Cog):
         description="Choose and purchase a card pack.",
     )
     @app_commands.describe(
-        pack_type="Choose a GOLD, TOTW, S2 TOTS, S1 TOTS, or S1 TOTY pack"
+        pack_type=(
+            "Choose a GOLD, TOTW, S2 TOTS, S1 TOTS, S1 TOTY, "
+            "or S1 FUTURE STARS pack"
+        )
     )
     @app_commands.choices(
         pack_type=[
@@ -497,6 +505,10 @@ class PackCommands(discord_commands.Cog):
             app_commands.Choice(name="S2 TOTS Pack", value="S2 TOTS"),
             app_commands.Choice(name="S1 TOTS Pack", value="S1 TOTS"),
             app_commands.Choice(name="S1 TOTY PACK", value="S1 TOTY"),
+            app_commands.Choice(
+                name="S1 FUTURE STARS PACK",
+                value="S1 FUTURE STARS",
+            ),
         ]
     )
     async def pack(

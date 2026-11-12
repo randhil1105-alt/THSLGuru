@@ -24,6 +24,7 @@ RARITY_COLORS = {
     "S2 TOTS": discord.Color.blue(),
     "S1 TOTS": discord.Color.blue(),
     "S1 TOTY": discord.Color.blue(),
+    "S1 FUTURE STARS": discord.Color.blue(),
 }
 
 

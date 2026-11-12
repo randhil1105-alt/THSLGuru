@@ -935,5 +935,62 @@
     },
     "image_path": "cards/lauren_s1_toty_97.png",
     "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Ebs (TOTW 94)",
+    "overall": 94,
+    "position": "WI",
+    "country": "Ireland 🇮🇪",
+    "team": "Ottawa Senators",
+    "rarity": "TOTW",
+    "value": 12000000,
+    "stats": {
+      "SHO": 95,
+      "DRI": 92,
+      "SAV": 84,
+      "PAS": 92,
+      "DEF": 83,
+      "ACT": 91
+    },
+    "image_path": "cards/ebs_totw_94.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Dan (S1 FUTURE STARS 90)",
+    "overall": 90,
+    "position": "WI",
+    "country": "Italy 🇮🇹",
+    "team": "Colorado Avalanche",
+    "rarity": "S1 FUTURE STARS",
+    "value": 10000000,
+    "stats": {
+      "SHO": 90,
+      "DRI": 93,
+      "SAV": 80,
+      "PAS": 86,
+      "DEF": 84,
+      "ACT": 83
+    },
+    "image_path": "cards/dan_s1_future_stars_90.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Ryuko (S1 FUTURE STARS 91)",
+    "overall": 91,
+    "position": "WI",
+    "country": "United States 🇺🇸",
+    "team": "Colorado Avalanche",
+    "rarity": "S1 FUTURE STARS",
+    "value": 13000000,
+    "stats": {
+      "SHO": 92,
+      "DRI": 94,
+      "SAV": 81,
+      "PAS": 89,
+      "DEF": 84,
+      "ACT": 87
+    },
+    "image_path": "cards/ryuko_s1_future_stars_91.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
   }
 ]

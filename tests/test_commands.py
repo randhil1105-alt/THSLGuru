@@ -295,7 +295,14 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(
             [choice.value for choice in pack_parameters["pack_type"].choices],
-            ["GOLD", "TOTW", "S2 TOTS", "S1 TOTS", "S1 TOTY"],
+            [
+                "GOLD",
+                "TOTW",
+                "S2 TOTS",
+                "S1 TOTS",
+                "S1 TOTY",
+                "S1 FUTURE STARS",
+            ],
         )
 
     async def test_resetall_denies_non_admin_and_cancel_preserves_progress(self) -> None:
@@ -2446,6 +2453,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "Jaycob (TOTW 91)": "Jaycob",
                     "Dark (TOTW 88)": "Dark",
                     "XavierCapone9 (TOTW 93)": "XavierCapone9",
+                    "Ebs (TOTW 94)": "Ebs",
+                    "Dan (S1 FUTURE STARS 90)": "Dan",
+                    "Ryuko (S1 FUTURE STARS 91)": "Ryuko",
             "Ebs (S1 TOTY 98)": "Ebs",
             "Hala (S1 TOTY 99)": "Hala",
             "Cam (S1 TOTY 97)": "Cam",
@@ -3409,6 +3419,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "S2 TOTS · 50,000,000 coins",
                 "S1 TOTS · 35,000,000 coins",
                 "S1 TOTY PACK · 60,000,000 coins",
+                "S1 FUTURE STARS PACK · 30,000,000 coins",
             },
         )
         self.assertIn(
@@ -3457,6 +3468,17 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Lauren (S1 TOTY 97)",
         ):
             self.assertIn(f"{name} 16.67%", s1_toty_field)
+        future_stars_field = field_values[
+            "S1 FUTURE STARS PACK · 30,000,000 coins"
+        ]
+        self.assertIn(
+            "Contains one random S1 FUTURE STARS player card.",
+            future_stars_field,
+        )
+        self.assertIn("Rarity: S1 FUTURE STARS.", future_stars_field)
+        self.assertIn("Price: 30,000,000 coins.", future_stars_field)
+        self.assertIn("Dan (S1 FUTURE STARS 90) 50.00%", future_stars_field)
+        self.assertIn("Ryuko (S1 FUTURE STARS 91) 50.00%", future_stars_field)
         self.assert_pack_menu_shows_odds(menu["embed"])
 
         view = menu["view"]
@@ -3513,6 +3535,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             ("TOTW", TOTW_PACK_COST, "Contains one random TOTW player card."),
             ("S2 TOTS", S2_TOTS_PACK_COST, "Contains one random S2 TOTS player card."),
             ("S1 TOTS", S1_TOTS_PACK_COST, "Contains one random S1 TOTS player card."),
+            (
+                "S1 FUTURE STARS",
+                30_000_000,
+                "Contains one random S1 FUTURE STARS player card.",
+            ),
         )
         for index, (rarity, cost, offer) in enumerate(pack_cases):
             with self.subTest(rarity=rarity):
@@ -3525,13 +3552,25 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                         user=SimpleNamespace(id=user_id),
                         response=command_response,
                     ),
-                    discord.app_commands.Choice(name=f"{rarity} Pack", value=rarity),
+                    discord.app_commands.Choice(
+                        name=(
+                            "S1 FUTURE STARS PACK"
+                            if rarity == "S1 FUTURE STARS"
+                            else f"{rarity} Pack"
+                        ),
+                        value=rarity,
+                    ),
                 )
 
                 menu = command_response.messages[0]
                 self.assertFalse(menu["ephemeral"])
                 fields = {field.name: field.value for field in menu["embed"].fields}
-                pack_field = f"{rarity} · {cost:,} coins"
+                pack_name = (
+                    "S1 FUTURE STARS PACK"
+                    if rarity == "S1 FUTURE STARS"
+                    else rarity
+                )
+                pack_field = f"{pack_name} · {cost:,} coins"
                 self.assertEqual(set(fields), {pack_field})
                 self.assertIn(offer, fields[pack_field])
                 self.assertIn(f"Price: {cost:,} coins.", fields[pack_field])
@@ -3550,8 +3589,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                         message=FakeMessage(),
                     )
                 )
+                expected_purchase_label = (
+                    "**S1 FUTURE STARS PACK**"
+                    if rarity == "S1 FUTURE STARS"
+                    else f"**{rarity} pack**"
+                )
                 self.assertIn(
-                    f"opened a **{rarity} pack**",
+                    f"opened a {expected_purchase_label}",
                     purchase_response.messages[0]["content"],
                 )
                 self.assertFalse(purchase_response.messages[0]["ephemeral"])

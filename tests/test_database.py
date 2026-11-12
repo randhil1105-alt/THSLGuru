@@ -14,6 +14,7 @@ from database import (
     FORMATION_STARTERS,
     GOLD_PACK_COST,
     LINEUP_POSITIONS,
+    S1_FUTURE_STARS_PACK_COST,
     S1_TOTS_PACK_COST,
     S1_TOTY_PACK_COST,
     S2_TOTS_PACK_COST,
@@ -1130,7 +1131,7 @@ class DatabaseTests(unittest.TestCase):
 
         totw_cards = self.database.get_players(rarity="TOTW")
         totw_odds = calculate_pack_odds(totw_cards)
-        self.assertEqual(len(totw_cards), 5)
+        self.assertEqual(len(totw_cards), 6)
         self.assertEqual(
             {card.name for card in totw_cards},
             {
@@ -1139,6 +1140,7 @@ class DatabaseTests(unittest.TestCase):
                 "Jaycob (TOTW 91)",
                 "Dark (TOTW 88)",
                 "XavierCapone9 (TOTW 93)",
+                "Ebs (TOTW 94)",
             },
         )
         self.assertAlmostEqual(sum(totw_odds.values()), 100.0)
@@ -1735,6 +1737,7 @@ class DatabaseTests(unittest.TestCase):
                 "WHERE type = 'table' AND name = 'pack_purchases'"
             ).fetchone()[0]
             self.assertIn("'S1 TOTS'", table_sql)
+            self.assertIn("'S1 FUTURE STARS'", table_sql)
             receipt_count = connection.execute(
                 "SELECT COUNT(*) FROM pack_purchases"
             ).fetchone()[0]
@@ -1763,6 +1766,24 @@ class DatabaseTests(unittest.TestCase):
         )
         self.assertEqual(s1_awarded.rarity, "S1 TOTS")
         self.assertEqual(s1_balance, 3)
+
+        self.database.set_balance(user_id, S1_FUTURE_STARS_PACK_COST + 5)
+        future_stars_awarded, future_stars_balance = self.database.open_pack(
+            user_id,
+            "S1 FUTURE STARS",
+            S1_FUTURE_STARS_PACK_COST,
+            rng=random.Random(31),
+            purchase_id="new-s1-future-stars-receipt",
+        )
+        self.assertIn(
+            future_stars_awarded.name,
+            {
+                "Dan (S1 FUTURE STARS 90)",
+                "Ryuko (S1 FUTURE STARS 91)",
+            },
+        )
+        self.assertEqual(future_stars_awarded.rarity, "S1 FUTURE STARS")
+        self.assertEqual(future_stars_balance, 5)
 
     def test_replayed_pack_purchase_id_does_not_charge_or_award_twice(self) -> None:
         self.database.set_balance("replay-user", GOLD_PACK_COST + 100)

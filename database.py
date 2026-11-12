@@ -30,12 +30,14 @@ TOTW_PACK_COST = 20_000_000
 S2_TOTS_PACK_COST = 50_000_000
 S1_TOTS_PACK_COST = 35_000_000
 S1_TOTY_PACK_COST = 60_000_000
+S1_FUTURE_STARS_PACK_COST = 30_000_000
 PACK_COST_BY_RARITY = {
     "GOLD": GOLD_PACK_COST,
     "TOTW": TOTW_PACK_COST,
     "S2 TOTS": S2_TOTS_PACK_COST,
     "S1 TOTS": S1_TOTS_PACK_COST,
     "S1 TOTY": S1_TOTY_PACK_COST,
+    "S1 FUTURE STARS": S1_FUTURE_STARS_PACK_COST,
 }
 MAX_PACK_QUANTITY = 10
 LEVEL_REWARD_PACK_RARITIES = ("GOLD", "TOTW")
@@ -456,6 +458,8 @@ def format_card_type(rarity: str) -> str:
         return "S1 TOTS"
     if normalized == "S1 TOTY":
         return "S1 TOTY"
+    if normalized == "S1 FUTURE STARS":
+        return "S1 FUTURE STARS"
     return raw_type.title()
 
 
@@ -586,7 +590,10 @@ class Database:
                     user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
                     player_id INTEGER NOT NULL REFERENCES players(id),
                     rarity TEXT NOT NULL CHECK (
-                        rarity IN ('GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS', 'S1 TOTY')
+                        rarity IN (
+                            'GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS', 'S1 TOTY',
+                            'S1 FUTURE STARS'
+                        )
                     ),
                     cost INTEGER NOT NULL CHECK (cost > 0),
                     balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
@@ -873,6 +880,7 @@ class Database:
                 "S2 TOTS",
                 "S1 TOTS",
                 "S1 TOTY",
+                "S1 FUTURE STARS",
             )
             if all(
                 f"'{rarity.casefold()}'" in table_sql
@@ -887,7 +895,10 @@ class Database:
                     user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
                     player_id INTEGER NOT NULL REFERENCES players(id),
                     rarity TEXT NOT NULL CHECK (
-                        rarity IN ('GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS', 'S1 TOTY')
+                        rarity IN (
+                            'GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS', 'S1 TOTY',
+                            'S1 FUTURE STARS'
+                        )
                     ),
                     cost INTEGER NOT NULL CHECK (cost > 0),
                     balance_after INTEGER NOT NULL CHECK (balance_after >= 0),

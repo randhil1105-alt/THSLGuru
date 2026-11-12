@@ -361,6 +361,7 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(PACKS[:4], existing_packs)
         self.assertEqual(PACKS[4], ("S1 TOTY", S1_TOTY_PACK_COST))
+        self.assertEqual(PACKS[5], ("S1 FUTURE STARS", 30_000_000))
         self.assertEqual(len({rarity for rarity, _ in PACKS}), len(PACKS))
 
         user_id = "s1-toty-command-pack"
