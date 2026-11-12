@@ -219,7 +219,7 @@ class DatabaseTests(unittest.TestCase):
                 now=9_000,
             )
 
-        self.assertEqual(self.database.get_balance(user_id), 321)
+        self.assertEqual(self.database.get_balance(user_id), 3_000_321)
         self.assertEqual(len(self.database.get_inventory(user_id)), 1)
         self.assertEqual(self.database.get_xp_profile(user_id).total_xp, 500)
         with self.database._read_connection() as connection:

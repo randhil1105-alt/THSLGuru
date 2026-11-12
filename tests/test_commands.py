@@ -91,6 +91,8 @@ EXPECTED_COMMANDS = {
     "match",
     "trade",
     "auction",
+    "daily",
+    "quests",
 }
 
 
@@ -408,7 +410,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         gold_user = "free-gold-packs"
         self.database.award_xp(gold_user, "gold-pack-levels", 1_200, "test")
         self.assertEqual(self.database.get_free_pack_inventory(gold_user)["GOLD"], 2)
-        self.assertEqual(self.database.get_balance(gold_user), 0)
+        self.assertEqual(self.database.get_balance(gold_user), 6_000_000)
 
         gold_menu_response = FakeResponse()
         await PackCommands.pack.callback(
@@ -437,7 +439,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await gold_button.callback(first_open)
         first_result = first_open.response.messages[0]
         self.assertIn("FREE Gold Pack", first_result["content"])
-        self.assertEqual(self.database.get_balance(gold_user), 0)
+        self.assertEqual(self.database.get_balance(gold_user), 6_000_000)
         self.assertEqual(self.database.get_free_pack_inventory(gold_user)["GOLD"], 1)
         self.assertEqual(
             sum(entry.quantity for entry in self.database.get_inventory(gold_user)),
@@ -470,7 +472,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         totw_user = "free-totw-packs"
         self.database.award_xp(totw_user, "totw-pack-levels", 11_700, "test")
         self.assertEqual(self.database.get_free_pack_inventory(totw_user)["TOTW"], 1)
-        self.assertEqual(self.database.get_balance(totw_user), 0)
+        self.assertEqual(self.database.get_balance(totw_user), 27_000_000)
         totw_menu_response = FakeResponse()
         await PackCommands.pack.callback(
             cog,
@@ -493,7 +495,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         await totw_button.callback(totw_open)
         self.assertIn("FREE TOTW Pack", totw_open.response.messages[0]["content"])
-        self.assertEqual(self.database.get_balance(totw_user), 0)
+        self.assertEqual(self.database.get_balance(totw_user), 27_000_000)
         self.assertEqual(self.database.get_free_pack_inventory(totw_user)["TOTW"], 0)
         self.assertEqual(
             sum(entry.quantity for entry in self.database.get_inventory(totw_user)),

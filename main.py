@@ -108,7 +108,13 @@ class GuruBot(discord_commands.Bot):
                     for command in global_commands
                     if command.default_member_permissions is None
                 }
-                for command_name in ("auction", "claim", "minigame"):
+                for command_name in (
+                    "auction",
+                    "claim",
+                    "minigame",
+                    "daily",
+                    "quests",
+                ):
                     if command_name in public_command_names:
                         LOGGER.info(
                             "Verified /%s has no default member permission restriction.",
@@ -179,6 +185,8 @@ def create_bot(
             "match",
             "trade",
             "profile",
+            "daily",
+            "quests",
         }
         if isinstance(error, app_commands.MissingPermissions):
             message = "You need administrator permission to use that command."

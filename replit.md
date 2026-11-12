@@ -44,10 +44,11 @@ existing pnpm API and component-preview artifacts.
 
 ## Product
 
-Players collect and trade hockey cards, manage balances, open packs, and set a
-three-player starting lineup plus two substitutes. Administrators manage the
-catalog and player economies. `/team` renders assigned card artwork on a hockey
-rink image.
+Players collect and trade hockey cards, manage balances, open packs, earn
+3,000,000 coins per level, claim a daily TOTW pack and coin reward, and complete
+personal daily quests. They set a three-player starting lineup plus two
+substitutes. Administrators manage the catalog and player economies. `/team`
+renders assigned card artwork on a hockey rink image.
 
 ## Gotchas
 

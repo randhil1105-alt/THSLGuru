@@ -11,6 +11,8 @@ persistent SQLite database.
 | `/card player` | Choose a catalog card using autocomplete and view its full image |
 | `/cards` | Browse the full player card catalog |
 | `/claim` | Claim a weighted GOLD player card once every 30 minutes |
+| `/daily` | Claim 5,000,000 coins and one free TOTW pack once every 24 hours |
+| `/quests` | View three daily quests and claim completed rewards |
 | `/minigame mode` | Choose Guess Who or Draft |
 | `/auction sell` | List one owned card for 30 minutes, 1 hour, 6 hours, or 24 hours |
 | `/auction browse` | Browse and bid on other players' active auctions |
@@ -34,6 +36,12 @@ persistent SQLite database.
 
 `/packs`, `/pack`, `/inventory`, and `/balance` post their responses publicly
 in the channel.
+
+Each level gained awards 3,000,000 coins, including every level in a multi-level
+XP jump. Existing free level-up packs remain in place. Daily quests are selected
+randomly per player, reset at midnight UTC, and track completed matches,
+minigames, pack openings, and trades from their existing successful transactions.
+Quest rewards expire with that day's quest set.
 
 Administrator-only commands:
 
@@ -104,6 +112,8 @@ cannot charge twice. Lineups, formations, and pack receipts use additive
 `CREATE TABLE IF NOT EXISTS` migrations; existing player, balance, inventory,
 and legacy lineup rows are not reset. The new starter and formation tables are
 populated from compatible legacy assignments while preserving original records.
+Progression migrations add level-reward receipts, daily reward claims, daily
+quest sets, and quest-event receipts without replacing the SQLite database.
 
 ## Lineups and formations
 

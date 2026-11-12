@@ -388,7 +388,7 @@ class XPDatabaseTests(unittest.TestCase):
         self.assertEqual(player.id, replayed.id)
         self.assertEqual((remaining, replayed_remaining), (0, 0))
         self.assertEqual(player.rarity, "GOLD")
-        self.assertEqual(reopened.get_balance(user_id), 777)
+        self.assertEqual(reopened.get_balance(user_id), 3_000_777)
         self.assertEqual(reopened.get_free_pack_inventory(user_id), {"GOLD": 0, "TOTW": 0})
         self.assertEqual(
             [(entry.player.name, entry.quantity) for entry in reopened.get_inventory(user_id)],

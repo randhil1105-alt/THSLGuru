@@ -7,7 +7,11 @@ import logging
 import discord
 
 from database import XPGrant
-from xp_system import NORMAL_COMMAND_XP, level_up_pack_rewards
+from xp_system import (
+    LEVEL_UP_COIN_REWARD,
+    NORMAL_COMMAND_XP,
+    level_up_pack_rewards,
+)
 
 COMMAND_XP_MARKER = "thsl_successful_command_xp"
 LOGGER = logging.getLogger("thsl_guru.xp")
@@ -33,6 +37,9 @@ def xp_notification_text(
     else:
         message = f"⭐ +{grant.amount} XP | Command used!"
     if grant.leveled_up and include_level_up:
+        coin_reward = (
+            LEVEL_UP_COIN_REWARD * (grant.level_after - grant.level_before)
+        )
         gold_packs, totw_packs = level_up_pack_rewards(
             grant.level_before,
             grant.level_after,
@@ -42,7 +49,8 @@ def xp_notification_text(
             rewards.append(_pack_reward_line(totw_packs, "TOTW"))
         message += (
             f"\n🎉 LEVEL UP! You are now Level {grant.level_after}."
-            f"\n🎁 Rewards:\n" + "\n".join(f"- {reward}" for reward in rewards)
+            f"\n💰 Reward: {coin_reward:,} coins"
+            f"\n🎁 Free packs:\n" + "\n".join(f"- {reward}" for reward in rewards)
         )
     return message
 
@@ -91,6 +99,12 @@ def xp_level_up_embed(
     embed.add_field(
         name="🎁 Rewards",
         value="\n".join(f"- {reward}" for reward in rewards),
+        inline=False,
+    )
+    coin_reward = LEVEL_UP_COIN_REWARD * (grant.level_after - grant.level_before)
+    embed.add_field(
+        name="💰 Coins",
+        value=f"{coin_reward:,} coins",
         inline=False,
     )
     return embed

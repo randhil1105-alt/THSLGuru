@@ -6,6 +6,7 @@ import json
 import random
 import sqlite3
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -14,12 +15,14 @@ from typing import Any, Iterator, Mapping, Sequence
 from xp_system import (
     MATCH_DEFEAT_XP,
     MATCH_VICTORY_XP,
+    LEVEL_UP_COIN_REWARD,
     MINIGAME_COMPLETION_XP,
     XPGrant,
     XPProgress,
     calculate_xp_progress,
     level_up_pack_rewards,
 )
+from quest_system import DAILY_QUEST_POOL, QUESTS_PER_DAY, utc_day
 
 CLAIM_COOLDOWN_SECONDS = 30 * 60
 GOLD_PACK_COST = 5_000_000
@@ -40,6 +43,9 @@ MATCH_REWARD = 5_000_000
 MATCH_INVITATION_SECONDS = 60
 DRAFT_COOLDOWN_SECONDS = 10 * 60
 DRAFT_WIN_REWARD = 200_000
+DAILY_REWARD_COINS = 5_000_000
+DAILY_REWARD_TOTW_PACKS = 1
+DAILY_REWARD_COOLDOWN_SECONDS = 24 * 60 * 60
 TRADE_REQUEST_SECONDS = 2 * 60
 TRADE_INACTIVE_SECONDS = 30 * 60
 AUCTION_DURATIONS_SECONDS = (30 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60)
@@ -129,6 +135,26 @@ class CooldownActive(EconomyError):
     def __init__(self, remaining_seconds: int) -> None:
         self.remaining_seconds = max(0, int(remaining_seconds))
         super().__init__(self.remaining_seconds)
+
+
+class DailyCooldownActive(CooldownActive):
+    """A player has not reached their next 24-hour daily reward window."""
+
+
+class DailyQuestError(EconomyError):
+    """Base error for daily quest operations."""
+
+
+class DailyQuestNotFound(DailyQuestError):
+    pass
+
+
+class DailyQuestNotComplete(DailyQuestError):
+    pass
+
+
+class DailyQuestAlreadyClaimed(DailyQuestError):
+    pass
 
 
 class NoEligibleCards(EconomyError):
@@ -821,6 +847,7 @@ class Database:
 
         self.ensure_pack_purchase_schema()
         self.ensure_xp_schema()
+        self.ensure_progression_schema()
         self._migrate_s2_tots_catalog(seed_players)
         for player in seed_players:
             try:
@@ -1008,6 +1035,19 @@ class Database:
             )
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS level_up_coin_rewards (
+                    event_id TEXT PRIMARY KEY
+                        REFERENCES xp_transactions(event_id) ON DELETE CASCADE,
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    levels_gained INTEGER NOT NULL CHECK (levels_gained > 0),
+                    amount INTEGER NOT NULL CHECK (amount > 0),
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS free_pack_redemptions (
                     interaction_id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL
@@ -1016,6 +1056,72 @@ class Database:
                     player_id INTEGER NOT NULL REFERENCES players(id),
                     created_at INTEGER NOT NULL
                 )
+                """
+            )
+
+    def ensure_progression_schema(self) -> None:
+        """Create daily reward and quest tables without modifying existing data."""
+        with self._transaction() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS daily_reward_claims (
+                    claim_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    claimed_at INTEGER NOT NULL,
+                    coins_awarded INTEGER NOT NULL CHECK (coins_awarded > 0),
+                    totw_packs_awarded INTEGER NOT NULL
+                        CHECK (totw_packs_awarded > 0)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_daily_reward_claims_user_time
+                    ON daily_reward_claims(user_id, claimed_at DESC)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS daily_quests (
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    day_utc TEXT NOT NULL,
+                    quest_key TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    metric TEXT NOT NULL,
+                    target INTEGER NOT NULL CHECK (target > 0),
+                    progress INTEGER NOT NULL DEFAULT 0 CHECK (progress >= 0),
+                    reward INTEGER NOT NULL CHECK (reward > 0),
+                    completed_at INTEGER,
+                    claimed_at INTEGER,
+                    PRIMARY KEY (user_id, day_utc, quest_key)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_daily_quests_user_day
+                    ON daily_quests(user_id, day_utc)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS quest_event_receipts (
+                    event_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    metric TEXT NOT NULL,
+                    amount INTEGER NOT NULL CHECK (amount > 0),
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_quest_event_receipts_user_time
+                    ON quest_event_receipts(user_id, created_at DESC)
                 """
             )
 
@@ -1360,6 +1466,44 @@ class Database:
             )
 
     @staticmethod
+    def _grant_level_up_coins_locked(
+        connection: sqlite3.Connection,
+        *,
+        user_id: str,
+        event_id: str,
+        level_before: int,
+        level_after: int,
+        now: int,
+    ) -> None:
+        levels_gained = int(level_after) - int(level_before)
+        if levels_gained <= 0:
+            return
+        amount = levels_gained * LEVEL_UP_COIN_REWARD
+        if amount > SQLITE_INT_MAX:
+            raise InvalidAmount("The level-up coin reward exceeds the supported maximum.")
+        balance_row = connection.execute(
+            "SELECT balance FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        current_balance = int(balance_row["balance"]) if balance_row else 0
+        if current_balance + amount > SQLITE_INT_MAX:
+            raise InvalidAmount("Your balance cannot accept the level-up reward.")
+        receipt = connection.execute(
+            """
+            INSERT OR IGNORE INTO level_up_coin_rewards
+                (event_id, user_id, levels_gained, amount, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (event_id, user_id, levels_gained, amount, now),
+        )
+        if receipt.rowcount != 1:
+            return
+        connection.execute(
+            "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+            (amount, user_id),
+        )
+
+    @staticmethod
     def _award_xp_locked(
         connection: sqlite3.Connection,
         *,
@@ -1439,6 +1583,14 @@ class Database:
             level_after=new_level,
             now=now,
         )
+        Database._grant_level_up_coins_locked(
+            connection,
+            user_id=user_id,
+            event_id=event_id,
+            level_before=previous_level,
+            level_after=new_level,
+            now=now,
+        )
         return XPGrant(
             event_id=event_id,
             user_id=user_id,
@@ -1449,6 +1601,313 @@ class Database:
             level_after=new_level,
             is_new=True,
         )
+
+    @staticmethod
+    def _ensure_daily_quest_set_locked(
+        connection: sqlite3.Connection,
+        *,
+        user_id: str,
+        day: str,
+        rng: Any | None = None,
+    ) -> None:
+        existing = connection.execute(
+            "SELECT 1 FROM daily_quests WHERE user_id = ? AND day_utc = ? LIMIT 1",
+            (user_id, day),
+        ).fetchone()
+        if existing is not None:
+            return
+        Database._ensure_user(connection, user_id)
+        chooser = rng if rng is not None else random.SystemRandom()
+        if len(DAILY_QUEST_POOL) < QUESTS_PER_DAY:
+            raise RuntimeError("The daily quest pool is smaller than the daily set.")
+        for quest in chooser.sample(DAILY_QUEST_POOL, k=QUESTS_PER_DAY):
+            connection.execute(
+                """
+                INSERT INTO daily_quests
+                    (user_id, day_utc, quest_key, category, description,
+                     metric, target, progress, reward)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    user_id,
+                    day,
+                    quest.key,
+                    quest.category,
+                    quest.description,
+                    quest.metric,
+                    quest.target,
+                    quest.reward,
+                ),
+            )
+
+    @staticmethod
+    def _record_quest_event_locked(
+        connection: sqlite3.Connection,
+        *,
+        user_id: str,
+        event_id: str,
+        metric: str,
+        amount: int,
+        now: int,
+    ) -> bool:
+        if amount <= 0:
+            return False
+        Database._ensure_user(connection, user_id)
+        inserted = connection.execute(
+            """
+            INSERT OR IGNORE INTO quest_event_receipts
+                (event_id, user_id, metric, amount, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (event_id, user_id, metric, amount, now),
+        )
+        if inserted.rowcount != 1:
+            return False
+        day = utc_day(now)
+        Database._ensure_daily_quest_set_locked(
+            connection,
+            user_id=user_id,
+            day=day,
+        )
+        connection.execute(
+            """
+            UPDATE daily_quests
+            SET progress = MIN(target, progress + ?),
+                completed_at = CASE
+                    WHEN completed_at IS NULL AND progress + ? >= target THEN ?
+                    ELSE completed_at
+                END
+            WHERE user_id = ? AND day_utc = ? AND metric = ?
+            """,
+            (amount, amount, now, user_id, day, metric),
+        )
+        return True
+
+    @staticmethod
+    def _daily_quest_dict(row: sqlite3.Row) -> dict[str, Any]:
+        progress = int(row["progress"])
+        target = int(row["target"])
+        return {
+            "user_id": str(row["user_id"]),
+            "day_utc": str(row["day_utc"]),
+            "quest_key": str(row["quest_key"]),
+            "category": str(row["category"]),
+            "description": str(row["description"]),
+            "metric": str(row["metric"]),
+            "target": target,
+            "progress": progress,
+            "reward": int(row["reward"]),
+            "completed_at": (
+                int(row["completed_at"]) if row["completed_at"] is not None else None
+            ),
+            "claimed_at": (
+                int(row["claimed_at"]) if row["claimed_at"] is not None else None
+            ),
+            "completed": progress >= target,
+            "claimed": row["claimed_at"] is not None,
+        }
+
+    def get_daily_quests(
+        self,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+        rng: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the player's persistent, UTC-day quest set, creating it once."""
+        normalized_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        day = utc_day(current_time)
+        with self._transaction() as connection:
+            self._ensure_daily_quest_set_locked(
+                connection,
+                user_id=normalized_id,
+                day=day,
+                rng=rng,
+            )
+            rows = connection.execute(
+                """
+                SELECT * FROM daily_quests
+                WHERE user_id = ? AND day_utc = ?
+                ORDER BY quest_key
+                """,
+                (normalized_id, day),
+            ).fetchall()
+        return [self._daily_quest_dict(row) for row in rows]
+
+    def claim_daily_quest(
+        self,
+        user_id: str | int,
+        quest_key: str,
+        *,
+        now: int | None = None,
+    ) -> dict[str, Any]:
+        """Claim one completed quest for today and credit its coins atomically."""
+        normalized_id = self._validate_user_id(user_id)
+        normalized_key = str(quest_key).strip()
+        current_time = int(time.time() if now is None else now)
+        day = utc_day(current_time)
+        if not normalized_key or len(normalized_key) > 80:
+            raise DailyQuestNotFound("That daily quest could not be found.")
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM daily_quests
+                WHERE user_id = ? AND day_utc = ? AND quest_key = ?
+                """,
+                (normalized_id, day, normalized_key),
+            ).fetchone()
+            if row is None:
+                raise DailyQuestNotFound(
+                    "That quest is not part of your current daily set."
+                )
+            quest = self._daily_quest_dict(row)
+            if quest["claimed"]:
+                raise DailyQuestAlreadyClaimed(
+                    "You have already claimed this quest reward."
+                )
+            if not quest["completed"]:
+                raise DailyQuestNotComplete(
+                    "Complete this quest before claiming its reward."
+                )
+            self._ensure_user(connection, normalized_id)
+            balance_row = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            balance = int(balance_row["balance"]) if balance_row else 0
+            reward = int(quest["reward"])
+            if balance + reward > SQLITE_INT_MAX:
+                raise InvalidAmount("Your balance cannot accept this quest reward.")
+            connection.execute(
+                """
+                UPDATE users SET balance = balance + ? WHERE user_id = ?
+                """,
+                (reward, normalized_id),
+            )
+            updated = connection.execute(
+                """
+                UPDATE daily_quests SET claimed_at = ?
+                WHERE user_id = ? AND day_utc = ? AND quest_key = ?
+                    AND claimed_at IS NULL AND progress >= target
+                """,
+                (current_time, normalized_id, day, normalized_key),
+            )
+            if updated.rowcount != 1:
+                raise DailyQuestAlreadyClaimed(
+                    "You have already claimed this quest reward."
+                )
+            return {
+                "quest": quest,
+                "balance": balance + reward,
+                "reward": reward,
+                "claimed_at": current_time,
+            }
+
+    def claim_daily_reward(
+        self,
+        user_id: str | int,
+        claim_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> dict[str, Any]:
+        """Award the daily coins and one TOTW pack as a single-use transaction."""
+        normalized_id = self._validate_user_id(user_id)
+        normalized_claim_id = str(claim_id).strip()
+        if not normalized_claim_id or len(normalized_claim_id) > 128:
+            raise InvalidAmount("A valid daily reward claim ID is required.")
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            previous = connection.execute(
+                """
+                SELECT user_id, claimed_at, coins_awarded, totw_packs_awarded
+                FROM daily_reward_claims WHERE claim_id = ?
+                """,
+                (normalized_claim_id,),
+            ).fetchone()
+            self._ensure_user(connection, normalized_id)
+            balance_row = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            balance = int(balance_row["balance"]) if balance_row else 0
+            if previous is not None:
+                if str(previous["user_id"]) != normalized_id:
+                    raise InvalidAmount("That daily reward claim ID has already been used.")
+                return {
+                    "awarded": False,
+                    "duplicate": True,
+                    "balance": balance,
+                    "coins": int(previous["coins_awarded"]),
+                    "totw_packs": int(previous["totw_packs_awarded"]),
+                    "claimed_at": int(previous["claimed_at"]),
+                }
+
+            last_claim = connection.execute(
+                """
+                SELECT claimed_at FROM daily_reward_claims
+                WHERE user_id = ? ORDER BY claimed_at DESC LIMIT 1
+                """,
+                (normalized_id,),
+            ).fetchone()
+            if last_claim is not None:
+                available_at = (
+                    int(last_claim["claimed_at"]) + DAILY_REWARD_COOLDOWN_SECONDS
+                )
+                if current_time < available_at:
+                    raise DailyCooldownActive(available_at - current_time)
+
+            if balance + DAILY_REWARD_COINS > SQLITE_INT_MAX:
+                raise InvalidAmount("Your balance cannot accept the daily reward.")
+            free_pack_row = connection.execute(
+                """
+                SELECT quantity FROM free_pack_inventory
+                WHERE user_id = ? AND rarity = 'TOTW'
+                """,
+                (normalized_id,),
+            ).fetchone()
+            current_packs = (
+                int(free_pack_row["quantity"]) if free_pack_row is not None else 0
+            )
+            if current_packs + DAILY_REWARD_TOTW_PACKS > SQLITE_INT_MAX:
+                raise InvalidAmount("Your free TOTW pack inventory is full.")
+
+            connection.execute(
+                """
+                INSERT INTO daily_reward_claims
+                    (claim_id, user_id, claimed_at, coins_awarded,
+                     totw_packs_awarded)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_claim_id,
+                    normalized_id,
+                    current_time,
+                    DAILY_REWARD_COINS,
+                    DAILY_REWARD_TOTW_PACKS,
+                ),
+            )
+            connection.execute(
+                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                (DAILY_REWARD_COINS, normalized_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO free_pack_inventory(user_id, rarity, quantity)
+                VALUES (?, 'TOTW', ?)
+                ON CONFLICT(user_id, rarity)
+                DO UPDATE SET quantity = free_pack_inventory.quantity + excluded.quantity
+                """,
+                (normalized_id, DAILY_REWARD_TOTW_PACKS),
+            )
+            return {
+                "awarded": True,
+                "duplicate": False,
+                "balance": balance + DAILY_REWARD_COINS,
+                "coins": DAILY_REWARD_COINS,
+                "totw_packs": DAILY_REWARD_TOTW_PACKS,
+                "claimed_at": current_time,
+            }
 
     def get_xp_profile(self, user_id: str | int) -> XPProgress:
         normalized_id = self._validate_user_id(user_id)
@@ -1559,6 +2018,23 @@ class Database:
                 connection.execute(
                     "UPDATE users SET balance = balance + ? WHERE user_id = ?",
                     (reward, normalized_id),
+                )
+            self._record_quest_event_locked(
+                connection,
+                user_id=normalized_id,
+                event_id=f"minigame:guess-who:{normalized_game_id}:{normalized_id}:played",
+                metric="minigame_play",
+                amount=1,
+                now=current_time,
+            )
+            if correct:
+                self._record_quest_event_locked(
+                    connection,
+                    user_id=normalized_id,
+                    event_id=f"minigame:guess-who:{normalized_game_id}:{normalized_id}:won",
+                    metric="minigame_win",
+                    amount=1,
+                    now=current_time,
                 )
             grant = self._award_xp_locked(
                 connection,
@@ -1739,9 +2215,13 @@ class Database:
                 "draft_sessions",
                 "free_pack_inventory",
                 "free_pack_redemptions",
+                "level_up_coin_rewards",
                 "xp_level_rewards",
                 "xp_transactions",
                 "player_xp",
+                "daily_reward_claims",
+                "daily_quests",
+                "quest_event_receipts",
                 "pack_purchases",
                 "duplicate_sale_receipts",
             ):
@@ -1901,6 +2381,23 @@ class Database:
                 reason="minigame_draft",
                 now=current_time,
             )
+            self._record_quest_event_locked(
+                connection,
+                user_id=normalized_id,
+                event_id=f"minigame:draft:{normalized_game_id}:{normalized_id}:played",
+                metric="minigame_play",
+                amount=1,
+                now=current_time,
+            )
+            if won:
+                self._record_quest_event_locked(
+                    connection,
+                    user_id=normalized_id,
+                    event_id=f"minigame:draft:{normalized_game_id}:{normalized_id}:won",
+                    metric="minigame_win",
+                    amount=1,
+                    now=current_time,
+                )
             if reward:
                 connection.execute(
                     "UPDATE users SET balance = balance + ? WHERE user_id = ?",
@@ -3160,6 +3657,27 @@ class Database:
                 reason="match_defeat",
                 now=current_time,
             )
+            self._record_quest_event_locked(
+                connection,
+                user_id=normalized_winner,
+                event_id=f"match:{match_id}:{normalized_winner}:win",
+                metric="match_win",
+                amount=1,
+                now=current_time,
+            )
+            for user_id, goals_scored in (
+                (str(row["challenger_id"]), home_score),
+                (str(row["opponent_id"]), away_score),
+            ):
+                if goals_scored:
+                    self._record_quest_event_locked(
+                        connection,
+                        user_id=user_id,
+                        event_id=f"match:{match_id}:{user_id}:goals",
+                        metric="match_goals",
+                        amount=goals_scored,
+                        now=current_time,
+                    )
             connection.execute(
                 "UPDATE users SET balance = balance + ? WHERE user_id = ?",
                 (MATCH_REWARD, normalized_winner),
@@ -3490,6 +4008,7 @@ class Database:
         cost: int,
         rng: Any | None = None,
         purchase_id: str | int | None = None,
+        now: int | None = None,
     ) -> tuple[Player, int]:
         """Charge and award exactly one card of the requested rarity, atomically.
 
@@ -3512,6 +4031,7 @@ class Database:
                 f"{expected_rarity} packs must cost exactly {expected_cost:,} coins."
             )
         chooser = rng if rng is not None else random.SystemRandom()
+        current_time = int(time.time() if now is None else now)
 
         with self._transaction() as connection:
             if normalized_purchase_id is not None:
@@ -3599,8 +4119,30 @@ class Database:
                         expected_rarity,
                         cost,
                         remaining_balance,
-                        int(time.time()),
+                        current_time,
                     ),
+                )
+            quest_event_id = (
+                f"pack-single:{normalized_purchase_id}"
+                if normalized_purchase_id is not None
+                else f"pack-single:{uuid.uuid4().hex}"
+            )
+            self._record_quest_event_locked(
+                connection,
+                user_id=normalized_id,
+                event_id=quest_event_id,
+                metric="pack_open",
+                amount=1,
+                now=current_time,
+            )
+            if expected_rarity == "GOLD":
+                self._record_quest_event_locked(
+                    connection,
+                    user_id=normalized_id,
+                    event_id=f"{quest_event_id}:gold",
+                    metric="gold_card",
+                    amount=1,
+                    now=current_time,
                 )
             return self._player_from_row(selected), remaining_balance
 
@@ -3612,6 +4154,7 @@ class Database:
         quantity: int,
         rng: Any | None = None,
         purchase_id: str | int | None = None,
+        now: int | None = None,
     ) -> tuple[list[Player], int]:
         """Charge once and award a batch of same-rarity packs atomically."""
         normalized_id = self._validate_user_id(user_id)
@@ -3648,6 +4191,7 @@ class Database:
                 raise InvalidAmount("A valid pack purchase ID is required.")
 
         chooser = rng if rng is not None else random.SystemRandom()
+        current_time = int(time.time() if now is None else now)
         with self._transaction() as connection:
             if normalized_purchase_id is not None:
                 previous_single = connection.execute(
@@ -3758,7 +4302,7 @@ class Database:
 
             if normalized_purchase_id is not None:
                 remaining_balance = balance
-                created_at = int(time.time())
+                created_at = current_time
                 for purchase_key, selected in zip(
                     batch_purchase_ids, selected_cards
                 ):
@@ -3781,6 +4325,28 @@ class Database:
                         ),
                     )
 
+            quest_event_id = (
+                f"pack-batch:{normalized_purchase_id}"
+                if normalized_purchase_id is not None
+                else f"pack-batch:{uuid.uuid4().hex}"
+            )
+            self._record_quest_event_locked(
+                connection,
+                user_id=normalized_id,
+                event_id=quest_event_id,
+                metric="pack_open",
+                amount=quantity,
+                now=current_time,
+            )
+            if expected_rarity == "GOLD":
+                self._record_quest_event_locked(
+                    connection,
+                    user_id=normalized_id,
+                    event_id=f"{quest_event_id}:gold",
+                    metric="gold_card",
+                    amount=quantity,
+                    now=current_time,
+                )
             return (
                 [self._player_from_row(selected) for selected in selected_cards],
                 balance - total_cost,
@@ -3792,6 +4358,7 @@ class Database:
         rarity: str,
         redemption_id: str | int,
         rng: Any | None = None,
+        now: int | None = None,
     ) -> tuple[Player, int]:
         """Redeem one saved level-up pack without charging coins, exactly once."""
         normalized_id = self._validate_user_id(user_id)
@@ -3802,6 +4369,7 @@ class Database:
         if not normalized_redemption_id or len(normalized_redemption_id) > 128:
             raise InvalidAmount("A valid free pack redemption ID is required.")
         chooser = rng if rng is not None else random.SystemRandom()
+        current_time = int(time.time() if now is None else now)
 
         with self._transaction() as connection:
             previous = connection.execute(
@@ -3913,9 +4481,27 @@ class Database:
                     normalized_id,
                     expected_rarity,
                     player_id,
-                    int(time.time()),
+                    current_time,
                 ),
             )
+            quest_event_id = f"free-pack:{normalized_redemption_id}"
+            self._record_quest_event_locked(
+                connection,
+                user_id=normalized_id,
+                event_id=quest_event_id,
+                metric="pack_open",
+                amount=1,
+                now=current_time,
+            )
+            if expected_rarity == "GOLD":
+                self._record_quest_event_locked(
+                    connection,
+                    user_id=normalized_id,
+                    event_id=f"{quest_event_id}:gold",
+                    metric="gold_card",
+                    amount=1,
+                    now=current_time,
+                )
             return self._player_from_row(selected), remaining_count
 
     @staticmethod
@@ -5433,6 +6019,17 @@ class Database:
                 ),
             )
             self._release_trade_users_locked(connection, normalized_trade_id)
+            for participant_id in (initiator_id, invitee_id):
+                self._record_quest_event_locked(
+                    connection,
+                    user_id=participant_id,
+                    event_id=(
+                        f"trade:{normalized_trade_id}:{participant_id}:completed"
+                    ),
+                    metric="trade_complete",
+                    amount=1,
+                    now=current_time,
+                )
             snapshot = self._trade_snapshot_locked(
                 connection,
                 normalized_trade_id,
