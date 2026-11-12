@@ -342,31 +342,13 @@ class DraftSimulationTests(unittest.TestCase):
         self.assertEqual(draft_win_probability(80, 80), 0.5)
 
     def test_lower_rated_squad_still_has_a_random_chance_to_win(self) -> None:
-        groups = generate_draft_groups(self.catalog, rng=random.Random(2))
-        player_squad = tuple(group[0] for group in groups)
-        ai_squad = generate_ai_squad(
-            self.catalog,
-            excluded_player_ids={player.id for player in player_squad},
-            rng=random.Random(3),
+        rated_cards = sorted(self.catalog, key=lambda player: player.overall)
+        low_team = tuple(rated_cards[:4])
+        high_team = tuple(rated_cards[-4:])
+        self.assertLess(
+            calculate_squad_average(low_team),
+            calculate_squad_average(high_team),
         )
-        player_squad = tuple(
-            player
-            for player in player_squad
-        )
-        low_average = min(
-            calculate_squad_average(player_squad),
-            calculate_squad_average(ai_squad),
-        )
-        high_average = max(
-            calculate_squad_average(player_squad),
-            calculate_squad_average(ai_squad),
-        )
-        low_team = (
-            player_squad
-            if calculate_squad_average(player_squad) == low_average
-            else ai_squad
-        )
-        high_team = ai_squad if low_team is player_squad else player_squad
         forced_upset = simulate_draft_match(
             low_team,
             high_team,

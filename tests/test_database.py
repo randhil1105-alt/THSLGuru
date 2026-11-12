@@ -1130,9 +1130,24 @@ class DatabaseTests(unittest.TestCase):
 
         totw_cards = self.database.get_players(rarity="TOTW")
         totw_odds = calculate_pack_odds(totw_cards)
-        self.assertEqual(len(totw_cards), 2)
+        self.assertEqual(len(totw_cards), 5)
+        self.assertEqual(
+            {card.name for card in totw_cards},
+            {
+                "Licha",
+                "Hala",
+                "Jaycob (TOTW 91)",
+                "Dark (TOTW 88)",
+                "XavierCapone9 (TOTW 93)",
+            },
+        )
         self.assertAlmostEqual(sum(totw_odds.values()), 100.0)
-        self.assertEqual(set(totw_odds.values()), {50.0})
+        total_totw_weight = sum(card_rating_weight(card.overall) for card in totw_cards)
+        for card in totw_cards:
+            self.assertAlmostEqual(
+                totw_odds[card.id],
+                card_rating_weight(card.overall) / total_totw_weight * 100,
+            )
         s2_tots_cards = self.database.get_players(rarity="S2 TOTS")
         s2_tots_odds = calculate_pack_odds(s2_tots_cards)
         self.assertEqual(

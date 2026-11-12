@@ -54,6 +54,61 @@
     "image_path": "cards/hala.webp"
   },
   {
+    "name": "Jaycob (TOTW 91)",
+    "overall": 91,
+    "position": "GK",
+    "country": "United States 🇺🇸",
+    "team": "New York Rangers",
+    "rarity": "TOTW",
+    "value": 8000000,
+    "stats": {
+      "SAV": 93,
+      "DIV": 90,
+      "PAS": 90,
+      "CLE": 90,
+      "SWE": 93,
+      "ACT": 91
+    },
+    "image_path": "cards/jaycob_totw_91.png",
+    "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Dark (TOTW 88)",
+    "overall": 88,
+    "position": "C",
+    "country": "Canada",
+    "team": "New York Rangers",
+    "rarity": "TOTW",
+    "value": 5400000,
+    "stats": {
+      "SHO": 88,
+      "DRI": 88,
+      "SAV": 82,
+      "PAS": 87,
+      "DEF": 90,
+      "ACT": 90
+    },
+    "image_path": "cards/dark_totw_88.png"
+  },
+  {
+    "name": "XavierCapone9 (TOTW 93)",
+    "overall": 93,
+    "position": "WI",
+    "country": "England 🏴",
+    "team": "Vegas Golden Knights",
+    "rarity": "TOTW",
+    "value": 12000000,
+    "stats": {
+      "SHO": 92,
+      "DRI": 95,
+      "SAV": 79,
+      "PAS": 92,
+      "DEF": 87,
+      "ACT": 88
+    },
+    "image_path": "cards/xaviercapone9_totw_93.png"
+  },
+  {
     "name": "Hala (Gold 90)",
     "overall": 90,
     "position": "WI",

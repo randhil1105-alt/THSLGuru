@@ -1,0 +1,44 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "NB04YrBR9VHO6v0xa4_ci"
+uri = "file://cards/dark_totw_88.png"
+type = "image"
+title = "Dark TOTW 88"
+description = "Individual artwork cropped from the supplied reference image."
+logical_id = "24c12805-74d0-4f03-b010-066a123a7571"
+content_hash = "sha256:8c92e5b93e74a761b9e0bf5dd89d377800b5f2bd428d9d6ae8e2a615e3c711fa"
+size = 180325
+mtime_ms = 1794497573784
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:7d06b5a2-3504-4031-824c-c1474fb3e53c/24c12805-74d0-4f03-b010-066a123a7571/9c25a91e-c439-4808-9016-9d3f51bd4f18"
+storage_version_token = "1794498369244733"
+content_type = "image/png"
+
+[[outputs]]
+id = "t3HjtKzVgghibZeBsVZiJ"
+uri = "file://cards/jaycob_totw_91.png"
+type = "image"
+title = "Jaycob TOTW 91"
+description = "Individual artwork cropped from the supplied reference image."
+logical_id = "2ff5f1d9-a252-4b3c-9902-8cf467f6b497"
+content_hash = "sha256:1f03c8fa80b13164bbdb6a90a8eff56fc4b933d34efde8989b2cef673b9220bd"
+size = 180272
+mtime_ms = 1794497574152
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:7d06b5a2-3504-4031-824c-c1474fb3e53c/2ff5f1d9-a252-4b3c-9902-8cf467f6b497/9c8d0a4f-bcc2-4e51-b478-f4ca2934c185"
+storage_version_token = "1794498369942167"
+content_type = "image/png"
+
+[[outputs]]
+id = "WYwn79OWMNMDurjybAKnY"
+uri = "file://cards/xaviercapone9_totw_93.png"
+type = "image"
+title = "XavierCapone9 TOTW 93"
+description = "Individual artwork cropped from the supplied reference image."
+logical_id = "e4f5b29b-d77b-42a9-be20-dfaf9d5c7b7f"
+content_hash = "sha256:74a73ceb3510601e75aa8731246ae1ee442ad5da63479b44866d72eb1c432edf"
+size = 176391
+mtime_ms = 1794497574504
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:7d06b5a2-3504-4031-824c-c1474fb3e53c/e4f5b29b-d77b-42a9-be20-dfaf9d5c7b7f/5f8d49c1-d7eb-4e30-8828-486b2f74e3fb"
+storage_version_token = "1794498370656387"
+content_type = "image/png"
