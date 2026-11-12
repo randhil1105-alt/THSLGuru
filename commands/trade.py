@@ -14,24 +14,20 @@ from discord.ext import commands as discord_commands
 
 from commands.common import (
     autocomplete_card_label,
-    player_embed,
     resolve_card_image,
 )
 from database import (
     TRADE_REQUEST_SECONDS,
     Database,
     EconomyError,
-    InventoryEntry,
     InvalidAmount,
     Player,
     TradeAlreadyActive,
     TradeError,
     format_card_type,
-    format_card_label,
 )
 
 LOGGER = logging.getLogger("thsl_guru.trade")
-CARD_PAGE_SIZE = 25
 
 
 def _participant_name(user: discord.abc.User) -> str:
@@ -98,7 +94,7 @@ def _trade_embeds_and_files(
     }
     description = (
         "Both players must confirm this exact offer. Any change resets both "
-        "confirmations. Use `/tradecard` to search owned cards by name, OVR, "
+        "confirmations. Use `/trade card` to search owned cards by name, OVR, "
         "or rarity."
         if status == "ACTIVE"
         else ""
@@ -310,33 +306,9 @@ class TradeView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        user_id = str(interaction.user.id)
-        offered = {
-            int(card["player"].id): int(card["quantity"])
-            for card in trade["cards"]
-            if str(card["user_id"]) == user_id
-        }
-        entries = [
-            InventoryEntry(entry.player, entry.quantity - offered.get(entry.player.id, 0))
-            for entry in self.cog.database.get_inventory(user_id)
-            if entry.quantity > offered.get(entry.player.id, 0)
-        ]
-        if not entries:
-            await interaction.response.send_message(
-                "You have no unoffered cards available for this trade.",
-                ephemeral=True,
-            )
-            return
-        picker = CardPickerView(
-            self.cog,
-            self.trade_id,
-            user_id,
-            "add",
-            entries,
-        )
         await interaction.response.send_message(
-            "Choose one card to add. Select it again to offer another copy.",
-            view=picker,
+            "Use `/trade card`, choose **Add card**, then search for the exact "
+            "edition you want to offer.",
             ephemeral=True,
         )
 
@@ -350,28 +322,9 @@ class TradeView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        user_id = str(interaction.user.id)
-        entries = [
-            InventoryEntry(card["player"], int(card["quantity"]))
-            for card in trade["cards"]
-            if str(card["user_id"]) == user_id
-        ]
-        if not entries:
-            await interaction.response.send_message(
-                "You have no cards in your offer to remove.",
-                ephemeral=True,
-            )
-            return
-        picker = CardPickerView(
-            self.cog,
-            self.trade_id,
-            user_id,
-            "remove",
-            entries,
-        )
         await interaction.response.send_message(
-            "Choose one offered card to remove. Each selection removes one copy.",
-            view=picker,
+            "Use `/trade card`, choose **Remove card**, then search for the "
+            "exact edition to remove one copy.",
             ephemeral=True,
         )
 
@@ -461,188 +414,6 @@ class TradeView(discord.ui.View):
         self.cog.cancel_expiry(self.trade_id)
 
 
-class CardPickerView(discord.ui.View):
-    """Ephemeral, paginated picker for cards the current player owns."""
-
-    def __init__(
-        self,
-        cog: TradeCommands,
-        trade_id: str,
-        user_id: str,
-        mode: str,
-        entries: list[InventoryEntry],
-    ) -> None:
-        super().__init__(timeout=180)
-        self.cog = cog
-        self.trade_id = trade_id
-        self.user_id = user_id
-        self.mode = mode
-        self.entries = entries
-        self.page = 0
-        self._build_items()
-
-    def _build_items(self) -> None:
-        self.clear_items()
-        start = self.page * CARD_PAGE_SIZE
-        current = self.entries[start : start + CARD_PAGE_SIZE]
-        if current:
-            options = [
-                discord.SelectOption(
-                    label=format_card_label(
-                        entry.player.name,
-                        entry.player.overall,
-                        entry.player.rarity,
-                    )[:100],
-                    description=(
-                        f"{'Available' if self.mode == 'add' else 'Offered'}: "
-                        f"{entry.quantity:,}"
-                    )[:100],
-                    value=str(entry.player.id),
-                )
-                for entry in current
-            ]
-            select = discord.ui.Select(
-                placeholder=(
-                    "Select a card to add"
-                    if self.mode == "add"
-                    else "Select an offered card to remove"
-                ),
-                min_values=1,
-                max_values=1,
-                options=options,
-            )
-            select.callback = self._select_card
-            self.add_item(select)
-        if self.page > 0:
-            previous = discord.ui.Button(
-                label="Previous",
-                style=discord.ButtonStyle.secondary,
-            )
-            previous.callback = self._previous
-            self.add_item(previous)
-        if start + CARD_PAGE_SIZE < len(self.entries):
-            next_page = discord.ui.Button(
-                label="Next",
-                style=discord.ButtonStyle.secondary,
-            )
-            next_page.callback = self._next
-            self.add_item(next_page)
-
-    async def _previous(self, interaction: discord.Interaction) -> None:
-        if str(interaction.user.id) != self.user_id:
-            await interaction.response.send_message(
-                "Only the player who opened this picker can use it.",
-                ephemeral=True,
-            )
-            return
-        self.page = max(0, self.page - 1)
-        self._build_items()
-        await interaction.response.edit_message(view=self)
-
-    async def _next(self, interaction: discord.Interaction) -> None:
-        if str(interaction.user.id) != self.user_id:
-            await interaction.response.send_message(
-                "Only the player who opened this picker can use it.",
-                ephemeral=True,
-            )
-            return
-        self.page = min(
-            max(0, (len(self.entries) - 1) // CARD_PAGE_SIZE),
-            self.page + 1,
-        )
-        self._build_items()
-        await interaction.response.edit_message(view=self)
-
-    async def _select_card(self, interaction: discord.Interaction) -> None:
-        if str(interaction.user.id) != self.user_id:
-            await interaction.response.send_message(
-                "Only the player who opened this picker can use it.",
-                ephemeral=True,
-            )
-            return
-        component = interaction.data
-        selected_values = component.get("values", []) if component else []
-        try:
-            player_id = int(selected_values[0])
-            entry = next(
-                entry for entry in self.entries
-                if entry.player.id == player_id
-            )
-            if self.mode == "add":
-                player = self.cog.database.add_trade_card(
-                    self.trade_id,
-                    self.user_id,
-                    player_id,
-                )
-                message = f"Added **{player.name}** to your offer."
-            else:
-                self.cog.database.remove_trade_card(
-                    self.trade_id,
-                    self.user_id,
-                    player_id,
-                )
-                player = entry.player
-                message = f"Removed one **{player.name}** from your offer."
-        except (EconomyError, StopIteration, ValueError, IndexError) as exc:
-            await interaction.response.send_message(
-                str(exc) or "That card is no longer available.",
-                ephemeral=True,
-            )
-            return
-
-        trade = self.cog.database.get_trade(self.trade_id)
-        if trade is None or trade["status"] != "ACTIVE":
-            await interaction.response.edit_message(
-                content="This trade is no longer active.",
-                embed=None,
-                attachments=[],
-                view=None,
-            )
-            return
-
-        if self.mode == "add":
-            offered = {
-                int(card["player"].id): int(card["quantity"])
-                for card in trade["cards"]
-                if str(card["user_id"]) == self.user_id
-            }
-            self.entries = [
-                InventoryEntry(
-                    inventory.player,
-                    inventory.quantity - offered.get(inventory.player.id, 0),
-                )
-                for inventory in self.cog.database.get_inventory(self.user_id)
-                if inventory.quantity > offered.get(inventory.player.id, 0)
-            ]
-        else:
-            self.entries = [
-                InventoryEntry(card["player"], int(card["quantity"]))
-                for card in trade["cards"]
-                if str(card["user_id"]) == self.user_id
-            ]
-        self.page = min(
-            self.page,
-            max(0, (len(self.entries) - 1) // CARD_PAGE_SIZE),
-        )
-        self._build_items()
-
-        embed = player_embed(player)
-        image_path = resolve_card_image(player)
-        attachments: list[discord.File] = []
-        if image_path is not None:
-            filename = image_path.name
-            embed.set_image(url=f"attachment://{filename}")
-            attachments.append(discord.File(image_path, filename=filename))
-        await interaction.response.edit_message(
-            content=message,
-            embed=embed,
-            attachments=attachments,
-            view=self if self.entries else None,
-        )
-        await self.cog.refresh_trade_message(self.trade_id)
-        self.cog.schedule_expiry(trade)
-
-
 class TradeCoinsModal(discord.ui.Modal, title="Set Coin Offer"):
     def __init__(
         self,
@@ -697,6 +468,11 @@ class TradeCoinsModal(discord.ui.Modal, title="Set Coin Offer"):
 
 
 class TradeCommands(discord_commands.Cog):
+    trade = app_commands.Group(
+        name="trade",
+        description="Request a trade or manage card offers.",
+    )
+
     def __init__(self, bot: discord_commands.Bot, database: Database) -> None:
         self.bot = bot
         self.database = database
@@ -870,31 +646,18 @@ class TradeCommands(discord_commands.Cog):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             LOGGER.warning("Could not refresh trade message %s.", trade_id)
 
-    @app_commands.command(
-        name="tradecard",
-        description="Search owned cards to add to or remove from your active trade.",
-    )
-    @app_commands.describe(
-        action="Add a card to your offer or remove one",
-        card="Choose an exact card edition you own",
-    )
-    @app_commands.choices(
-        action=[
-            app_commands.Choice(name="Add card", value="add"),
-            app_commands.Choice(name="Remove card", value="remove"),
-        ]
-    )
-    async def tradecard(
+    async def _apply_trade_card(
         self,
         interaction: discord.Interaction,
-        action: app_commands.Choice[str],
+        action: str,
         card: str,
     ) -> None:
         user_id = interaction.user.id
         trade = self.database.get_active_trade_for_user(user_id)
         if trade is None:
             await interaction.response.send_message(
-                "You need an active trade before changing a card offer.",
+                "You need an active trade before changing a card offer. "
+                "Start one with `/trade request` and have the other player accept.",
                 ephemeral=True,
             )
             return
@@ -907,7 +670,7 @@ class TradeCommands(discord_commands.Cog):
             return
         player_id = int(lookup)
         try:
-            if action.value == "add":
+            if action == "add":
                 player = self.database.add_trade_card(
                     str(trade["trade_id"]),
                     user_id,
@@ -917,7 +680,7 @@ class TradeCommands(discord_commands.Cog):
                     f"Added one **{autocomplete_card_label(player)}** to your offer. "
                     "Both players must confirm again."
                 )
-            else:
+            elif action == "remove":
                 self.database.remove_trade_card(
                     str(trade["trade_id"]),
                     user_id,
@@ -930,22 +693,25 @@ class TradeCommands(discord_commands.Cog):
                     f"Removed one **{autocomplete_card_label(player)}** from your "
                     "offer. Both players must confirm again."
                 )
+            else:
+                await interaction.response.send_message(
+                    "Choose Add card or Remove card.",
+                    ephemeral=True,
+                )
+                return
         except (EconomyError, TradeError) as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
         await interaction.response.send_message(message, ephemeral=True)
         await self.refresh_trade_message(str(trade["trade_id"]))
 
-    @tradecard.autocomplete("card")
-    async def tradecard_card_autocomplete(
+    async def _trade_card_choices(
         self,
         interaction: discord.Interaction,
         current: str,
     ) -> list[app_commands.Choice[str]]:
         user_id = interaction.user.id
         trade = self.database.get_active_trade_for_user(user_id)
-        if trade is None:
-            return []
 
         action = getattr(
             getattr(interaction, "namespace", None),
@@ -957,11 +723,11 @@ class TradeCommands(discord_commands.Cog):
             int(card["player"].id): int(card["quantity"])
             for card in trade["cards"]
             if str(card["user_id"]) == str(user_id)
-        }
+        } if trade is not None else {}
         if action == "remove":
             cards = [
                 (card["player"], int(card["quantity"]))
-                for card in trade["cards"]
+                for card in (trade["cards"] if trade is not None else [])
                 if str(card["user_id"]) == str(user_id)
             ]
         else:
@@ -1000,12 +766,72 @@ class TradeCommands(discord_commands.Cog):
                 break
         return choices
 
+    @trade.command(
+        name="card",
+        description="Search owned cards to add to or remove from a trade.",
+    )
+    @app_commands.describe(
+        action="Add a card to your offer or remove one",
+        card="Search for an exact card edition you own",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Add card", value="add"),
+            app_commands.Choice(name="Remove card", value="remove"),
+        ]
+    )
+    async def trade_card(
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
+        card: str,
+    ) -> None:
+        await self._apply_trade_card(interaction, action.value, card)
+
+    @trade_card.autocomplete("card")
+    async def trade_card_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._trade_card_choices(interaction, current)
+
     @app_commands.command(
-        name="trade",
+        name="tradecard",
+        description="Search owned cards to add to or remove from your active trade.",
+    )
+    @app_commands.describe(
+        action="Add a card to your offer or remove one",
+        card="Search for an exact card edition you own",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Add card", value="add"),
+            app_commands.Choice(name="Remove card", value="remove"),
+        ]
+    )
+    async def tradecard(
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
+        card: str,
+    ) -> None:
+        await self._apply_trade_card(interaction, action.value, card)
+
+    @tradecard.autocomplete("card")
+    async def tradecard_card_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._trade_card_choices(interaction, current)
+
+    @trade.command(
+        name="request",
         description="Request a card and coin trade with another player.",
     )
     @app_commands.describe(player="The player you want to trade with")
-    async def trade(
+    async def trade_request(
         self,
         interaction: discord.Interaction,
         player: discord.Member,

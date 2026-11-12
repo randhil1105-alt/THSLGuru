@@ -112,6 +112,7 @@ class GuruBot(discord_commands.Bot):
                     "auction",
                     "claim",
                     "minigame",
+                    "trade",
                     "tradecard",
                     "daily",
                     "quests",

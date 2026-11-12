@@ -250,7 +250,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(public_command=name):
                 self.assertIsNone(commands[name].default_permissions)
-                self.assertFalse(commands[name].checks)
+                if isinstance(commands[name], discord.app_commands.Group):
+                    for subcommand in commands[name].commands:
+                        self.assertFalse(subcommand.checks)
+                else:
+                    self.assertFalse(commands[name].checks)
 
         auction_group = commands["auction"]
         self.assertIsNone(auction_group.default_permissions)
@@ -625,7 +629,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`/pack pack_type`", help_text)
         self.assertIn("`/packs quantity`", help_text)
         self.assertIn("`/match opponent`", help_text)
-        self.assertIn("`/trade player`", help_text)
+        self.assertIn("`/trade request player`", help_text)
+        self.assertIn("`/trade card action card`", help_text)
         self.assertIn("`/claim` · Claim a GOLD player card every 30 minutes", help_text)
         self.assertNotIn("Claim 5,000 coins", help_text)
         self.assertNotIn("/goldpack", help_text)
@@ -2176,10 +2181,23 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             if parameter.name == "card"
         )
         self.assertTrue(card_option.autocomplete)
-        original_trade = next(
+        trade_group = next(
             item for item in self.bot.tree.get_commands() if item.name == "trade"
         )
-        self.assertFalse(original_trade.parameters[0].autocomplete)
+        trade_subcommands = {command.name: command for command in trade_group.commands}
+        self.assertEqual(set(trade_subcommands), {"card", "request"})
+        trade_card_option = next(
+            parameter
+            for parameter in trade_subcommands["card"].parameters
+            if parameter.name == "card"
+        )
+        self.assertTrue(trade_card_option.autocomplete)
+        request_player_option = next(
+            parameter
+            for parameter in trade_subcommands["request"].parameters
+            if parameter.name == "player"
+        )
+        self.assertFalse(request_player_option.autocomplete)
         gold = self.database.get_player("Hala (Gold 90)")
         totw = self.database.get_player("Hala")
         assert gold is not None and totw is not None
@@ -2199,6 +2217,22 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.database.add_inventory(initiator_id, gold.id, 2)
         self.database.add_inventory(initiator_id, totw.id, 1)
         self.database.add_inventory(invitee_id, other_edition.id, 1)
+        cog = TradeCommands(SimpleNamespace(), self.database)
+        interaction = SimpleNamespace(
+            user=SimpleNamespace(id=initiator_id),
+            namespace=SimpleNamespace(
+                action=discord.app_commands.Choice(name="Add card", value="add")
+            ),
+        )
+        choices_without_active_trade = await TradeCommands.trade_card_autocomplete(
+            cog,
+            interaction,
+            "hAlA",
+        )
+        self.assertEqual(
+            {choice.value for choice in choices_without_active_trade},
+            {str(gold.id), str(totw.id)},
+        )
         self.database.create_trade_request(
             "tradecard-autocomplete",
             initiator_id,
@@ -2215,14 +2249,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             gold.id,
         )
 
-        cog = TradeCommands(SimpleNamespace(), self.database)
-        interaction = SimpleNamespace(
-            user=SimpleNamespace(id=initiator_id),
-            namespace=SimpleNamespace(
-                action=discord.app_commands.Choice(name="Add card", value="add")
-            ),
-        )
-        add_choices = await TradeCommands.tradecard_card_autocomplete(
+        add_choices = await TradeCommands.trade_card_autocomplete(
             cog,
             interaction,
             "hAlA",
@@ -2238,7 +2265,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(cog, "refresh_trade_message", new_callable=AsyncMock):
             response = FakeResponse()
-            await TradeCommands.tradecard.callback(
+            await TradeCommands.trade_card.callback(
                 cog,
                 SimpleNamespace(user=SimpleNamespace(id=initiator_id), response=response),
                 discord.app_commands.Choice(name="Add card", value="add"),
@@ -2254,7 +2281,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(offered[gold.id], 2)
 
-        add_choices = await TradeCommands.tradecard_card_autocomplete(
+        add_choices = await TradeCommands.trade_card_autocomplete(
             cog,
             interaction,
             "Hala",

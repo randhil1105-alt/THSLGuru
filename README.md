@@ -30,8 +30,9 @@ persistent SQLite database.
 | `/set position player` | Choose an owned card version for a compatible slot |
 | `/formation formation` | Choose Balanced, Offensive, or Defensive |
 | `/match opponent` | Challenge a player to a live 45-second match for 5,000,000 coins |
-| `/trade player` | Request a card and coin trade with another player |
-| `/tradecard action card` | Search owned cards with autocomplete in your active trade |
+| `/trade request player` | Request a card and coin trade with another player |
+| `/trade card action card` | Search owned cards with autocomplete in an active trade |
+| `/tradecard action card` | Compatibility shortcut for card autocomplete |
 | `/help` | Show the command guide |
 | `/botinfo` | Show bot and catalog information |
 
@@ -142,14 +143,16 @@ winner, and the 5,000,000-coin reward. Each player can have only one pending or
 active match at a time. A missing lineup, a player leaving the server, or a bot
 restart cancels the match without a reward.
 
-Use `/trade player:@player` to request a trade. The invited player has two
-minutes to accept or decline. Both players can then add or remove owned cards,
-set their own coin offers, and independently confirm the complete offer. Any
-offer change clears both confirmations. A trade completes only when a SQLite
-transaction can verify and transfer every offered card and coin amount; either
-player can cancel, and requests or inactive trades expire automatically.
-Pending offers are stored in SQLite and their controls are restored after a bot
-restart when the Discord message is still available.
+Use `/trade request player:@player` to request a trade. The invited player has
+two minutes to accept or decline. Once accepted, use `/trade card` to add or
+remove exact owned card editions with native autocomplete; `/tradecard` remains
+available as a shortcut. Both players can set their own coin offers and
+independently confirm the complete offer. Any offer change clears both
+confirmations. A trade completes only when a SQLite transaction can verify and
+transfer every offered card and coin amount; either player can cancel, and
+requests or inactive trades expire automatically. Pending offers are stored in
+SQLite and their controls are restored after a bot restart when the Discord
+message is still available.
 
 `/team` renders the three starting cards inside the white rink, with the two
 substitute cards in the section below it. It uses original card artwork and
