@@ -12,7 +12,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.common import player_embed, resolve_card_image
+from commands.common import (
+    autocomplete_card_label,
+    player_embed,
+    resolve_card_image,
+)
 from database import (
     TRADE_REQUEST_SECONDS,
     Database,
@@ -94,7 +98,8 @@ def _trade_embeds_and_files(
     }
     description = (
         "Both players must confirm this exact offer. Any change resets both "
-        "confirmations."
+        "confirmations. Use `/tradecard` to search owned cards by name, OVR, "
+        "or rarity."
         if status == "ACTIVE"
         else ""
     )
@@ -864,6 +869,136 @@ class TradeCommands(discord_commands.Cog):
             )
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             LOGGER.warning("Could not refresh trade message %s.", trade_id)
+
+    @app_commands.command(
+        name="tradecard",
+        description="Search owned cards to add to or remove from your active trade.",
+    )
+    @app_commands.describe(
+        action="Add a card to your offer or remove one",
+        card="Choose an exact card edition you own",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Add card", value="add"),
+            app_commands.Choice(name="Remove card", value="remove"),
+        ]
+    )
+    async def tradecard(
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
+        card: str,
+    ) -> None:
+        user_id = interaction.user.id
+        trade = self.database.get_active_trade_for_user(user_id)
+        if trade is None:
+            await interaction.response.send_message(
+                "You need an active trade before changing a card offer.",
+                ephemeral=True,
+            )
+            return
+        lookup = card.strip()
+        if not lookup.isdecimal():
+            await interaction.response.send_message(
+                "Select a card from the autocomplete suggestions.",
+                ephemeral=True,
+            )
+            return
+        player_id = int(lookup)
+        try:
+            if action.value == "add":
+                player = self.database.add_trade_card(
+                    str(trade["trade_id"]),
+                    user_id,
+                    player_id,
+                )
+                message = (
+                    f"Added one **{autocomplete_card_label(player)}** to your offer. "
+                    "Both players must confirm again."
+                )
+            else:
+                self.database.remove_trade_card(
+                    str(trade["trade_id"]),
+                    user_id,
+                    player_id,
+                )
+                player = self.database.get_player_by_id(player_id)
+                if player is None:
+                    raise TradeError("That card is no longer in the catalog.")
+                message = (
+                    f"Removed one **{autocomplete_card_label(player)}** from your "
+                    "offer. Both players must confirm again."
+                )
+        except (EconomyError, TradeError) as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.send_message(message, ephemeral=True)
+        await self.refresh_trade_message(str(trade["trade_id"]))
+
+    @tradecard.autocomplete("card")
+    async def tradecard_card_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        user_id = interaction.user.id
+        trade = self.database.get_active_trade_for_user(user_id)
+        if trade is None:
+            return []
+
+        action = getattr(
+            getattr(interaction, "namespace", None),
+            "action",
+            "add",
+        )
+        action = str(getattr(action, "value", action)).casefold()
+        offered_by_id = {
+            int(card["player"].id): int(card["quantity"])
+            for card in trade["cards"]
+            if str(card["user_id"]) == str(user_id)
+        }
+        if action == "remove":
+            cards = [
+                (card["player"], int(card["quantity"]))
+                for card in trade["cards"]
+                if str(card["user_id"]) == str(user_id)
+            ]
+        else:
+            cards = [
+                (
+                    entry.player,
+                    entry.quantity - offered_by_id.get(entry.player.id, 0),
+                )
+                for entry in self.database.get_inventory(user_id)
+                if entry.quantity > offered_by_id.get(entry.player.id, 0)
+            ]
+
+        query = current.strip().casefold()
+        choices: list[app_commands.Choice[str]] = []
+        for player, quantity in cards:
+            quantity_suffix = f" · {quantity} available"
+            if action == "remove":
+                quantity_suffix = f" · {quantity} offered"
+            label = autocomplete_card_label(
+                player,
+                max_length=100 - len(quantity_suffix),
+            )
+            search_text = (
+                f"{player.overall} OVR {player.name} "
+                f"{format_card_type(player.rarity)}"
+            ).casefold()
+            if query and query not in search_text:
+                continue
+            choices.append(
+                app_commands.Choice(
+                    name=f"{label}{quantity_suffix}",
+                    value=str(player.id),
+                )
+            )
+            if len(choices) == 25:
+                break
+        return choices
 
     @app_commands.command(
         name="trade",

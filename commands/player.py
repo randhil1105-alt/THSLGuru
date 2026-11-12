@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.common import player_card_label, send_player_card
+from commands.common import catalog_card_choices, send_player_card
 from commands.xp import mark_successful_command
 from database import Database
 
@@ -20,7 +20,12 @@ class PlayerCommands(discord_commands.Cog):
     async def card(
         self, interaction: discord.Interaction, player: str
     ) -> None:
-        record = self.database.get_player(player)
+        lookup = player.strip()
+        record = (
+            self.database.get_player_by_id(int(lookup))
+            if lookup.isdecimal()
+            else self.database.get_player(lookup)
+        )
         if record is None:
             await interaction.response.send_message(
                 f"No player named **{player}** was found.",
@@ -38,23 +43,7 @@ class PlayerCommands(discord_commands.Cog):
         current: str,
     ) -> list[app_commands.Choice[str]]:
         del interaction
-        query = current.strip().casefold()
-        choices: list[app_commands.Choice[str]] = []
-        seen_names: set[str] = set()
-        for record in self.database.get_players():
-            normalized_name = record.name.casefold()
-            if normalized_name in seen_names:
-                continue
-            label = player_card_label(record)
-            if query and query not in normalized_name and query not in label.casefold():
-                continue
-            seen_names.add(normalized_name)
-            choices.append(
-                app_commands.Choice(name=label[:100], value=record.name)
-            )
-            if len(choices) == 25:
-                break
-        return choices
+        return catalog_card_choices(self.database.get_players(), current)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

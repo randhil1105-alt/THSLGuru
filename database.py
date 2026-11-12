@@ -2091,6 +2091,16 @@ class Database:
             ).fetchone()
         return self._player_from_row(row) if row else None
 
+    def get_player_by_id(self, player_id: int) -> Player | None:
+        if isinstance(player_id, bool) or not isinstance(player_id, int) or player_id < 1:
+            return None
+        with self._read_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM players WHERE id = ?",
+                (player_id,),
+            ).fetchone()
+        return self._player_from_row(row) if row else None
+
     def get_players(self, *, rarity: str | None = None) -> list[Player]:
         with self._read_connection() as connection:
             if rarity:
@@ -2876,15 +2886,21 @@ class Database:
             )
 
     def add_inventory(
-        self, user_id: str | int, player_name: str, quantity: int = 1
+        self, user_id: str | int, player_name: str | int, quantity: int = 1
     ) -> int:
         normalized_id = self._validate_user_id(user_id)
         quantity = self._validate_amount(quantity)
         with self._transaction() as connection:
-            player = connection.execute(
-                "SELECT id FROM players WHERE name = ? COLLATE NOCASE",
-                (str(player_name).strip(),),
-            ).fetchone()
+            if isinstance(player_name, int) and not isinstance(player_name, bool):
+                player = connection.execute(
+                    "SELECT id FROM players WHERE id = ?",
+                    (player_name,),
+                ).fetchone()
+            else:
+                player = connection.execute(
+                    "SELECT id FROM players WHERE name = ? COLLATE NOCASE",
+                    (str(player_name).strip(),),
+                ).fetchone()
             if not player:
                 raise PlayerNotFound(player_name)
             self._ensure_user(connection, normalized_id)
@@ -5318,6 +5334,34 @@ class Database:
         normalized_trade_id = str(trade_id).strip()
         with self._read_connection() as connection:
             return self._trade_snapshot_locked(connection, normalized_trade_id)
+
+    def get_active_trade_for_user(
+        self,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the participant's active trade, expiring stale trades first."""
+        normalized_user_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            self._expire_stale_trades_locked(connection, current_time)
+            row = connection.execute(
+                """
+                SELECT trades.trade_id
+                FROM active_trade_users
+                JOIN trades ON trades.trade_id = active_trade_users.trade_id
+                WHERE active_trade_users.user_id = ?
+                    AND trades.status = 'ACTIVE'
+                """,
+                (normalized_user_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._trade_snapshot_locked(
+                connection,
+                str(row["trade_id"]),
+            )
 
     def get_recoverable_trades(self) -> list[dict[str, Any]]:
         with self._read_connection() as connection:

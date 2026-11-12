@@ -11,7 +11,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands as discord_commands
 
-from commands.common import format_coins, player_card_label
+from commands.common import catalog_card_choices, format_coins, player_card_label
 from commands.xp import mark_successful_command
 from database import (
     Database,
@@ -361,12 +361,22 @@ class AdminCommands(discord_commands.Cog):
         player: str,
         quantity: app_commands.Range[int, 1, 1000] = 1,
     ) -> None:
+        lookup = player.strip()
+        card_identifier: str | int = int(lookup) if lookup.isdecimal() else lookup
         try:
-            total = self.database.add_inventory(member.id, player, int(quantity))
+            total = self.database.add_inventory(
+                member.id,
+                card_identifier,
+                int(quantity),
+            )
         except (PlayerNotFound, EconomyError) as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
-        card = self.database.get_player(player)
+        card = (
+            self.database.get_player_by_id(card_identifier)
+            if isinstance(card_identifier, int)
+            else self.database.get_player(card_identifier)
+        )
         if card is None:
             raise RuntimeError("Granted card was not found in the player catalog.")
         await interaction.response.send_message(
@@ -376,6 +386,15 @@ class AdminCommands(discord_commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         mark_successful_command(interaction)
+
+    @grantcard.autocomplete("player")
+    async def grantcard_player_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        return catalog_card_choices(self.database.get_players(), current)
 
 
 async def setup(bot: discord_commands.Bot) -> None:

@@ -14,6 +14,7 @@ from commands.admin import AdminCommands
 from commands.economy import EconomyCommands
 from commands.init import COMMAND_MODULES, load_command_modules
 from commands.common import (
+    autocomplete_card_label,
     inventory_embed,
     player_card_label,
     player_embed,
@@ -44,6 +45,7 @@ from commands.packs import FreePackOpenButton, PackBuyButton, PackCommands
 from commands.player import PlayerCommands
 from commands.profile import ProfileCommands
 from commands.team import TeamCommands, lineup_card_label
+from commands.trade import TradeCommands
 from commands.information import InformationCommands
 from draft_simulation import generate_draft_groups
 from database import (
@@ -90,6 +92,7 @@ EXPECTED_COMMANDS = {
     "minigame",
     "match",
     "trade",
+    "tradecard",
     "auction",
     "daily",
     "quests",
@@ -243,6 +246,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "sellall",
             "profile",
             "trade",
+            "tradecard",
         ):
             with self.subTest(public_command=name):
                 self.assertIsNone(commands[name].default_permissions)
@@ -532,6 +536,64 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 str(card.id),
             )
             self.assertIn("Assigned", response.messages[0]["content"])
+
+    async def test_every_rarity_including_future_editions_can_use_bench_slots(self) -> None:
+        user_id = "all-rarity-bench-user"
+        team = TeamCommands(self.database)
+        starter = self.database.get_player("Hala (Gold 90)")
+        assert starter is not None
+        self.database.add_inventory(user_id, starter.id)
+        starter_response = FakeResponse()
+        await TeamCommands.set_position.callback(
+            team,
+            SimpleNamespace(user=SimpleNamespace(id=user_id), response=starter_response),
+            discord.app_commands.Choice(name="Wing 1", value="WING1"),
+            str(starter.id),
+        )
+        self.assertIn("Assigned", starter_response.messages[0]["content"])
+
+        cards = [
+            self.database.get_players(rarity=rarity)[0]
+            for rarity in ("GOLD", "TOTW", "S2 TOTS", "S1 TOTS", "S1 TOTY")
+        ]
+        future_card = self.database.add_player(
+            {
+                "name": "Future Bench Edition",
+                "overall": 91,
+                "position": "W",
+                "country": "Test",
+                "team": "THSL",
+                "rarity": "FUTURE EVENT",
+                "value": 1_000,
+            }
+        )
+        cards.append(future_card)
+
+        for index, card in enumerate(cards):
+            if card.id == starter.id:
+                continue
+            self.database.add_inventory(user_id, card.id)
+            position = "SUB1" if index % 2 == 0 else "SUB2"
+            choices = await TeamCommands.set_player_autocomplete(
+                team,
+                SimpleNamespace(
+                    user=SimpleNamespace(id=user_id),
+                    namespace=SimpleNamespace(position=position),
+                ),
+                card.name.split()[0],
+            )
+            self.assertIn(str(card.id), [choice.value for choice in choices])
+            response = FakeResponse()
+            await TeamCommands.set_position.callback(
+                team,
+                SimpleNamespace(user=SimpleNamespace(id=user_id), response=response),
+                discord.app_commands.Choice(name=position, value=position),
+                str(card.id),
+            )
+            self.assertIn("Assigned", response.messages[0]["content"])
+            self.assertEqual(self.database.get_lineup(user_id)[position].id, card.id)
+
+        self.assertEqual(self.database.get_lineup(user_id)["WING1"].id, starter.id)
 
         team_interaction = SimpleNamespace(
             user=SimpleNamespace(id=user_id, display_name="Bench Test"),
@@ -878,8 +940,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     SimpleNamespace(),
                     name.split(" (", 1)[0],
                 )
-                choice = next(choice for choice in choices if choice.value == name)
-                self.assertEqual(choice.name, label)
+                choice = next(
+                    choice for choice in choices if choice.value == str(player.id)
+                )
+                self.assertEqual(
+                    choice.name,
+                    autocomplete_card_label(player),
+                )
 
                 card_response = FakeResponse()
                 await PlayerCommands.card.callback(
@@ -1431,8 +1498,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     SimpleNamespace(),
                     search_name,
                 )
-                choice = next(choice for choice in choices if choice.value == name)
-                self.assertEqual(choice.name, details["label"])
+                choice = next(
+                    choice for choice in choices if choice.value == str(player.id)
+                )
+                self.assertEqual(
+                    choice.name,
+                    autocomplete_card_label(player),
+                )
 
                 card_response = FakeResponse()
                 await PlayerCommands.card.callback(
@@ -1666,7 +1738,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     SimpleNamespace(),
                     name,
                 )
-                self.assertIn(name, [choice.value for choice in choices])
+                self.assertIn(str(player.id), [choice.value for choice in choices])
                 card_response = FakeResponse()
                 await PlayerCommands.card.callback(
                     player_cog,
@@ -1878,7 +1950,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     SimpleNamespace(),
                     name[:3],
                 )
-                self.assertEqual([choice.value for choice in choices], [name])
+                self.assertEqual([choice.value for choice in choices], [str(player.id)])
                 for command_name in ("card",):
                     response = FakeResponse()
                     await getattr(PlayerCommands, command_name).callback(
@@ -1993,6 +2065,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(player_option.required)
         self.assertTrue(player_option.autocomplete)
+        fadi = self.database.get_player("Fadi")
+        assert fadi is not None
 
         choices = await PlayerCommands.card_player_autocomplete(
             cog,
@@ -2000,7 +2074,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Fad",
         )
         self.assertEqual([(choice.name, choice.value) for choice in choices], [
-            ("86 Fadi (Gold)", "Fadi"),
+            ("86 OVR Fadi (Gold)", str(fadi.id)),
         ])
         all_choices = await PlayerCommands.card_player_autocomplete(
             cog,
@@ -2012,7 +2086,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             min(25, len(self.database.get_players())),
         )
         self.assertEqual(
-            len({choice.value.casefold() for choice in all_choices}),
+            len({choice.value for choice in all_choices}),
             len(all_choices),
         )
 
@@ -2020,7 +2094,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         await PlayerCommands.card.callback(
             cog,
             SimpleNamespace(response=response),
-            "Fadi",
+            str(fadi.id),
         )
         message = response.messages[0]
         self.assertEqual(message["embed"].title, "86 Fadi (Gold)")
@@ -2042,6 +2116,194 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f"**{stat}** {value}", fields["Stats"])
         self.assertTrue(message["file"].fp.read().startswith(b"\x89PNG\r\n\x1a\n"))
         message["file"].close()
+
+    async def test_grantcard_autocomplete_selects_exact_owned_edition_ids(self) -> None:
+        await load_command_modules(self.bot)
+        command = next(
+            item for item in self.bot.tree.get_commands() if item.name == "grantcard"
+        )
+        player_option = next(
+            parameter for parameter in command.parameters
+            if parameter.name == "player"
+        )
+        self.assertTrue(player_option.autocomplete)
+        cards = [
+            player
+            for player in self.database.get_players()
+            if "hala" in player.name.casefold()
+        ]
+        self.assertGreaterEqual(len(cards), 2)
+        choices = await AdminCommands.grantcard_player_autocomplete(
+            AdminCommands(self.database),
+            SimpleNamespace(),
+            "hAlA",
+        )
+        by_id = {choice.value: choice for choice in choices}
+        self.assertEqual(set(by_id), {str(card.id) for card in cards})
+        for card in cards:
+            choice = by_id[str(card.id)]
+            self.assertIn(f"{card.overall} OVR", choice.name)
+            self.assertIn(
+                player_card_label(card).split(" ", 1)[1],
+                choice.name,
+            )
+            self.assertIn(format_card_type(card.rarity), choice.name)
+
+        member = SimpleNamespace(id="grant-hala-versions", mention="<@grant-hala-versions>")
+        for card in cards:
+            response = FakeResponse()
+            await AdminCommands.grantcard.callback(
+                AdminCommands(self.database),
+                SimpleNamespace(response=response),
+                member,
+                str(card.id),
+                1,
+            )
+            self.assertIn(player_card_label(card), response.messages[0]["content"])
+        granted = {
+            entry.player.id: entry.quantity
+            for entry in self.database.get_inventory(member.id)
+        }
+        self.assertEqual(granted, {card.id: 1 for card in cards})
+
+    async def test_tradecard_uses_owned_exact_cards_and_preserves_copy_counts(self) -> None:
+        await load_command_modules(self.bot)
+        tradecard_command = next(
+            item for item in self.bot.tree.get_commands() if item.name == "tradecard"
+        )
+        card_option = next(
+            parameter for parameter in tradecard_command.parameters
+            if parameter.name == "card"
+        )
+        self.assertTrue(card_option.autocomplete)
+        original_trade = next(
+            item for item in self.bot.tree.get_commands() if item.name == "trade"
+        )
+        self.assertFalse(original_trade.parameters[0].autocomplete)
+        gold = self.database.get_player("Hala (Gold 90)")
+        totw = self.database.get_player("Hala")
+        assert gold is not None and totw is not None
+        other_edition = self.database.add_player(
+            {
+                "name": "Hala S1 TOTY 98",
+                "overall": 98,
+                "position": "W",
+                "country": "Test",
+                "team": "THSL",
+                "rarity": "S1 TOTY",
+                "value": 2_000_000,
+            }
+        )
+        initiator_id = "tradecard-autocomplete-initiator"
+        invitee_id = "tradecard-autocomplete-invitee"
+        self.database.add_inventory(initiator_id, gold.id, 2)
+        self.database.add_inventory(initiator_id, totw.id, 1)
+        self.database.add_inventory(invitee_id, other_edition.id, 1)
+        self.database.create_trade_request(
+            "tradecard-autocomplete",
+            initiator_id,
+            invitee_id,
+            "Initiator",
+            "Invitee",
+            "123",
+            "456",
+        )
+        self.database.accept_trade_request("tradecard-autocomplete", invitee_id)
+        self.database.add_trade_card(
+            "tradecard-autocomplete",
+            initiator_id,
+            gold.id,
+        )
+
+        cog = TradeCommands(SimpleNamespace(), self.database)
+        interaction = SimpleNamespace(
+            user=SimpleNamespace(id=initiator_id),
+            namespace=SimpleNamespace(
+                action=discord.app_commands.Choice(name="Add card", value="add")
+            ),
+        )
+        add_choices = await TradeCommands.tradecard_card_autocomplete(
+            cog,
+            interaction,
+            "hAlA",
+        )
+        self.assertEqual(
+            {choice.value for choice in add_choices},
+            {str(gold.id), str(totw.id)},
+        )
+        gold_choice = next(choice for choice in add_choices if choice.value == str(gold.id))
+        self.assertIn("1 available", gold_choice.name)
+        self.assertIn(f"{gold.overall} OVR", gold_choice.name)
+        self.assertIn(format_card_type(gold.rarity), gold_choice.name)
+
+        with patch.object(cog, "refresh_trade_message", new_callable=AsyncMock):
+            response = FakeResponse()
+            await TradeCommands.tradecard.callback(
+                cog,
+                SimpleNamespace(user=SimpleNamespace(id=initiator_id), response=response),
+                discord.app_commands.Choice(name="Add card", value="add"),
+                str(gold.id),
+            )
+        self.assertIn("Added one", response.messages[0]["content"])
+        trade = self.database.get_trade("tradecard-autocomplete")
+        assert trade is not None
+        offered = {
+            card["player"].id: card["quantity"]
+            for card in trade["cards"]
+            if card["user_id"] == initiator_id
+        }
+        self.assertEqual(offered[gold.id], 2)
+
+        add_choices = await TradeCommands.tradecard_card_autocomplete(
+            cog,
+            interaction,
+            "Hala",
+        )
+        self.assertEqual([choice.value for choice in add_choices], [str(totw.id)])
+        remove_interaction = SimpleNamespace(
+            user=SimpleNamespace(id=initiator_id),
+            namespace=SimpleNamespace(
+                action=discord.app_commands.Choice(name="Remove card", value="remove")
+            ),
+        )
+        remove_choices = await TradeCommands.tradecard_card_autocomplete(
+            cog,
+            remove_interaction,
+            "Hala",
+        )
+        self.assertEqual({choice.value for choice in remove_choices}, {str(gold.id)})
+        self.assertIn("2 offered", remove_choices[0].name)
+
+        with patch.object(cog, "refresh_trade_message", new_callable=AsyncMock):
+            response = FakeResponse()
+            await TradeCommands.tradecard.callback(
+                cog,
+                SimpleNamespace(user=SimpleNamespace(id=initiator_id), response=response),
+                discord.app_commands.Choice(name="Remove card", value="remove"),
+                str(gold.id),
+            )
+        self.assertIn("Removed one", response.messages[0]["content"])
+        trade = self.database.get_trade("tradecard-autocomplete")
+        assert trade is not None
+        offered = {
+            card["player"].id: card["quantity"]
+            for card in trade["cards"]
+            if card["user_id"] == initiator_id
+        }
+        self.assertEqual(offered[gold.id], 1)
+
+        forged_response = FakeResponse()
+        await TradeCommands.tradecard.callback(
+            cog,
+            SimpleNamespace(user=SimpleNamespace(id=initiator_id), response=forged_response),
+            discord.app_commands.Choice(name="Add card", value="add"),
+            str(other_edition.id),
+        )
+        self.assertIn("only own", forged_response.messages[0]["content"].casefold())
+        self.assertEqual(
+            self.database.get_trade("tradecard-autocomplete")["status"],
+            "ACTIVE",
+        )
         card = self.database.get_player("Fadi")
         self.assertIsNotNone(card)
         assert card is not None
@@ -2449,7 +2711,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     SimpleNamespace(),
                     name,
                 )
-                self.assertIn((label, name), [(choice.name, choice.value) for choice in choices])
+                self.assertIn(
+                    (
+                        autocomplete_card_label(player),
+                        str(player.id),
+                    ),
+                    [(choice.name, choice.value) for choice in choices],
+                )
 
                 card_response = FakeResponse()
                 await PlayerCommands.card.callback(

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable
 
 import discord
+from discord import app_commands
 
 from database import (
     InventoryEntry,
@@ -27,6 +29,39 @@ RARITY_COLORS = {
 
 def format_coins(amount: int) -> str:
     return f"{amount:,} coins"
+
+
+def autocomplete_card_label(player: Player, *, max_length: int = 100) -> str:
+    """Keep OVR and card rarity visible in native autocomplete suggestions."""
+    prefix = f"{player.overall} OVR "
+    suffix = f" ({format_card_type(player.rarity)})"
+    display_label = player_card_label(player)
+    display_name = display_label[len(f"{player.overall} ") :]
+    if display_name.endswith(suffix):
+        display_name = display_name[: -len(suffix)]
+    name_length = max(0, max_length - len(prefix) - len(suffix))
+    return f"{prefix}{display_name[:name_length]}{suffix}"
+
+
+def catalog_card_choices(
+    players: Iterable[Player],
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """Search every supplied catalog card and return exact card IDs."""
+    query = current.strip().casefold()
+    choices: list[app_commands.Choice[str]] = []
+    for player in players:
+        label = autocomplete_card_label(player)
+        search_text = (
+            f"{player.overall} OVR {player.name} "
+            f"{format_card_type(player.rarity)}"
+        ).casefold()
+        if query and query not in search_text:
+            continue
+        choices.append(app_commands.Choice(name=label, value=str(player.id)))
+        if len(choices) == 25:
+            break
+    return choices
 
 
 def player_embed(player: Player) -> discord.Embed:

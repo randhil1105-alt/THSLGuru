@@ -31,6 +31,7 @@ persistent SQLite database.
 | `/formation formation` | Choose Balanced, Offensive, or Defensive |
 | `/match opponent` | Challenge a player to a live 45-second match for 5,000,000 coins |
 | `/trade player` | Request a card and coin trade with another player |
+| `/tradecard action card` | Search owned cards with autocomplete in your active trade |
 | `/help` | Show the command guide |
 | `/botinfo` | Show bot and catalog information |
 
@@ -128,7 +129,7 @@ Use `/set` to choose from cards currently in your inventory. Each autocomplete
 choice displays the card's name, OVR, and rarity, and selects that exact card
 record. Only GK cards can fill GK slots, only CM cards can fill CM slots, and
 only Wing cards can fill Wing slots. Cards cannot occupy multiple slots.
-`SUB1` and `SUB2` accept any owned card; use `player:CLEAR` to empty a slot.
+`SUB1` and `SUB2` accept any owned card of any rarity; use `player:CLEAR` to empty a slot.
 Changing formation keeps cards in compatible slots, may move a card only to an
 empty slot of the same role, and explains any cards that no longer fit.
 
