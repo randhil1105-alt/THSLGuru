@@ -600,15 +600,15 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             response=FakeResponse(),
             followup=FakeFollowup(),
         )
-        await TeamCommands.team.callback(cog, team_interaction)
+        await TeamCommands.team.callback(team, team_interaction)
         team_embed = team_interaction.followup.messages[0]["embed"]
         slot_values = {field.name: field.value for field in team_embed.fields}
         self.assertIn(
-            lineup_card_label(selected_cards[0][1]),
+            lineup_card_label(cards[-2]),
             slot_values["SUB1 · Substitute 1"],
         )
         self.assertIn(
-            lineup_card_label(selected_cards[1][1]),
+            lineup_card_label(cards[-1]),
             slot_values["SUB2 · Substitute 2"],
         )
         team_interaction.followup.messages[0]["file"].close()
