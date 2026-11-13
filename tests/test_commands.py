@@ -2453,9 +2453,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "Jaycob (TOTW 91)": "Jaycob",
                     "Dark (TOTW 88)": "Dark",
                     "XavierCapone9 (TOTW 93)": "XavierCapone9",
-                    "Ebs (TOTW 94)": "Ebs",
+                    "Ebs (S1 FUTURE STARS 94)": "Ebs",
                     "Dan (S1 FUTURE STARS 90)": "Dan",
                     "Ryuko (S1 FUTURE STARS 91)": "Ryuko",
+                    "Gamer (S1 FUTURE STARS 93)": "Gamer",
+                    "KaruWRLD (S1 FUTURE STARS 88)": "KaruWRLD",
             "Ebs (S1 TOTY 98)": "Ebs",
             "Hala (S1 TOTY 99)": "Hala",
             "Cam (S1 TOTY 97)": "Cam",
@@ -3477,8 +3479,17 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Rarity: S1 FUTURE STARS.", future_stars_field)
         self.assertIn("Price: 30,000,000 coins.", future_stars_field)
-        self.assertIn("Dan (S1 FUTURE STARS 90) 50.00%", future_stars_field)
-        self.assertIn("Ryuko (S1 FUTURE STARS 91) 50.00%", future_stars_field)
+        for name in (
+            "Ebs (S1 FUTURE STARS 94)",
+            "Dan (S1 FUTURE STARS 90)",
+            "Ryuko (S1 FUTURE STARS 91)",
+            "Gamer (S1 FUTURE STARS 93)",
+        ):
+            self.assertIn(f"{name} 16.67%", future_stars_field)
+        self.assertIn(
+            "KaruWRLD (S1 FUTURE STARS 88) 33.33%",
+            future_stars_field,
+        )
         self.assert_pack_menu_shows_odds(menu["embed"])
 
         view = menu["view"]
@@ -3609,7 +3620,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                         field.name: field.value
                         for field in purchase_response.messages[0]["embed"].fields
                     }
-                    self.assertEqual(card_fields["Value"], "12,000,000 coins")
+                    self.assertEqual(
+                        card_fields["Value"],
+                        f"{inventory[0].player.value:,} coins",
+                    )
                 self.assertEqual(
                     purchase_response.messages[0]["embed"].title,
                     player_card_label(inventory[0].player),

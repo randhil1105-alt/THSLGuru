@@ -855,6 +855,7 @@ class Database:
         self.ensure_pack_purchase_schema()
         self.ensure_xp_schema()
         self.ensure_progression_schema()
+        self._migrate_s1_future_stars_corrections(seed_players)
         self._migrate_s2_tots_catalog(seed_players)
         for player in seed_players:
             try:
@@ -921,6 +922,93 @@ class Database:
                 "ALTER TABLE pack_purchases_rarity_migration "
                 "RENAME TO pack_purchases"
             )
+
+    def _migrate_s1_future_stars_corrections(
+        self,
+        seed_players: Sequence[Mapping[str, Any]],
+    ) -> None:
+        """Correct the in-progress Future Stars entries without changing card IDs."""
+        seed_by_name = {
+            str(record.get("name", "")).strip().casefold(): record
+            for record in seed_players
+        }
+        ebs_record = seed_by_name.get("ebs (s1 future stars 94)")
+        if ebs_record is None:
+            return
+
+        with self._transaction() as connection:
+            old_ebs = connection.execute(
+                "SELECT * FROM players WHERE name = ?",
+                ("Ebs (TOTW 94)",),
+            ).fetchone()
+            new_ebs = connection.execute(
+                "SELECT id FROM players WHERE name = ?",
+                (str(ebs_record["name"]),),
+            ).fetchone()
+            if old_ebs is not None and new_ebs is not None:
+                raise RuntimeError(
+                    "Both legacy and Future Stars Ebs cards exist; refusing to "
+                    "merge card ownership automatically."
+                )
+            ebs_row = old_ebs or new_ebs
+            if ebs_row is not None:
+                if old_ebs is not None and (
+                    int(old_ebs["overall"]) != 94
+                    or str(old_ebs["rarity"]) != "TOTW"
+                ):
+                    raise RuntimeError(
+                        "The legacy Ebs card no longer matches the expected "
+                        "TOTW edition; refusing to change it."
+                    )
+                allowed_positions = ebs_record.get("allowed_lineup_positions")
+                connection.execute(
+                    """
+                    UPDATE players
+                    SET name = ?, overall = ?, position = ?, country = ?,
+                        team = ?, rarity = ?, value = ?, stats_json = ?,
+                        image_path = ?, allowed_lineup_positions_json = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        str(ebs_record["name"]),
+                        int(ebs_record["overall"]),
+                        str(ebs_record["position"]),
+                        str(ebs_record["country"]),
+                        str(ebs_record["team"]),
+                        str(ebs_record["rarity"]),
+                        int(ebs_record["value"]),
+                        json.dumps(
+                            ebs_record.get("stats", {}),
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                        ebs_record.get("image_path"),
+                        (
+                            json.dumps(
+                                allowed_positions,
+                                separators=(",", ":"),
+                            )
+                            if allowed_positions is not None
+                            else None
+                        ),
+                        int(ebs_row["id"]),
+                    ),
+                )
+
+            for name, team in (
+                ("Dan (S1 FUTURE STARS 90)", "Dallas Stars"),
+                ("Ryuko (S1 FUTURE STARS 91)", "Buffalo Sabres"),
+            ):
+                record = seed_by_name.get(name.casefold())
+                if record is not None:
+                    connection.execute(
+                        """
+                        UPDATE players
+                        SET team = ?
+                        WHERE name = ? AND rarity = 'S1 FUTURE STARS'
+                        """,
+                        (team, name),
+                    )
 
     def _migrate_s2_tots_catalog(
         self,

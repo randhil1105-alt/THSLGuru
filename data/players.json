@@ -937,22 +937,22 @@
     "allowed_lineup_positions": ["GK"]
   },
   {
-    "name": "Ebs (TOTW 94)",
+    "name": "Ebs (S1 FUTURE STARS 94)",
     "overall": 94,
     "position": "WI",
     "country": "Ireland 🇮🇪",
-    "team": "Ottawa Senators",
-    "rarity": "TOTW",
-    "value": 12000000,
+    "team": "Buffalo Sabres",
+    "rarity": "S1 FUTURE STARS",
+    "value": 40000000,
     "stats": {
       "SHO": 95,
-      "DRI": 92,
-      "SAV": 84,
-      "PAS": 92,
-      "DEF": 83,
-      "ACT": 91
+      "DRI": 89,
+      "SAV": 81,
+      "PAS": 93,
+      "DEF": 84,
+      "ACT": 87
     },
-    "image_path": "cards/ebs_totw_94.png",
+    "image_path": "cards/ebs_s1_future_stars_94.png",
     "allowed_lineup_positions": ["WING1", "WING2"]
   },
   {
@@ -960,7 +960,7 @@
     "overall": 90,
     "position": "WI",
     "country": "Italy 🇮🇹",
-    "team": "Colorado Avalanche",
+    "team": "Dallas Stars",
     "rarity": "S1 FUTURE STARS",
     "value": 10000000,
     "stats": {
@@ -979,7 +979,7 @@
     "overall": 91,
     "position": "WI",
     "country": "United States 🇺🇸",
-    "team": "Colorado Avalanche",
+    "team": "Buffalo Sabres",
     "rarity": "S1 FUTURE STARS",
     "value": 13000000,
     "stats": {
@@ -992,5 +992,43 @@
     },
     "image_path": "cards/ryuko_s1_future_stars_91.png",
     "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Gamer (S1 FUTURE STARS 93)",
+    "overall": 93,
+    "position": "WI",
+    "country": "United States 🇺🇸",
+    "team": "Buffalo Sabres",
+    "rarity": "S1 FUTURE STARS",
+    "value": 30000000,
+    "stats": {
+      "SHO": 93,
+      "DRI": 91,
+      "SAV": 78,
+      "PAS": 85,
+      "DEF": 85,
+      "ACT": 89
+    },
+    "image_path": "cards/gamer_s1_future_stars_93.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "KaruWRLD (S1 FUTURE STARS 88)",
+    "overall": 88,
+    "position": "C",
+    "country": "Scotland 🏴",
+    "team": "Anaheim Ducks",
+    "rarity": "S1 FUTURE STARS",
+    "value": 10000000,
+    "stats": {
+      "SHO": 87,
+      "DRI": 86,
+      "SAV": 83,
+      "PAS": 90,
+      "DEF": 86,
+      "ACT": 84
+    },
+    "image_path": "cards/karuwrld_s1_future_stars_88.png",
+    "allowed_lineup_positions": ["CM1", "CM2"]
   }
 ]

@@ -1131,7 +1131,7 @@ class DatabaseTests(unittest.TestCase):
 
         totw_cards = self.database.get_players(rarity="TOTW")
         totw_odds = calculate_pack_odds(totw_cards)
-        self.assertEqual(len(totw_cards), 6)
+        self.assertEqual(len(totw_cards), 5)
         self.assertEqual(
             {card.name for card in totw_cards},
             {
@@ -1140,7 +1140,6 @@ class DatabaseTests(unittest.TestCase):
                 "Jaycob (TOTW 91)",
                 "Dark (TOTW 88)",
                 "XavierCapone9 (TOTW 93)",
-                "Ebs (TOTW 94)",
             },
         )
         self.assertAlmostEqual(sum(totw_odds.values()), 100.0)
@@ -1778,8 +1777,11 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn(
             future_stars_awarded.name,
             {
+                "Ebs (S1 FUTURE STARS 94)",
                 "Dan (S1 FUTURE STARS 90)",
                 "Ryuko (S1 FUTURE STARS 91)",
+                "Gamer (S1 FUTURE STARS 93)",
+                "KaruWRLD (S1 FUTURE STARS 88)",
             },
         )
         self.assertEqual(future_stars_awarded.rarity, "S1 FUTURE STARS")

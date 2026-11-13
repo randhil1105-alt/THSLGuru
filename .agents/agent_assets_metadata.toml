@@ -42,3 +42,45 @@ mtime_ms = 1794497574504
 storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:7d06b5a2-3504-4031-824c-c1474fb3e53c/e4f5b29b-d77b-42a9-be20-dfaf9d5c7b7f/5f8d49c1-d7eb-4e30-8828-486b2f74e3fb"
 storage_version_token = "1794498370656387"
 content_type = "image/png"
+
+[[outputs]]
+id = "YI3fFi5-A7hdY8xt3nLZi"
+uri = "file://cards/ebs_s1_future_stars_94.png"
+type = "image"
+title = "Ebs — 94 S1 Future Stars"
+description = "Individual Ebs card artwork cropped from the supplied reference."
+logical_id = "c94799dd-efa6-4e18-9f03-2681cbfacfd9"
+content_hash = "sha256:229a259e93b6feedcc5c77ed2f2ee5e2015702fef781ac172a7d9e61cf35c61c"
+size = 272338
+mtime_ms = 1794572445843
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:7d06b5a2-3504-4031-824c-c1474fb3e53c/c94799dd-efa6-4e18-9f03-2681cbfacfd9/31ffc0d5-a82f-4bc5-adcc-0cb6eac269b7"
+storage_version_token = "1794572976804128"
+content_type = "image/png"
+
+[[outputs]]
+id = "tC7OzYDQG1IKt6BRhyrGj"
+uri = "file://cards/gamer_s1_future_stars_93.png"
+type = "image"
+title = "Gamer — 93 S1 Future Stars"
+description = "Individual Gamer card artwork cropped from the supplied reference."
+logical_id = "40da1fb4-2e68-414d-b685-b34826bd5d65"
+content_hash = "sha256:06857638ac360d18be566780d0454e6c964ccab98f2d993ad2f07b1a5445e285"
+size = 296892
+mtime_ms = 1794572446315
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:7d06b5a2-3504-4031-824c-c1474fb3e53c/40da1fb4-2e68-414d-b685-b34826bd5d65/6c57ec42-f21b-4e4c-b424-2ee133f4a60b"
+storage_version_token = "1794572977587213"
+content_type = "image/png"
+
+[[outputs]]
+id = "3Vv19weQJ1P57PK042gor"
+uri = "file://cards/karuwrld_s1_future_stars_88.png"
+type = "image"
+title = "KaruWRLD — 88 S1 Future Stars"
+description = "Individual KaruWRLD card artwork cropped from the supplied reference."
+logical_id = "28e8307c-7979-4a86-914c-d2cb4640bd44"
+content_hash = "sha256:1803b17ebaedf4e555cb5846a54d08d3434e9a0c53ca6762e8fd225e2ab7ce6c"
+size = 312847
+mtime_ms = 1794572446719
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:7d06b5a2-3504-4031-824c-c1474fb3e53c/28e8307c-7979-4a86-914c-d2cb4640bd44/2fbe09f5-69fe-46eb-a78a-d84daab980ec"
+storage_version_token = "1794572978273913"
+content_type = "image/png"
