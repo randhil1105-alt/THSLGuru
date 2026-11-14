@@ -82,11 +82,47 @@ FUTURE_STARS_CARDS = {
         "image_path": "cards/karuwrld_s1_future_stars_88.png",
         "allowed": ("CM1", "CM2"),
     },
+    "HHH (S1 FUTURE STARS 89)": {
+        "overall": 89,
+        "position": "WI",
+        "country": "England 🇬🇧",
+        "team": "Anaheim Ducks",
+        "rarity": "S1 FUTURE STARS",
+        "value": 12_000_000,
+        "stats": {"SHO": 92, "DRI": 84, "SAV": 79, "PAS": 85, "DEF": 80, "ACT": 84},
+        "image_path": "cards/hhh_s1_future_stars_89.png",
+        "allowed": ("WING1", "WING2"),
+    },
+    "Lauren (S1 FUTURE STARS 93)": {
+        "overall": 93,
+        "position": "GK",
+        "country": "England 🇬🇧",
+        "team": "New York Rangers",
+        "rarity": "S1 FUTURE STARS",
+        "value": 30_000_000,
+        "stats": {"SAV": 93, "DIV": 95, "PAS": 88, "SWE": 90, "CLE": 91, "ACT": 93},
+        "image_path": "cards/lauren_s1_future_stars_93.png",
+        "allowed": ("GK",),
+    },
+    "Guzzinga (S1 FUTURE STARS 92)": {
+        "overall": 92,
+        "position": "WI",
+        "country": "England 🇬🇧",
+        "team": "New York Rangers",
+        "rarity": "S1 FUTURE STARS",
+        "value": 24_000_000,
+        "stats": {"SHO": 93, "DRI": 95, "SAV": 84, "PAS": 92, "DEF": 90, "ACT": 87},
+        "image_path": "cards/guzzinga_s1_future_stars_92.png",
+        "allowed": ("WING1", "WING2"),
+    },
 }
 NEW_CARDS = (
     "Ebs (S1 FUTURE STARS 94)",
     "Gamer (S1 FUTURE STARS 93)",
     "KaruWRLD (S1 FUTURE STARS 88)",
+    "HHH (S1 FUTURE STARS 89)",
+    "Lauren (S1 FUTURE STARS 93)",
+    "Guzzinga (S1 FUTURE STARS 92)",
 )
 
 
@@ -169,7 +205,7 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertGreater(width, 250)
                 self.assertGreater(height, 300)
                 self.assertGreater(len(image_data), 50_000)
-        self.assertEqual(len(image_paths), 5)
+        self.assertEqual(len(image_paths), 8)
 
         user_id = "future-stars-seed-preservation"
         self.database.set_balance(user_id, 987)
@@ -186,7 +222,7 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
                 player.rarity == "S1 FUTURE STARS"
                 for player in self.database.get_players()
             ),
-            5,
+            8,
         )
 
     def test_legacy_ebs_and_team_corrections_preserve_ids_inventory_and_receipts(
@@ -285,7 +321,7 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(PACKS[-1], ("S1 FUTURE STARS", 30_000_000))
         self.assertEqual(S1_FUTURE_STARS_PACK_COST, 30_000_000)
         odds = calculate_pack_odds(pool)
-        self.assertEqual(len(odds), 5)
+        self.assertEqual(len(odds), 8)
         for name in (
             "Ebs (S1 FUTURE STARS 94)",
             "Dan (S1 FUTURE STARS 90)",
@@ -293,11 +329,14 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
             "Gamer (S1 FUTURE STARS 93)",
         ):
             card = cards[name]
-            self.assertAlmostEqual(odds[card.id], 100 / 6)
+            self.assertAlmostEqual(odds[card.id], 10)
         self.assertAlmostEqual(
             odds[cards["KaruWRLD (S1 FUTURE STARS 88)"].id],
-            200 / 6,
+            20,
         )
+        self.assertAlmostEqual(odds[cards["HHH (S1 FUTURE STARS 89)"].id], 20)
+        self.assertAlmostEqual(odds[cards["Lauren (S1 FUTURE STARS 93)"].id], 10)
+        self.assertAlmostEqual(odds[cards["Guzzinga (S1 FUTURE STARS 92)"].id], 10)
 
         for index, name in enumerate(FUTURE_STARS_CARDS):
             with self.subTest(card=name):
@@ -452,6 +491,20 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(card_fields["Card Type"], "S1 FUTURE STARS")
                 self.assertEqual(card_fields["Team"], FUTURE_STARS_CARDS[name]["team"])
                 self.assertEqual(
+                    card_fields["Position"],
+                    FUTURE_STARS_CARDS[name]["position"],
+                )
+                self.assertEqual(
+                    card_fields["Country"],
+                    FUTURE_STARS_CARDS[name]["country"],
+                )
+                self.assertEqual(
+                    card_fields["Value"],
+                    f"{FUTURE_STARS_CARDS[name]['value']:,} coins",
+                )
+                for stat, value in FUTURE_STARS_CARDS[name]["stats"].items():
+                    self.assertIn(f"**{stat}** {value}", card_fields["Stats"])
+                self.assertEqual(
                     card_message["embed"].image.url,
                     f"attachment://{Path(card.image_path).name}",
                 )
@@ -460,6 +513,15 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
                     b"\x89PNG\r\n\x1a\n",
                 )
                 card_message["file"].close()
+
+                card_choices = await PlayerCommands.card_player_autocomplete(
+                    card_cog,
+                    SimpleNamespace(),
+                    name.split(" (", 1)[0].casefold(),
+                )
+                self.assertTrue(
+                    any(candidate.value == str(card.id) for candidate in card_choices)
+                )
 
                 choices = await AdminCommands.grantcard_player_autocomplete(
                     AdminCommands(self.database),
@@ -601,12 +663,20 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
         for name, position in (
             ("Ebs (S1 FUTURE STARS 94)", "WING1"),
             ("Gamer (S1 FUTURE STARS 93)", "WING2"),
+            ("HHH (S1 FUTURE STARS 89)", "WING1"),
+            ("Guzzinga (S1 FUTURE STARS 92)", "WING2"),
+            ("Lauren (S1 FUTURE STARS 93)", "GK"),
         ):
             card = cards[name]
-            self.database.add_inventory(wing_user, card.id)
-            self.database.set_lineup_position(wing_user, position, card.id)
+            owner_id = f"{wing_user}-{name}"
+            self.database.set_formation(
+                owner_id,
+                "Offensive" if position in {"WING1", "WING2"} else "Balanced",
+            )
+            self.database.add_inventory(owner_id, card.id)
+            self.database.set_lineup_position(owner_id, position, card.id)
             self.assertEqual(
-                self.database.get_lineup(wing_user)[position].id,
+                self.database.get_lineup(owner_id)[position].id,
                 card.id,
             )
 
@@ -623,10 +693,11 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
         for index, name in enumerate(NEW_CARDS):
             bench_user = f"future-stars-bench-{index}"
             card = cards[name]
+            position = "SUB1" if index % 2 == 0 else "SUB2"
             self.database.add_inventory(bench_user, card.id)
-            self.database.set_lineup_position(bench_user, "SUB1", card.id)
+            self.database.set_lineup_position(bench_user, position, card.id)
             self.assertEqual(
-                self.database.get_lineup(bench_user)["SUB1"].id,
+                self.database.get_lineup(bench_user)[position].id,
                 card.id,
             )
 
@@ -642,5 +713,5 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
             float(item.rsplit(" ", 1)[1].rstrip("%"))
             for item in odds_text.split(" · ")
         ]
-        assert len(odds) == 5
+        assert len(odds) == 8
         assert abs(sum(odds) - 100.0) < 0.02

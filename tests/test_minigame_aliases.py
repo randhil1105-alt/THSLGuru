@@ -53,6 +53,16 @@ class GuessThePlayerAliasTests(unittest.TestCase):
             ("EBS", "ebs", "Ebs"),
         )
 
+    def test_future_stars_aliases_match_new_cards(self) -> None:
+        for card_name, base_name in (
+            ("HHH (S1 FUTURE STARS 89)", "HHH"),
+            ("Lauren (S1 FUTURE STARS 93)", "Lauren"),
+            ("Guzzinga (S1 FUTURE STARS 92)", "Guzzinga"),
+        ):
+            with self.subTest(card=card_name):
+                self.assertTrue(answer_matches_player(base_name, card_name))
+                self.assertTrue(answer_matches_player(card_name, card_name))
+
     def test_normal_names_match_with_case_and_outer_whitespace(self) -> None:
         for name in ("Apex", "Megan", "Frozend", "Sluckz"):
             with self.subTest(name=name):

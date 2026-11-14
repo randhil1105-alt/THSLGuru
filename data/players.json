@@ -1030,5 +1030,62 @@
     },
     "image_path": "cards/karuwrld_s1_future_stars_88.png",
     "allowed_lineup_positions": ["CM1", "CM2"]
+  },
+  {
+    "name": "HHH (S1 FUTURE STARS 89)",
+    "overall": 89,
+    "position": "WI",
+    "country": "England 🇬🇧",
+    "team": "Anaheim Ducks",
+    "rarity": "S1 FUTURE STARS",
+    "value": 12000000,
+    "stats": {
+      "SHO": 92,
+      "DRI": 84,
+      "SAV": 79,
+      "PAS": 85,
+      "DEF": 80,
+      "ACT": 84
+    },
+    "image_path": "cards/hhh_s1_future_stars_89.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Lauren (S1 FUTURE STARS 93)",
+    "overall": 93,
+    "position": "GK",
+    "country": "England 🇬🇧",
+    "team": "New York Rangers",
+    "rarity": "S1 FUTURE STARS",
+    "value": 30000000,
+    "stats": {
+      "SAV": 93,
+      "DIV": 95,
+      "PAS": 88,
+      "SWE": 90,
+      "CLE": 91,
+      "ACT": 93
+    },
+    "image_path": "cards/lauren_s1_future_stars_93.png",
+    "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Guzzinga (S1 FUTURE STARS 92)",
+    "overall": 92,
+    "position": "WI",
+    "country": "England 🇬🇧",
+    "team": "New York Rangers",
+    "rarity": "S1 FUTURE STARS",
+    "value": 24000000,
+    "stats": {
+      "SHO": 93,
+      "DRI": 95,
+      "SAV": 84,
+      "PAS": 92,
+      "DEF": 90,
+      "ACT": 87
+    },
+    "image_path": "cards/guzzinga_s1_future_stars_92.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
   }
 ]

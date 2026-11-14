@@ -1782,6 +1782,9 @@ class DatabaseTests(unittest.TestCase):
                 "Ryuko (S1 FUTURE STARS 91)",
                 "Gamer (S1 FUTURE STARS 93)",
                 "KaruWRLD (S1 FUTURE STARS 88)",
+                "HHH (S1 FUTURE STARS 89)",
+                "Lauren (S1 FUTURE STARS 93)",
+                "Guzzinga (S1 FUTURE STARS 92)",
             },
         )
         self.assertEqual(future_stars_awarded.rarity, "S1 FUTURE STARS")

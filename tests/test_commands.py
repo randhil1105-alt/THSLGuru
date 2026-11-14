@@ -2458,6 +2458,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "Ryuko (S1 FUTURE STARS 91)": "Ryuko",
                     "Gamer (S1 FUTURE STARS 93)": "Gamer",
                     "KaruWRLD (S1 FUTURE STARS 88)": "KaruWRLD",
+                    "HHH (S1 FUTURE STARS 89)": "HHH",
+                    "Lauren (S1 FUTURE STARS 93)": "Lauren",
+                    "Guzzinga (S1 FUTURE STARS 92)": "Guzzinga",
             "Ebs (S1 TOTY 98)": "Ebs",
             "Hala (S1 TOTY 99)": "Hala",
             "Cam (S1 TOTY 97)": "Cam",
@@ -3485,11 +3488,14 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Ryuko (S1 FUTURE STARS 91)",
             "Gamer (S1 FUTURE STARS 93)",
         ):
-            self.assertIn(f"{name} 16.67%", future_stars_field)
+            self.assertIn(f"{name} 10.00%", future_stars_field)
         self.assertIn(
-            "KaruWRLD (S1 FUTURE STARS 88) 33.33%",
+            "KaruWRLD (S1 FUTURE STARS 88) 20.00%",
             future_stars_field,
         )
+        self.assertIn("HHH (S1 FUTURE STARS 89) 20.00%", future_stars_field)
+        self.assertIn("Lauren (S1 FUTURE STARS 93) 10.00%", future_stars_field)
+        self.assertIn("Guzzinga (S1 FUTURE STARS 92) 10.00%", future_stars_field)
         self.assert_pack_menu_shows_odds(menu["embed"])
 
         view = menu["view"]

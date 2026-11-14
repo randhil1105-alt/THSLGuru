@@ -47,7 +47,7 @@ SPECIAL_PLAYER_ALIASES = {
     "ebs": frozenset({"EBS", "ebs", "Ebs"}),
 }
 CARD_VERSION_SUFFIX = re.compile(
-    r"\s+\((?:gold|totw|s\d+\s+(?:toty|tots))\b[^)]*\)$",
+    r"\s+\((?:gold|totw|s\d+\s+(?:toty|tots|future\s+stars))\b[^)]*\)$",
     re.IGNORECASE,
 )
 
