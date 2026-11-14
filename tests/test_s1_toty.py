@@ -328,13 +328,14 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
                     name,
                     1,
                 )
+                expected_quick_sell = int(expected["value"]) * 80 // 100
                 self.assertIn(
-                    f"{expected['value']:,} coins",
+                    f"{expected_quick_sell:,} coins",
                     sell_response.messages[0]["content"],
                 )
                 self.assertEqual(
                     self.database.get_balance(seller),
-                    expected["value"],
+                    expected_quick_sell,
                 )
 
         inventory_response = FakeResponse()
