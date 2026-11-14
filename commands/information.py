@@ -48,7 +48,7 @@ class InformationCommands(discord_commands.Cog):
                 "`/leaderboard` · See top balances\n"
                 "`/pack pack_type` · Choose GOLD, TOTW, S2 TOTS, S1 TOTS, S1 TOTY, or S1 FUTURE STARS\n"
                 "`/packs quantity` · View packs and buy up to 10 at once\n"
-                "`/sell player quantity` · Sell cards at listed value\n"
+                "`/sell player quantity` · Sell cards for 80% of listed value\n"
                 "`/sellall` or `/sellduplicates` · Review and sell extra copies"
             ),
             inline=False,

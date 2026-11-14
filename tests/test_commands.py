@@ -1040,8 +1040,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             1,
         )
         self.assertIn("99 EBS (S2 TOTS)", sell_response.messages[0]["content"])
-        self.assertIn("34,000,000 coins", sell_response.messages[0]["content"])
-        self.assertEqual(self.database.get_balance(sell_user), 34_000_000)
+        self.assertIn("27,200,000 coins", sell_response.messages[0]["content"])
+        self.assertEqual(self.database.get_balance(sell_user), 27_200_000)
 
         packs_response = FakeResponse()
         await PackCommands.packs.callback(
@@ -1405,10 +1405,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 1,
             )
             self.assertIn(
-                f"{value:,} coins",
+                f"{value * 80 // 100:,} coins",
                 sell_response.messages[0]["content"],
             )
-            self.assertEqual(self.database.get_balance(sell_user), value)
+            self.assertEqual(
+                self.database.get_balance(sell_user),
+                value * 80 // 100,
+            )
 
         team_user = "s1-team-user"
         self.database.add_inventory(team_user, "Dan (S1 TOTS 96)")
@@ -1673,10 +1676,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 1,
             )
             self.assertIn(
-                f"Sold **1× {details['label']}** for 2,600,000 coins",
+                f"Sold **1× {details['label']}** for 2,080,000 coins",
                 sale_response.messages[0]["content"],
             )
-            self.assertEqual(self.database.get_balance(seller_id), 2_600_000)
+            self.assertEqual(self.database.get_balance(seller_id), 2_080_000)
 
     async def test_mr_p_dark_and_road_work_across_card_inventory_pack_and_team(self) -> None:
         expected = {
@@ -1907,10 +1910,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 1,
             )
             self.assertIn(
-                f"Sold **1× {overall} {name} (Gold)** for {value:,} coins",
+                f"Sold **1× {overall} {name} (Gold)** for {value * 80 // 100:,} coins",
                 sale_response.messages[0]["content"],
             )
-            self.assertEqual(self.database.get_balance(seller_id), value)
+            self.assertEqual(
+                self.database.get_balance(seller_id),
+                value * 80 // 100,
+            )
 
     async def test_mason_demox_and_cheddar_work_across_card_and_lineup_commands(self) -> None:
         expected = {
@@ -2085,8 +2091,16 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(),
             "Fad",
         )
+        future_stars_fadi = self.database.get_player(
+            "Fadi (S1 FUTURE STARS 89)"
+        )
+        assert future_stars_fadi is not None
         self.assertEqual([(choice.name, choice.value) for choice in choices], [
             ("86 OVR Fadi (Gold)", str(fadi.id)),
+            (
+                "89 OVR Fadi (S1 FUTURE STARS)",
+                str(future_stars_fadi.id),
+            ),
         ])
         all_choices = await PlayerCommands.card_player_autocomplete(
             cog,
@@ -2461,6 +2475,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     "HHH (S1 FUTURE STARS 89)": "HHH",
                     "Lauren (S1 FUTURE STARS 93)": "Lauren",
                     "Guzzinga (S1 FUTURE STARS 92)": "Guzzinga",
+                    "Zizou (S1 FUTURE STARS 87)": "Zizou",
+                    "Fadi (S1 FUTURE STARS 89)": "Fadi",
             "Ebs (S1 TOTY 98)": "Ebs",
             "Hala (S1 TOTY 99)": "Hala",
             "Cam (S1 TOTY 97)": "Cam",
@@ -2811,10 +2827,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                     1,
                 )
                 self.assertIn(
-                    f"Sold **1× {label}** for {value:,} coins",
+                    f"Sold **1× {label}** for {value * 80 // 100:,} coins",
                     sell_response.messages[0]["content"],
                 )
-                self.assertEqual(self.database.get_balance(inventory_user), value)
+                self.assertEqual(
+                    self.database.get_balance(inventory_user),
+                    value * 80 // 100,
+                )
 
         team_user = "new-gold-cards-team"
         for name, details in expected.items():
@@ -2955,7 +2974,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             1,
         )
         self.assertIn(
-            "Sold **1× 87 Dryboomrun (Gold)** for 1,100,000 coins",
+            "Sold **1× 87 Dryboomrun (Gold)** for 880,000 coins",
             success_response.messages[0]["content"],
         )
 
@@ -3488,14 +3507,16 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Ryuko (S1 FUTURE STARS 91)",
             "Gamer (S1 FUTURE STARS 93)",
         ):
-            self.assertIn(f"{name} 10.00%", future_stars_field)
+            self.assertIn(f"{name} 7.14%", future_stars_field)
         self.assertIn(
-            "KaruWRLD (S1 FUTURE STARS 88) 20.00%",
+            "KaruWRLD (S1 FUTURE STARS 88) 14.29%",
             future_stars_field,
         )
-        self.assertIn("HHH (S1 FUTURE STARS 89) 20.00%", future_stars_field)
-        self.assertIn("Lauren (S1 FUTURE STARS 93) 10.00%", future_stars_field)
-        self.assertIn("Guzzinga (S1 FUTURE STARS 92) 10.00%", future_stars_field)
+        self.assertIn("HHH (S1 FUTURE STARS 89) 14.29%", future_stars_field)
+        self.assertIn("Lauren (S1 FUTURE STARS 93) 7.14%", future_stars_field)
+        self.assertIn("Guzzinga (S1 FUTURE STARS 92) 7.14%", future_stars_field)
+        self.assertIn("Zizou (S1 FUTURE STARS 87) 14.29%", future_stars_field)
+        self.assertIn("Fadi (S1 FUTURE STARS 89) 14.29%", future_stars_field)
         self.assert_pack_menu_shows_odds(menu["embed"])
 
         view = menu["view"]
@@ -4275,12 +4296,12 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 1,
             )
             self.assertIn(
-                f"for {details['value']:,} coins",
+                f"for {details['value'] * 80 // 100:,} coins",
                 sale_response.messages[0]["content"],
             )
             self.assertEqual(
                 self.database.get_balance(seller_id),
-                details["value"],
+                details["value"] * 80 // 100,
             )
     async def test_team_renderer_handles_missing_card_art_without_failing(self) -> None:
         self.database.add_player(

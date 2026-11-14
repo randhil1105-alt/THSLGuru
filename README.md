@@ -24,7 +24,7 @@ persistent SQLite database.
 | `/collection` | Browse all cards and ownership |
 | `/pack pack_type` | Choose a GOLD, TOTW, S2 TOTS, S1 TOTS, or S1 TOTY pack |
 | `/packs` | View weighted card odds, rating bands, prices, and purchase buttons |
-| `/sell player quantity` | Sell owned copies at the card's listed value |
+| `/sell player quantity` | Sell owned copies for 80% of the card's listed value |
 | `/sellall` | Review and sell extra copies while keeping one of each card |
 | `/team` | View your three starters, two substitutes, team value, and rink image |
 | `/set position player` | Choose an owned card version for a compatible slot |

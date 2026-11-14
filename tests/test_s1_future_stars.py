@@ -115,6 +115,28 @@ FUTURE_STARS_CARDS = {
         "image_path": "cards/guzzinga_s1_future_stars_92.png",
         "allowed": ("WING1", "WING2"),
     },
+    "Zizou (S1 FUTURE STARS 87)": {
+        "overall": 87,
+        "position": "C",
+        "country": "England 🇬🇧",
+        "team": "Russia",
+        "rarity": "S1 FUTURE STARS",
+        "value": 8_000_000,
+        "stats": {"SHO": 86, "DRI": 87, "SAV": 85, "PAS": 88, "DEF": 83, "ACT": 86},
+        "image_path": "cards/zizou_s1_future_stars_87.png",
+        "allowed": ("CM1", "CM2"),
+    },
+    "Fadi (S1 FUTURE STARS 89)": {
+        "overall": 89,
+        "position": "WI",
+        "country": "Algeria 🇩🇿",
+        "team": "Pittsburgh Penguins",
+        "rarity": "S1 FUTURE STARS",
+        "value": 12_000_000,
+        "stats": {"SHO": 89, "DRI": 90, "SAV": 80, "PAS": 91, "DEF": 88, "ACT": 85},
+        "image_path": "cards/fadi_s1_future_stars_89.png",
+        "allowed": ("WING1", "WING2"),
+    },
 }
 NEW_CARDS = (
     "Ebs (S1 FUTURE STARS 94)",
@@ -123,6 +145,8 @@ NEW_CARDS = (
     "HHH (S1 FUTURE STARS 89)",
     "Lauren (S1 FUTURE STARS 93)",
     "Guzzinga (S1 FUTURE STARS 92)",
+    "Zizou (S1 FUTURE STARS 87)",
+    "Fadi (S1 FUTURE STARS 89)",
 )
 
 
@@ -205,7 +229,7 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertGreater(width, 250)
                 self.assertGreater(height, 300)
                 self.assertGreater(len(image_data), 50_000)
-        self.assertEqual(len(image_paths), 8)
+        self.assertEqual(len(image_paths), 10)
 
         user_id = "future-stars-seed-preservation"
         self.database.set_balance(user_id, 987)
@@ -222,7 +246,7 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
                 player.rarity == "S1 FUTURE STARS"
                 for player in self.database.get_players()
             ),
-            8,
+            10,
         )
 
     def test_legacy_ebs_and_team_corrections_preserve_ids_inventory_and_receipts(
@@ -321,22 +345,27 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(PACKS[-1], ("S1 FUTURE STARS", 30_000_000))
         self.assertEqual(S1_FUTURE_STARS_PACK_COST, 30_000_000)
         odds = calculate_pack_odds(pool)
-        self.assertEqual(len(odds), 8)
+        self.assertEqual(len(odds), 10)
         for name in (
             "Ebs (S1 FUTURE STARS 94)",
             "Dan (S1 FUTURE STARS 90)",
             "Ryuko (S1 FUTURE STARS 91)",
             "Gamer (S1 FUTURE STARS 93)",
+            "Lauren (S1 FUTURE STARS 93)",
+            "Guzzinga (S1 FUTURE STARS 92)",
         ):
             card = cards[name]
-            self.assertAlmostEqual(odds[card.id], 10)
+            self.assertAlmostEqual(odds[card.id], 100 / 14)
         self.assertAlmostEqual(
             odds[cards["KaruWRLD (S1 FUTURE STARS 88)"].id],
-            20,
+            200 / 14,
         )
-        self.assertAlmostEqual(odds[cards["HHH (S1 FUTURE STARS 89)"].id], 20)
-        self.assertAlmostEqual(odds[cards["Lauren (S1 FUTURE STARS 93)"].id], 10)
-        self.assertAlmostEqual(odds[cards["Guzzinga (S1 FUTURE STARS 92)"].id], 10)
+        for name in (
+            "HHH (S1 FUTURE STARS 89)",
+            "Zizou (S1 FUTURE STARS 87)",
+            "Fadi (S1 FUTURE STARS 89)",
+        ):
+            self.assertAlmostEqual(odds[cards[name].id], 200 / 14)
 
         for index, name in enumerate(FUTURE_STARS_CARDS):
             with self.subTest(card=name):
@@ -583,8 +612,9 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
                 user_id = f"future-stars-seller-{index}"
                 self.database.add_inventory(user_id, card.id, 3)
                 proceeds, balance = self.database.sell_card(user_id, card.name, 1)
-                self.assertEqual(proceeds, card.value)
-                self.assertEqual(balance, card.value)
+                expected_quick_sell = card.value * 80 // 100
+                self.assertEqual(proceeds, expected_quick_sell)
+                self.assertEqual(balance, expected_quick_sell)
                 preview = self.database.get_duplicate_sale_preview(user_id)
                 self.assertEqual(preview.items[0].unit_value, card.value)
                 duplicate_result = self.database.sell_duplicate_cards(
@@ -593,7 +623,10 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
                     preview.items,
                 )
                 self.assertEqual(duplicate_result.total_earnings, card.value)
-                self.assertEqual(duplicate_result.new_balance, card.value * 2)
+                self.assertEqual(
+                    duplicate_result.new_balance,
+                    expected_quick_sell + card.value,
+                )
                 self.assertEqual(
                     self.database.get_inventory(user_id)[0].quantity,
                     1,
@@ -666,12 +699,20 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
             ("HHH (S1 FUTURE STARS 89)", "WING1"),
             ("Guzzinga (S1 FUTURE STARS 92)", "WING2"),
             ("Lauren (S1 FUTURE STARS 93)", "GK"),
+            ("Zizou (S1 FUTURE STARS 87)", "CM1"),
+            ("Fadi (S1 FUTURE STARS 89)", "WING1"),
         ):
             card = cards[name]
             owner_id = f"{wing_user}-{name}"
             self.database.set_formation(
                 owner_id,
-                "Offensive" if position in {"WING1", "WING2"} else "Balanced",
+                (
+                    "Offensive"
+                    if position in {"WING1", "WING2"}
+                    else "Defensive"
+                    if position == "CM1"
+                    else "Balanced"
+                ),
             )
             self.database.add_inventory(owner_id, card.id)
             self.database.set_lineup_position(owner_id, position, card.id)
@@ -713,5 +754,5 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
             float(item.rsplit(" ", 1)[1].rstrip("%"))
             for item in odds_text.split(" · ")
         ]
-        assert len(odds) == 8
+        assert len(odds) == 10
         assert abs(sum(odds) - 100.0) < 0.02

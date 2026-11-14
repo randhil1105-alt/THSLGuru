@@ -190,7 +190,7 @@ class TOTWCardAdditionTests(unittest.IsolatedAsyncioTestCase):
                     [(card.id, 1)],
                 )
 
-    def test_inventory_and_both_selling_flows_use_each_cards_value(self) -> None:
+    def test_inventory_and_selling_flows_use_the_configured_payouts(self) -> None:
         cards = self._cards()
         for index, (name, card) in enumerate(cards.items()):
             with self.subTest(card=name):
@@ -198,8 +198,9 @@ class TOTWCardAdditionTests(unittest.IsolatedAsyncioTestCase):
                 self.database.add_inventory(user_id, card.id, 3)
 
                 proceeds, balance = self.database.sell_card(user_id, card.name, 1)
-                self.assertEqual(proceeds, card.value)
-                self.assertEqual(balance, card.value)
+                quick_sell_value = card.value * 80 // 100
+                self.assertEqual(proceeds, quick_sell_value)
+                self.assertEqual(balance, quick_sell_value)
 
                 preview = self.database.get_duplicate_sale_preview(user_id)
                 self.assertEqual(preview.total_cards, 1)
@@ -211,7 +212,10 @@ class TOTWCardAdditionTests(unittest.IsolatedAsyncioTestCase):
                     preview.items,
                 )
                 self.assertEqual(result.total_earnings, card.value)
-                self.assertEqual(result.new_balance, card.value * 2)
+                self.assertEqual(
+                    result.new_balance,
+                    quick_sell_value + card.value,
+                )
                 self.assertEqual(
                     [(entry.player.id, entry.quantity)
                      for entry in self.database.get_inventory(user_id)],

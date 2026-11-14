@@ -1785,6 +1785,8 @@ class DatabaseTests(unittest.TestCase):
                 "HHH (S1 FUTURE STARS 89)",
                 "Lauren (S1 FUTURE STARS 93)",
                 "Guzzinga (S1 FUTURE STARS 92)",
+                "Zizou (S1 FUTURE STARS 87)",
+                "Fadi (S1 FUTURE STARS 89)",
             },
         )
         self.assertEqual(future_stars_awarded.rarity, "S1 FUTURE STARS")
@@ -2023,18 +2025,18 @@ class DatabaseTests(unittest.TestCase):
         )
         self.assertEqual(empty_catalog.get_inventory("totw-user"), [])
 
-    def test_sale_checks_ownership_and_credits_listed_value(self) -> None:
+    def test_sale_checks_ownership_and_credits_eighty_percent_of_listed_value(self) -> None:
         self.database.add_inventory("seller", "Dan", 2)
         proceeds, balance = self.database.sell_card("seller", "Dan", 1)
-        self.assertEqual(proceeds, 1_100_000)
-        self.assertEqual(balance, 1_100_000)
+        self.assertEqual(proceeds, 880_000)
+        self.assertEqual(balance, 880_000)
         self.assertEqual(self.database.get_inventory("seller")[0].quantity, 1)
 
-    def test_new_gold_card_sales_credit_the_exact_listed_value(self) -> None:
+    def test_new_gold_card_sales_credit_eighty_percent_of_listed_value(self) -> None:
         for name, value in (
-            ("Chicken", 500_000),
-            ("Sluckz", 430_000),
-            ("Frozend", 1_200_000),
+            ("Chicken", 400_000),
+            ("Sluckz", 344_000),
+            ("Frozend", 960_000),
         ):
             with self.subTest(card=name):
                 user_id = f"new-card-seller-{name.casefold()}"
@@ -2043,7 +2045,7 @@ class DatabaseTests(unittest.TestCase):
                 self.assertEqual((proceeds, balance), (value, value))
                 self.assertEqual(self.database.get_inventory(user_id), [])
 
-    def test_each_totw_card_sells_for_twelve_million(self) -> None:
+    def test_each_totw_card_sells_for_eighty_percent_of_value(self) -> None:
         for card_name in ("Licha", "Hala"):
             with self.subTest(card=card_name):
                 user_id = f"totw-seller-{card_name.casefold()}"
@@ -2054,8 +2056,8 @@ class DatabaseTests(unittest.TestCase):
                 self.assertEqual(card.value, 12_000_000)
                 self.database.add_inventory(user_id, card_name)
                 proceeds, balance = self.database.sell_card(user_id, card_name)
-                self.assertEqual(proceeds, 12_000_000)
-                self.assertEqual(balance, 12_000_000)
+                self.assertEqual(proceeds, 9_600_000)
+                self.assertEqual(balance, 9_600_000)
 
 
 if __name__ == "__main__":

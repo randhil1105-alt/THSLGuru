@@ -52,6 +52,7 @@ TRADE_REQUEST_SECONDS = 2 * 60
 TRADE_INACTIVE_SECONDS = 30 * 60
 AUCTION_DURATIONS_SECONDS = (30 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60)
 SQLITE_INT_MAX = (1 << 63) - 1
+SELL_VALUE_PERCENT = 80
 SUPPORTED_STATS = ("SHO", "DRI", "SAV", "PAS", "DEF", "ACT", "DIV", "CLE", "SWE")
 FORMATION_STARTERS = {
     "Balanced": ("WING1", "CM1", "GK"),
@@ -492,6 +493,11 @@ def card_rating_band(overall: int) -> tuple[str, float]:
 def card_rating_weight(overall: int) -> float:
     """Return the per-card weight for its overall-rating band."""
     return card_rating_band(overall)[1]
+
+
+def calculate_sell_payout(value: int) -> int:
+    """Return 80% of a card's catalog value, rounded down to whole coins."""
+    return int(value) * SELL_VALUE_PERCENT // 100
 
 
 def calculate_pack_odds(players: Sequence[Player]) -> dict[int, float]:
@@ -4934,9 +4940,14 @@ class Database:
             raise AuctionExpired("This auction expired and has been settled.")
         return result
     def sell_card(
-        self, user_id: str | int, player_name: str, quantity: int = 1
+        self,
+        user_id: str | int,
+        player_name: str,
+        quantity: int = 1,
+        *,
+        expected_value: int | None = None,
     ) -> tuple[int, int]:
-        """Sell owned copies at the listed value; return (coins earned, new balance)."""
+        """Sell copies at 80% of listed value, atomically updating cards and coins."""
         normalized_id = self._validate_user_id(user_id)
         quantity = self._validate_amount(quantity)
         with self._transaction() as connection:
@@ -4946,6 +4957,13 @@ class Database:
             ).fetchone()
             if not player:
                 raise PlayerNotFound(player_name)
+            if (
+                expected_value is not None
+                and int(player["value"]) != int(expected_value)
+            ):
+                raise InvalidAmount(
+                    "This card's value changed. Open a new Quick Sell confirmation."
+                )
             owned = connection.execute(
                 "SELECT quantity FROM inventory WHERE user_id = ? AND player_id = ?",
                 (normalized_id, int(player["id"])),
@@ -4957,7 +4975,7 @@ class Database:
                     f"{format_card_label(player['name'], player['overall'], player['rarity'])}."
                 )
 
-            proceeds = int(player["value"]) * quantity
+            proceeds = calculate_sell_payout(int(player["value"])) * quantity
             if proceeds > SQLITE_INT_MAX:
                 raise InvalidAmount("The sale proceeds exceed the supported maximum.")
             self._ensure_user(connection, normalized_id)

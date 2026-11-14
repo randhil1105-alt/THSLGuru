@@ -9,6 +9,7 @@ from discord import app_commands
 from discord.ext import commands as discord_commands
 
 from commands.common import format_coins, player_card_label, send_player_card
+from commands.quick_sell import QuickSellView
 from commands.xp import mark_successful_command
 from database import (
     CooldownActive,
@@ -59,6 +60,12 @@ class EconomyCommands(discord_commands.Cog):
             content=(
                 f"Your claim reward: **{player_card_label(player)}**. "
                 f"Next claim: <t:{next_claim_at}:R>."
+            ),
+            view=QuickSellView(
+                self.database,
+                interaction.user.id,
+                [player],
+                allow_keep=True,
             ),
         )
         mark_successful_command(interaction)

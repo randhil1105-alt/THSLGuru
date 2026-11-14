@@ -15,6 +15,7 @@ from commands.common import (
     resolve_card_image,
     send_player_card,
 )
+from commands.quick_sell import QuickSellView
 from commands.xp import mark_successful_command
 from database import (
     GOLD_PACK_COST,
@@ -289,6 +290,11 @@ class PackCommands(discord_commands.Cog):
                 players[0],
                 ephemeral=False,
                 content=content,
+                view=QuickSellView(
+                    self.database,
+                    interaction.user.id,
+                    players,
+                ),
             )
             return
 
@@ -316,6 +322,11 @@ class PackCommands(discord_commands.Cog):
                 )
             embeds.append(embed)
 
+        quick_sell_view = QuickSellView(
+            self.database,
+            interaction.user.id,
+            players,
+        )
         await interaction.response.send_message(
             content=(
                 (
@@ -330,7 +341,9 @@ class PackCommands(discord_commands.Cog):
             embeds=embeds,
             files=files or None,
             ephemeral=False,
+            view=quick_sell_view,
         )
+        await quick_sell_view.bind_message(interaction)
 
     async def _open_free_reward(
         self,
@@ -366,6 +379,11 @@ class PackCommands(discord_commands.Cog):
             content=(
                 f"You opened a **FREE {pack_name}** level-up reward. "
                 f"Remaining free {format_card_type(rarity)} packs: **{remaining}**."
+            ),
+            view=QuickSellView(
+                self.database,
+                interaction.user.id,
+                [player],
             ),
         )
 

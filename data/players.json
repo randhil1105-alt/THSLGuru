@@ -1087,5 +1087,43 @@
     },
     "image_path": "cards/guzzinga_s1_future_stars_92.png",
     "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Zizou (S1 FUTURE STARS 87)",
+    "overall": 87,
+    "position": "C",
+    "country": "England 🇬🇧",
+    "team": "Russia",
+    "rarity": "S1 FUTURE STARS",
+    "value": 8000000,
+    "stats": {
+      "SHO": 86,
+      "DRI": 87,
+      "SAV": 85,
+      "PAS": 88,
+      "DEF": 83,
+      "ACT": 86
+    },
+    "image_path": "cards/zizou_s1_future_stars_87.png",
+    "allowed_lineup_positions": ["CM1", "CM2"]
+  },
+  {
+    "name": "Fadi (S1 FUTURE STARS 89)",
+    "overall": 89,
+    "position": "WI",
+    "country": "Algeria 🇩🇿",
+    "team": "Pittsburgh Penguins",
+    "rarity": "S1 FUTURE STARS",
+    "value": 12000000,
+    "stats": {
+      "SHO": 89,
+      "DRI": 90,
+      "SAV": 80,
+      "PAS": 91,
+      "DEF": 88,
+      "ACT": 85
+    },
+    "image_path": "cards/fadi_s1_future_stars_89.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
   }
 ]

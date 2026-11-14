@@ -106,6 +106,7 @@ async def send_player_card(
     *,
     ephemeral: bool = False,
     content: str | None = None,
+    view: discord.ui.View | None = None,
 ) -> None:
     embed = player_embed(player)
     image_path = resolve_card_image(player)
@@ -130,7 +131,11 @@ async def send_player_card(
         embed=embed,
         file=upload,
         ephemeral=ephemeral,
+        view=view,
     )
+    bind_message = getattr(view, "bind_message", None)
+    if bind_message is not None:
+        await bind_message(interaction)
 
 
 def inventory_embed(
