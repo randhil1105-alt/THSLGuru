@@ -91,6 +91,7 @@ EXPECTED_COMMANDS = {
     "resetall",
     "minigame",
     "match",
+    "tournament",
     "trade",
     "tradecard",
     "auction",
@@ -636,6 +637,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`/pack pack_type`", help_text)
         self.assertIn("`/packs quantity`", help_text)
         self.assertIn("`/match opponent`", help_text)
+        self.assertIn("`/tournament`", help_text)
         self.assertIn("`/trade request player`", help_text)
         self.assertIn("`/trade card action card`", help_text)
         self.assertIn("`/claim` · Claim a GOLD player card every 30 minutes", help_text)

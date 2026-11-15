@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import sqlite3
 import time
@@ -48,6 +49,18 @@ DRAFT_WIN_REWARD = 200_000
 DAILY_REWARD_COINS = 5_000_000
 DAILY_REWARD_TOTW_PACKS = 1
 DAILY_REWARD_COOLDOWN_SECONDS = 24 * 60 * 60
+TOURNAMENT_ROUND_REWARD = 200_000
+TOURNAMENT_COMPLETION_BONUS = 1_000_000
+TOURNAMENT_STAGE_LABELS = {
+    1: "Quarterfinals",
+    2: "Semifinals",
+    3: "Finals",
+}
+TOURNAMENT_AI_RATING_RANGES = {
+    1: (70, 85),
+    2: (86, 95),
+    3: (95, 99),
+}
 TRADE_REQUEST_SECONDS = 2 * 60
 TRADE_INACTIVE_SECONDS = 30 * 60
 AUCTION_DURATIONS_SECONDS = (30 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60)
@@ -286,6 +299,38 @@ class InvalidMatchParticipant(MatchError):
 
 
 class InvalidMatchResult(MatchError):
+    pass
+
+
+class TournamentError(EconomyError):
+    """Base class for expected tournament and round errors."""
+
+
+class TournamentNotFound(TournamentError):
+    pass
+
+
+class TournamentNotActive(TournamentError):
+    pass
+
+
+class TournamentInvalidLineup(TournamentError):
+    pass
+
+
+class TournamentLineupChanged(TournamentError):
+    pass
+
+
+class TournamentInvalidRound(TournamentError):
+    pass
+
+
+class TournamentInvalidResult(TournamentError):
+    pass
+
+
+class TournamentInvalidOpponent(TournamentError):
     pass
 
 
@@ -702,6 +747,39 @@ class Database:
                 CREATE TABLE IF NOT EXISTS active_match_users (
                     user_id TEXT PRIMARY KEY,
                     match_id TEXT NOT NULL REFERENCES matches(match_id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS tournaments (
+                    tournament_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    status TEXT NOT NULL CHECK (
+                        status IN ('ACTIVE', 'ELIMINATED', 'COMPLETED')
+                    ),
+                    current_round INTEGER NOT NULL CHECK (current_round BETWEEN 1 AND 3),
+                    started_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS one_active_tournament_per_user
+                    ON tournaments(user_id) WHERE status = 'ACTIVE';
+
+                CREATE TABLE IF NOT EXISTS tournament_rounds (
+                    tournament_id TEXT NOT NULL
+                        REFERENCES tournaments(tournament_id) ON DELETE CASCADE,
+                    round_number INTEGER NOT NULL CHECK (round_number BETWEEN 1 AND 3),
+                    stage TEXT NOT NULL CHECK (
+                        stage IN ('Quarterfinals', 'Semifinals', 'Finals')
+                    ),
+                    player_lineup_json TEXT NOT NULL,
+                    opponent_lineup_json TEXT NOT NULL,
+                    player_rating INTEGER NOT NULL CHECK (player_rating BETWEEN 0 AND 99),
+                    opponent_rating INTEGER NOT NULL CHECK (opponent_rating BETWEEN 0 AND 99),
+                    result_json TEXT NOT NULL,
+                    won INTEGER NOT NULL CHECK (won IN (0, 1)),
+                    round_reward INTEGER NOT NULL DEFAULT 0 CHECK (round_reward >= 0),
+                    completion_bonus INTEGER NOT NULL DEFAULT 0 CHECK (completion_bonus >= 0),
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (tournament_id, round_number)
                 );
 
                 CREATE TABLE IF NOT EXISTS draft_cooldowns (
@@ -2339,6 +2417,7 @@ class Database:
                 "quest_event_receipts",
                 "pack_purchases",
                 "duplicate_sale_receipts",
+                "tournaments",
             ):
                 connection.execute(f"DELETE FROM {table}")
 
@@ -3129,6 +3208,423 @@ class Database:
         normalized_id = self._validate_user_id(user_id)
         with self._read_connection() as connection:
             return self._starting_lineup_from_connection(connection, normalized_id)
+
+    @staticmethod
+    def _tournament_lineup_from_connection(
+        connection: sqlite3.Connection,
+        user_id: str,
+    ) -> dict[str, Any]:
+        validated = Database._starting_lineup_from_connection(connection, user_id)
+        if validated.missing_slots:
+            raise TournamentInvalidLineup(
+                "Fill every compatible starting slot with an owned card using /set "
+                f"before playing. Missing: {', '.join(validated.missing_slots)}."
+            )
+
+        active_positions = FORMATION_STARTERS[validated.formation]
+        placeholders = ", ".join("?" for _ in active_positions)
+        rows = connection.execute(
+            f"""
+            SELECT team_starters.position AS lineup_position, players.*
+            FROM team_starters
+            JOIN players ON players.id = team_starters.player_id
+            JOIN inventory
+                ON inventory.user_id = team_starters.user_id
+                AND inventory.player_id = team_starters.player_id
+            WHERE team_starters.user_id = ?
+                AND team_starters.position IN ({placeholders})
+                AND inventory.quantity > 0
+            """,
+            (user_id, *active_positions),
+        ).fetchall()
+
+        valid_by_position: dict[str, Player] = {}
+        for row in rows:
+            position = str(row["lineup_position"])
+            player = Database._player_from_row(row)
+            if (
+                card_position_role(player.position) == POSITION_ROLE_BY_SLOT.get(position)
+                and (
+                    player.allowed_lineup_positions is None
+                    or position in player.allowed_lineup_positions
+                )
+            ):
+                valid_by_position[position] = player
+
+        return {
+            "formation": validated.formation,
+            "starters": [
+                {
+                    "player_id": valid_by_position[position].id,
+                    "slot": position,
+                    "name": valid_by_position[position].name,
+                    "overall": valid_by_position[position].overall,
+                    "position": valid_by_position[position].position,
+                }
+                for position in active_positions
+            ],
+        }
+
+    @staticmethod
+    def _tournament_from_connection(
+        connection: sqlite3.Connection,
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        tournament = dict(row)
+        rounds = connection.execute(
+            """
+            SELECT * FROM tournament_rounds
+            WHERE tournament_id = ?
+            ORDER BY round_number
+            """,
+            (str(tournament["tournament_id"]),),
+        ).fetchall()
+        tournament["rounds"] = [
+            {
+                "round_number": int(round_row["round_number"]),
+                "stage": str(round_row["stage"]),
+                "player_lineup": json.loads(round_row["player_lineup_json"]),
+                "opponent_lineup": json.loads(round_row["opponent_lineup_json"]),
+                "player_rating": int(round_row["player_rating"]),
+                "opponent_rating": int(round_row["opponent_rating"]),
+                "result": json.loads(round_row["result_json"]),
+                "won": bool(round_row["won"]),
+                "round_reward": int(round_row["round_reward"]),
+                "completion_bonus": int(round_row["completion_bonus"]),
+                "created_at": int(round_row["created_at"]),
+            }
+            for round_row in rounds
+        ]
+        return tournament
+
+    def get_tournament_for_user(self, user_id: str | int) -> dict[str, Any] | None:
+        """Return the active tournament, or the player's most recent result."""
+        normalized_id = self._validate_user_id(user_id)
+        with self._read_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM tournaments
+                WHERE user_id = ?
+                ORDER BY CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END,
+                         started_at DESC,
+                         rowid DESC
+                LIMIT 1
+                """,
+                (normalized_id,),
+            ).fetchone()
+            return self._tournament_from_connection(connection, row)
+
+    def start_tournament(
+        self,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+        tournament_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create one active tournament after validating the owned starting lineup."""
+        normalized_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        normalized_tournament_id = str(tournament_id or uuid.uuid4().hex).strip()
+        if not normalized_tournament_id or len(normalized_tournament_id) > 100:
+            raise TournamentError("Tournament ID is invalid.")
+
+        with self._transaction() as connection:
+            self._ensure_user(connection, normalized_id)
+            active = connection.execute(
+                """
+                SELECT * FROM tournaments
+                WHERE user_id = ? AND status = 'ACTIVE'
+                """,
+                (normalized_id,),
+            ).fetchone()
+            if active:
+                return self._tournament_from_connection(connection, active) or {}
+
+            self._tournament_lineup_from_connection(connection, normalized_id)
+            connection.execute(
+                """
+                INSERT INTO tournaments(
+                    tournament_id, user_id, status, current_round, started_at, updated_at
+                ) VALUES (?, ?, 'ACTIVE', 1, ?, ?)
+                """,
+                (
+                    normalized_tournament_id,
+                    normalized_id,
+                    current_time,
+                    current_time,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM tournaments WHERE tournament_id = ?",
+                (normalized_tournament_id,),
+            ).fetchone()
+            return self._tournament_from_connection(connection, row) or {}
+
+    def get_tournament_match_context(
+        self,
+        user_id: str | int,
+        tournament_id: str,
+    ) -> dict[str, Any]:
+        """Read an active round, owned lineup, and AI card catalog consistently."""
+        normalized_id = self._validate_user_id(user_id)
+        normalized_tournament_id = str(tournament_id).strip()
+        with self._read_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM tournaments
+                WHERE tournament_id = ? AND user_id = ?
+                """,
+                (normalized_tournament_id, normalized_id),
+            ).fetchone()
+            if row is None:
+                raise TournamentNotFound("This tournament could not be found.")
+            if str(row["status"]) != "ACTIVE":
+                raise TournamentNotActive("This tournament has already ended.")
+            tournament = self._tournament_from_connection(connection, row)
+            lineup = self._tournament_lineup_from_connection(
+                connection,
+                normalized_id,
+            )
+            catalog_rows = connection.execute(
+                "SELECT * FROM players ORDER BY id"
+            ).fetchall()
+            return {
+                "tournament": tournament,
+                "formation": lineup["formation"],
+                "player_lineup": lineup["starters"],
+                "catalog": [self._player_from_row(player_row) for player_row in catalog_rows],
+            }
+
+    @staticmethod
+    def _normalize_tournament_lineup(
+        lineup: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        try:
+            normalized = [
+                {
+                    "player_id": int(starter["player_id"]),
+                    "slot": str(starter["slot"]).strip().upper(),
+                    "name": str(starter["name"]).strip(),
+                    "overall": int(starter["overall"]),
+                    "position": str(starter["position"]).strip(),
+                }
+                for starter in lineup
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise TournamentInvalidLineup("The saved lineup is invalid.") from exc
+        if (
+            len(normalized) != 3
+            or any(starter["player_id"] < 1 for starter in normalized)
+            or any(not 0 <= starter["overall"] <= 99 for starter in normalized)
+            or len({starter["player_id"] for starter in normalized}) != 3
+            or len({starter["slot"] for starter in normalized}) != 3
+        ):
+            raise TournamentInvalidLineup("The saved lineup is invalid.")
+        return normalized
+
+    def complete_tournament_round(
+        self,
+        user_id: str | int,
+        tournament_id: str,
+        round_number: int,
+        *,
+        player_lineup: Sequence[Mapping[str, Any]],
+        opponent_lineup: Sequence[Mapping[str, Any]],
+        result: Mapping[str, Any],
+        now: int | None = None,
+    ) -> dict[str, Any]:
+        """Save a round and its one-time reward atomically."""
+        normalized_id = self._validate_user_id(user_id)
+        normalized_tournament_id = str(tournament_id).strip()
+        if isinstance(round_number, bool) or round_number not in TOURNAMENT_STAGE_LABELS:
+            raise TournamentInvalidRound("That tournament round is invalid.")
+        current_time = int(time.time() if now is None else now)
+        normalized_player_lineup = self._normalize_tournament_lineup(player_lineup)
+        normalized_opponent_lineup = self._normalize_tournament_lineup(opponent_lineup)
+
+        try:
+            home_score = result["home_score"]
+            away_score = result["away_score"]
+            winner_id = str(result["winner_id"])
+            if (
+                isinstance(home_score, bool)
+                or isinstance(away_score, bool)
+                or not isinstance(home_score, int)
+                or not isinstance(away_score, int)
+                or home_score < 0
+                or away_score < 0
+                or home_score == away_score
+            ):
+                raise ValueError
+            expected_winner = "player" if home_score > away_score else "ai"
+            if winner_id != expected_winner:
+                raise ValueError
+            result_json = json.dumps(dict(result), separators=(",", ":"), sort_keys=True)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise TournamentInvalidResult("The match result is invalid.") from exc
+
+        stage = TOURNAMENT_STAGE_LABELS[round_number]
+        minimum_ai_rating, maximum_ai_rating = TOURNAMENT_AI_RATING_RANGES[
+            round_number
+        ]
+        with self._transaction() as connection:
+            tournament_row = connection.execute(
+                """
+                SELECT * FROM tournaments
+                WHERE tournament_id = ? AND user_id = ?
+                """,
+                (normalized_tournament_id, normalized_id),
+            ).fetchone()
+            if tournament_row is None:
+                raise TournamentNotFound("This tournament could not be found.")
+
+            saved_round = connection.execute(
+                """
+                SELECT 1 FROM tournament_rounds
+                WHERE tournament_id = ? AND round_number = ?
+                """,
+                (normalized_tournament_id, round_number),
+            ).fetchone()
+            if saved_round:
+                return self._tournament_from_connection(connection, tournament_row) or {}
+            if str(tournament_row["status"]) != "ACTIVE":
+                raise TournamentNotActive("This tournament has already ended.")
+            if int(tournament_row["current_round"]) != round_number:
+                raise TournamentInvalidRound(
+                    "That round is no longer the current tournament round."
+                )
+
+            current_lineup = self._tournament_lineup_from_connection(
+                connection,
+                normalized_id,
+            )
+            canonical = lambda entries: sorted(
+                (
+                    item["player_id"],
+                    item["slot"],
+                    item["name"],
+                    item["overall"],
+                    item["position"],
+                )
+                for item in entries
+            )
+            if (
+                current_lineup["formation"] not in FORMATION_STARTERS
+                or canonical(normalized_player_lineup)
+                != canonical(current_lineup["starters"])
+            ):
+                raise TournamentLineupChanged(
+                    "Your starting lineup changed before the round was saved. "
+                    "Run /tournament to continue."
+                )
+
+            expected_slots = set(FORMATION_STARTERS[current_lineup["formation"]])
+            if {item["slot"] for item in normalized_opponent_lineup} != expected_slots:
+                raise TournamentInvalidOpponent(
+                    "The AI lineup does not match the tournament formation."
+                )
+            opponent_ids = [item["player_id"] for item in normalized_opponent_lineup]
+            opponent_rows = connection.execute(
+                f"SELECT * FROM players WHERE id IN ({', '.join('?' for _ in opponent_ids)})",
+                opponent_ids,
+            ).fetchall()
+            opponent_players = {
+                int(player_row["id"]): self._player_from_row(player_row)
+                for player_row in opponent_rows
+            }
+            for starter in normalized_opponent_lineup:
+                player = opponent_players.get(starter["player_id"])
+                if (
+                    player is None
+                    or player.name != starter["name"]
+                    or player.overall != starter["overall"]
+                    or player.position != starter["position"]
+                    or not minimum_ai_rating <= player.overall <= maximum_ai_rating
+                    or card_position_role(player.position)
+                    != POSITION_ROLE_BY_SLOT.get(starter["slot"])
+                    or (
+                        player.allowed_lineup_positions is not None
+                        and starter["slot"] not in player.allowed_lineup_positions
+                    )
+                ):
+                    raise TournamentInvalidOpponent(
+                        "The AI lineup contains a card that cannot play this round."
+                    )
+
+            player_rating = math.floor(
+                sum(item["overall"] for item in normalized_player_lineup) / 3 + 0.5
+            )
+            opponent_rating = math.floor(
+                sum(item["overall"] for item in normalized_opponent_lineup) / 3 + 0.5
+            )
+            won = winner_id == "player"
+            round_reward = TOURNAMENT_ROUND_REWARD if won else 0
+            completion_bonus = (
+                TOURNAMENT_COMPLETION_BONUS if won and round_number == 3 else 0
+            )
+            payout = round_reward + completion_bonus
+            self._ensure_user(connection, normalized_id)
+            user_row = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            balance = int(user_row["balance"])
+            if balance + payout > SQLITE_INT_MAX:
+                raise InvalidAmount("The tournament reward exceeds the balance limit.")
+            if payout:
+                connection.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                    (payout, normalized_id),
+                )
+
+            connection.execute(
+                """
+                INSERT INTO tournament_rounds(
+                    tournament_id, round_number, stage,
+                    player_lineup_json, opponent_lineup_json,
+                    player_rating, opponent_rating, result_json,
+                    won, round_reward, completion_bonus, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_tournament_id,
+                    round_number,
+                    stage,
+                    json.dumps(normalized_player_lineup, separators=(",", ":")),
+                    json.dumps(normalized_opponent_lineup, separators=(",", ":")),
+                    player_rating,
+                    opponent_rating,
+                    result_json,
+                    int(won),
+                    round_reward,
+                    completion_bonus,
+                    current_time,
+                ),
+            )
+            if not won:
+                new_status = "ELIMINATED"
+                next_round = round_number
+            elif round_number == 3:
+                new_status = "COMPLETED"
+                next_round = round_number
+            else:
+                new_status = "ACTIVE"
+                next_round = round_number + 1
+            connection.execute(
+                """
+                UPDATE tournaments
+                SET status = ?, current_round = ?, updated_at = ?
+                WHERE tournament_id = ?
+                """,
+                (new_status, next_round, current_time, normalized_tournament_id),
+            )
+            updated_row = connection.execute(
+                "SELECT * FROM tournaments WHERE tournament_id = ?",
+                (normalized_tournament_id,),
+            ).fetchone()
+            return self._tournament_from_connection(connection, updated_row) or {}
 
     @staticmethod
     def _validate_lineup_position(position: str) -> str:

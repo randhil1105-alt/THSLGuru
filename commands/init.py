@@ -21,6 +21,7 @@ COMMAND_MODULES = (
     "commands.trade",
     "commands.daily",
     "commands.quests",
+    "commands.tournament",
 )
 
 if len(COMMAND_MODULES) != len(set(COMMAND_MODULES)):

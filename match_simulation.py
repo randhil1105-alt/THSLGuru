@@ -88,21 +88,33 @@ def simulate_match(
     away: MatchSide,
     *,
     rng: random.Random | None = None,
+    home_scoring_probability: float | None = None,
 ) -> MatchResult:
     """Generate a complete match while guaranteeing a non-draw final result."""
     if not home.starters or not away.starters:
         raise ValueError("Both teams need valid starting lineups.")
+    if home_scoring_probability is not None and not 0 <= home_scoring_probability <= 1:
+        raise ValueError("Home scoring probability must be between 0 and 1.")
 
     chooser = rng or random.SystemRandom()
     score = {home.user_id: 0, away.user_id: 0}
     ticks: list[MatchTick] = []
     goals: list[MatchEvent] = []
 
+    def choose_scoring_side() -> MatchSide:
+        if home_scoring_probability is None:
+            return chooser.choice((home, away))
+        return (
+            home
+            if chooser.random() < home_scoring_probability
+            else away
+        )
+
     for elapsed, minute in match_timeline():
         event: MatchEvent | None = None
         if minute == MATCH_MINUTES:
             if score[home.user_id] == score[away.user_id]:
-                scoring_side = chooser.choice((home, away))
+                scoring_side = choose_scoring_side()
                 scorer = chooser.choice(_scoring_players(scoring_side))
                 score[scoring_side.user_id] += 1
                 event = MatchEvent(
@@ -120,8 +132,12 @@ def simulate_match(
             roll = chooser.random()
             if roll < GOAL_CHANCE_PER_TICK:
                 if chooser.random() < OWN_GOAL_CHANCE:
-                    defending_side = chooser.choice((home, away))
-                    scoring_side = away if defending_side is home else home
+                    if home_scoring_probability is None:
+                        defending_side = chooser.choice((home, away))
+                        scoring_side = away if defending_side is home else home
+                    else:
+                        scoring_side = choose_scoring_side()
+                        defending_side = away if scoring_side is home else home
                     scorer = chooser.choice(defending_side.starters)
                     score[scoring_side.user_id] += 1
                     event = MatchEvent(
@@ -138,7 +154,7 @@ def simulate_match(
                         own_goal=True,
                     )
                 else:
-                    scoring_side = chooser.choice((home, away))
+                    scoring_side = choose_scoring_side()
                     scorer = chooser.choice(_scoring_players(scoring_side))
                     score[scoring_side.user_id] += 1
                     event = MatchEvent(
@@ -153,7 +169,7 @@ def simulate_match(
                         player_team_id=scoring_side.user_id,
                     )
             elif roll < GOAL_CHANCE_PER_TICK + MAJOR_EVENT_CHANCE_PER_TICK:
-                attacking_side = chooser.choice((home, away))
+                attacking_side = choose_scoring_side()
                 defending_side = away if attacking_side is home else home
                 shooter = chooser.choice(_scoring_players(attacking_side))
                 event_kind = chooser.choice(("attack", "save", "miss"))
