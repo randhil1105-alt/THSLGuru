@@ -15,6 +15,7 @@ from discord.ext import commands as discord_commands
 
 from commands.common import RARITY_COLORS, format_coins, resolve_card_image
 from database import (
+    DAILY_SHOP_ALLOWED_RARITIES,
     DAILY_SHOP_CARD_COUNT,
     Database,
     EconomyError,
@@ -279,7 +280,8 @@ class ShopCommands(discord_commands.Cog):
             illustrated_ids = [
                 player.id
                 for player in catalog
-                if resolve_card_image(player) is not None
+                if player.rarity.upper() in DAILY_SHOP_ALLOWED_RARITIES
+                and resolve_card_image(player) is not None
             ]
             shop_now = time.time()
             daily_shop = self.database.get_daily_shop(

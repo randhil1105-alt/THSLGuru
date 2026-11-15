@@ -1096,7 +1096,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in packs_response.messages[0]["embed"].fields
         }
-        s2_field_name = "S2 TOTS · 50,000,000 coins"
+        s2_field_name = "S2 TOTS · 80,000,000 coins"
         self.assertIn(s2_field_name, packs_fields)
         for name in expected:
             self.assertIn(name, packs_fields[s2_field_name])
@@ -3481,9 +3481,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 "GOLD · 5,000,000 coins",
                 "🥈 SILVER PACK · 2,000,000 coins",
                 "TOTW · 20,000,000 coins",
-                "S2 TOTS · 50,000,000 coins",
-                "S1 TOTS · 35,000,000 coins",
-                "S1 TOTY PACK · 60,000,000 coins",
+                "S2 TOTS · 80,000,000 coins",
+                "S1 TOTS · 100,000,000 coins",
+                "S1 TOTY PACK · 120,000,000 coins",
                 "S1 FUTURE STARS PACK · 30,000,000 coins",
             },
         )
@@ -3502,9 +3502,9 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn(
             "Contains one random S2 TOTS player card.",
-            field_values["S2 TOTS · 50,000,000 coins"],
+            field_values["S2 TOTS · 80,000,000 coins"],
         )
-        s2_odds = field_values["S2 TOTS · 50,000,000 coins"]
+        s2_odds = field_values["S2 TOTS · 80,000,000 coins"]
         for name in (
             "Cryptic",
             "Hala (S2 TOTS 98)",
@@ -3516,19 +3516,19 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f"{name} 16.67%", s2_odds)
         self.assertIn("Price: 5,000,000 coins.", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Price: 20,000,000 coins.", field_values["TOTW · 20,000,000 coins"])
-        self.assertIn("50,000,000 coins", field_values["S2 TOTS · 50,000,000 coins"])
-        s1_odds = field_values["S1 TOTS · 35,000,000 coins"]
+        self.assertIn("80,000,000 coins", field_values["S2 TOTS · 80,000,000 coins"])
+        s1_odds = field_values["S1 TOTS · 100,000,000 coins"]
         for name in (
             "Dan (S1 TOTS 96)",
             "Hala (S1 TOTS 99)",
             "Ebs (S1 TOTS 98)",
         ):
             self.assertIn(name, s1_odds)
-        self.assertIn("35,000,000 coins", s1_odds)
-        s1_toty_field = field_values["S1 TOTY PACK · 60,000,000 coins"]
+        self.assertIn("100,000,000 coins", s1_odds)
+        s1_toty_field = field_values["S1 TOTY PACK · 120,000,000 coins"]
         self.assertIn("Contains one random S1 TOTY player card.", s1_toty_field)
         self.assertIn("Rarity: S1 TOTY.", s1_toty_field)
-        self.assertIn("Price: 60,000,000 coins.", s1_toty_field)
+        self.assertIn("Price: 120,000,000 coins.", s1_toty_field)
         for name in (
             "Ebs (S1 TOTY 98)",
             "Hala (S1 TOTY 99)",

@@ -354,15 +354,16 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(player_card_label(card), inventory_text)
 
     async def test_named_pack_menu_purchase_and_reveal(self) -> None:
-        existing_packs = (
+        expected_packs = (
             ("GOLD", 5_000_000),
+            ("SILVER", 2_000_000),
             ("TOTW", 20_000_000),
-            ("S2 TOTS", 50_000_000),
-            ("S1 TOTS", 35_000_000),
+            ("S2 TOTS", 80_000_000),
+            ("S1 TOTS", 100_000_000),
+            ("S1 TOTY", 120_000_000),
+            ("S1 FUTURE STARS", 30_000_000),
         )
-        self.assertEqual(PACKS[:4], existing_packs)
-        self.assertEqual(PACKS[4], ("S1 TOTY", S1_TOTY_PACK_COST))
-        self.assertEqual(PACKS[5], ("S1 FUTURE STARS", 30_000_000))
+        self.assertEqual(PACKS, expected_packs)
         self.assertEqual(len({rarity for rarity, _ in PACKS}), len(PACKS))
 
         user_id = "s1-toty-command-pack"
@@ -379,7 +380,7 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
             field.name: field.value
             for field in packs_response.messages[0]["embed"].fields
         }
-        field_name = "S1 TOTY PACK · 60,000,000 coins"
+        field_name = "S1 TOTY PACK · 120,000,000 coins"
         self.assertIn(field_name, menu_fields)
         self.assertIn("Rarity: S1 TOTY.", menu_fields[field_name])
         for name in S1_TOTY_CARDS:

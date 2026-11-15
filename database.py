@@ -29,9 +29,9 @@ CLAIM_COOLDOWN_SECONDS = 30 * 60
 GOLD_PACK_COST = 5_000_000
 SILVER_PACK_COST = 2_000_000
 TOTW_PACK_COST = 20_000_000
-S2_TOTS_PACK_COST = 50_000_000
-S1_TOTS_PACK_COST = 35_000_000
-S1_TOTY_PACK_COST = 60_000_000
+S2_TOTS_PACK_COST = 80_000_000
+S1_TOTS_PACK_COST = 100_000_000
+S1_TOTY_PACK_COST = 120_000_000
 S1_FUTURE_STARS_PACK_COST = 30_000_000
 PACK_COST_BY_RARITY = {
     "GOLD": GOLD_PACK_COST,
@@ -44,6 +44,7 @@ PACK_COST_BY_RARITY = {
 }
 MAX_PACK_QUANTITY = 10
 DAILY_SHOP_CARD_COUNT = 5
+DAILY_SHOP_ALLOWED_RARITIES = ("GOLD", "SILVER")
 LEVEL_REWARD_PACK_RARITIES = ("GOLD", "TOTW")
 MATCH_REWARD = 5_000_000
 MATCH_INVITATION_SECONDS = 60
@@ -2559,9 +2560,15 @@ class Database:
                 """,
                 (shop_day,),
             ).fetchone()
-            if selection is None:
+
+            def choose_and_save_selection() -> tuple[list[int], list[Player]]:
                 catalog_rows = connection.execute(
-                    "SELECT * FROM players ORDER BY id"
+                    """
+                    SELECT * FROM players
+                    WHERE UPPER(rarity) IN (?, ?)
+                    ORDER BY id
+                    """,
+                    DAILY_SHOP_ALLOWED_RARITIES,
                 ).fetchall()
                 catalog = [
                     self._player_from_row(row)
@@ -2580,6 +2587,9 @@ class Database:
                     INSERT INTO daily_shop_selections(
                         day_utc, player_ids_json, created_at
                     ) VALUES (?, ?, ?)
+                    ON CONFLICT(day_utc) DO UPDATE SET
+                        player_ids_json = excluded.player_ids_json,
+                        created_at = excluded.created_at
                     """,
                     (
                         shop_day,
@@ -2587,6 +2597,11 @@ class Database:
                         int(current_time),
                     ),
                 )
+
+                return player_ids, players
+
+            if selection is None:
+                player_ids, players = choose_and_save_selection()
             else:
                 try:
                     player_ids = [
@@ -2618,11 +2633,16 @@ class Database:
                     raise NoEligibleCards(
                         "A card in today's saved shop is no longer in the catalog."
                     )
-                if eligible_ids is not None and not set(player_ids) <= eligible_ids:
+                players = [by_id[player_id] for player_id in player_ids]
+                if any(
+                    player.rarity.upper() not in DAILY_SHOP_ALLOWED_RARITIES
+                    for player in players
+                ):
+                    player_ids, players = choose_and_save_selection()
+                elif eligible_ids is not None and not set(player_ids) <= eligible_ids:
                     raise NoEligibleCards(
                         "A card in today's saved shop no longer has available artwork."
                     )
-                players = [by_id[player_id] for player_id in player_ids]
 
             return {
                 "shop_day": shop_day,
@@ -2734,6 +2754,10 @@ class Database:
                     "That card is no longer in the catalog."
                 )
             player = self._player_from_row(player_row)
+            if player.rarity.upper() not in DAILY_SHOP_ALLOWED_RARITIES:
+                raise ShopSelectionExpired(
+                    "That card is no longer in today's shop. Run `/shop` to see today's cards."
+                )
             price = player.value
             self._ensure_user(connection, normalized_user_id)
             balance_row = connection.execute(

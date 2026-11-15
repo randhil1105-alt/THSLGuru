@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +14,7 @@ import discord
 
 from commands.shop import ShopCommands, _format_reset_countdown
 from database import (
+    DAILY_SHOP_ALLOWED_RARITIES,
     DAILY_SHOP_CARD_COUNT,
     FORMATION_STARTERS,
     POSITION_ROLE_BY_SLOT,
@@ -78,6 +80,55 @@ class DailyShopDatabaseTests(unittest.TestCase):
         )
         self.assertEqual(first["player_ids"], saved["player_ids"])
         self.assertEqual(reopened.get_daily_shop(now=next_day)["player_ids"], second["player_ids"])
+
+    def test_daily_shop_only_selects_gold_and_silver_cards(self) -> None:
+        shop = self.database.get_daily_shop(
+            now=1_704_067_199,
+            rng=FixedSample(),
+        )
+
+        self.assertEqual(len(shop["players"]), DAILY_SHOP_CARD_COUNT)
+        self.assertTrue(
+            all(
+                player.rarity.upper() in DAILY_SHOP_ALLOWED_RARITIES
+                for player in shop["players"]
+            )
+        )
+
+    def test_legacy_selection_is_replaced_and_special_cards_cannot_be_bought(self) -> None:
+        now = 1_704_067_199
+        shop_day = "2023-12-31"
+        legacy_ids = [
+            player.id for player in self.database.get_players(rarity="TOTW")[:5]
+        ]
+        self.assertEqual(len(legacy_ids), DAILY_SHOP_CARD_COUNT)
+        with self.database._transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO daily_shop_selections(day_utc, player_ids_json, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (shop_day, json.dumps(legacy_ids), int(now)),
+            )
+
+        self.database.set_balance("legacy-shop-buyer", 500_000_000)
+        with self.assertRaises(ShopSelectionExpired):
+            self.database.buy_daily_shop_card(
+                "legacy-shop-buyer",
+                legacy_ids[0],
+                "legacy-special-card-purchase",
+                shop_day,
+                now=now,
+            )
+
+        refreshed = self.database.get_daily_shop(now=now, rng=FixedSample())
+        self.assertTrue(
+            all(
+                player.rarity.upper() in DAILY_SHOP_ALLOWED_RARITIES
+                for player in refreshed["players"]
+            )
+        )
+        self.assertNotEqual(set(refreshed["player_ids"]), set(legacy_ids))
 
     def test_countdown_matches_the_utc_midnight_rotation_without_negative_values(self) -> None:
         before_midnight = 1_704_067_199
