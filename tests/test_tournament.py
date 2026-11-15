@@ -15,8 +15,10 @@ from database import (
     FORMATION_STARTERS,
     POSITION_ROLE_BY_SLOT,
     TOURNAMENT_COMPLETION_BONUS,
+    TOURNAMENT_COOLDOWN_SECONDS,
     TOURNAMENT_ROUND_REWARD,
     Database,
+    TournamentCooldownActive,
     TournamentInvalidLineup,
     TournamentLineupChanged,
     TournamentNotActive,
@@ -70,9 +72,10 @@ class TournamentDatabaseTests(unittest.TestCase):
         round_number: int,
         *,
         won: bool = True,
+        user_id: int | str = 101,
     ) -> dict:
         context = self.database.get_tournament_match_context(
-            101,
+            user_id,
             tournament["tournament_id"],
         )
         self.assertEqual(context["tournament"]["current_round"], round_number)
@@ -88,7 +91,7 @@ class TournamentDatabaseTests(unittest.TestCase):
             else {"home_score": 1, "away_score": 2, "winner_id": "ai"}
         )
         return self.database.complete_tournament_round(
-            101,
+            user_id,
             tournament["tournament_id"],
             round_number,
             player_lineup=context["player_lineup"],
@@ -146,6 +149,13 @@ class TournamentDatabaseTests(unittest.TestCase):
 
         self.assertEqual(tournament["status"], "COMPLETED")
         self.assertEqual(self.database.get_balance(101), 1_600_000)
+        self.assertEqual(
+            self.database.get_tournament_cooldown_seconds(
+                101,
+                now=1_800_000_003,
+            ),
+            TOURNAMENT_COOLDOWN_SECONDS,
+        )
         reopened = Database(self.path)
         reopened.initialize(self.seed)
         saved = reopened.get_tournament_for_user(101)
@@ -156,6 +166,65 @@ class TournamentDatabaseTests(unittest.TestCase):
             "Finals",
         ])
         self.assertEqual(reopened.get_balance(101), 1_600_000)
+        with self.assertRaises(TournamentCooldownActive) as caught:
+            reopened.start_tournament(101, now=1_800_000_103)
+        self.assertEqual(caught.exception.remaining_seconds, 500)
+
+    def test_each_elimination_round_starts_a_persistent_cooldown(self) -> None:
+        base_time = 1_800_000_000
+        for loss_round, user_id in ((1, 201), (2, 202), (3, 203)):
+            with self.subTest(loss_round=loss_round):
+                fill_lineup(self.database, user_id, "Balanced")
+                tournament = self.database.start_tournament(
+                    user_id,
+                    now=base_time,
+                )
+                for round_number in range(1, loss_round + 1):
+                    tournament = self._play_round(
+                        tournament,
+                        round_number,
+                        won=round_number != loss_round,
+                        user_id=user_id,
+                    )
+                ended_at = base_time + loss_round
+                self.assertEqual(tournament["status"], "ELIMINATED")
+                self.assertEqual(
+                    self.database.get_tournament_cooldown_seconds(
+                        user_id,
+                        now=ended_at,
+                    ),
+                    TOURNAMENT_COOLDOWN_SECONDS,
+                )
+                with self.assertRaises(TournamentCooldownActive) as caught:
+                    self.database.start_tournament(user_id, now=ended_at + 100)
+                self.assertEqual(caught.exception.remaining_seconds, 500)
+
+                reopened = Database(self.path)
+                reopened.initialize(self.seed)
+                with self.assertRaises(TournamentCooldownActive) as after_restart:
+                    reopened.start_tournament(user_id, now=ended_at + 200)
+                self.assertEqual(after_restart.exception.remaining_seconds, 400)
+
+    def test_tournament_cooldowns_are_independent_between_players(self) -> None:
+        base_time = 1_800_000_000
+        tournament = self.database.start_tournament(101, now=base_time)
+        tournament = self._play_round(tournament, 1, won=False)
+        self.assertEqual(tournament["status"], "ELIMINATED")
+
+        fill_lineup(self.database, 202, "Balanced")
+        other_tournament = self.database.start_tournament(
+            202,
+            now=base_time + 10,
+        )
+        self.assertEqual(other_tournament["status"], "ACTIVE")
+        self.assertEqual(
+            self.database.get_tournament_cooldown_seconds(101, now=base_time + 10),
+            TOURNAMENT_COOLDOWN_SECONDS - 9,
+        )
+        self.assertEqual(
+            self.database.get_tournament_cooldown_seconds(202, now=base_time + 10),
+            0,
+        )
 
     def test_losing_ends_tournament_without_later_rewards(self) -> None:
         tournament = self.database.start_tournament(101)
@@ -240,6 +309,7 @@ class FakeResponse:
     def __init__(self) -> None:
         self.messages: list[dict[str, object]] = []
         self.done = False
+        self.defer_kwargs: dict[str, object] | None = None
 
     async def send_message(self, content=None, **kwargs) -> None:
         self.messages.append({"content": content, **kwargs})
@@ -249,7 +319,8 @@ class FakeResponse:
         self.messages.append(kwargs)
         self.done = True
 
-    async def defer(self, **_kwargs) -> None:
+    async def defer(self, **kwargs) -> None:
+        self.defer_kwargs = kwargs
         self.done = True
 
     def is_done(self) -> bool:
@@ -297,6 +368,7 @@ class TournamentCommandTests(unittest.IsolatedAsyncioTestCase):
         interaction = self.make_interaction()
         with patch("commands.tournament.simulate_match", side_effect=player_always_scores):
             await TournamentCommands.tournament.callback(self.cog, interaction)
+            self.assertEqual(interaction.response.defer_kwargs, {"ephemeral": False})
             payload = interaction.response.messages[0]
             self.assertEqual(payload["embed"].title, "THSL Tournament · Quarterfinals")
             self.assertIn("Victory", payload["embed"].description)
@@ -310,6 +382,7 @@ class TournamentCommandTests(unittest.IsolatedAsyncioTestCase):
             ):
                 click = self.make_interaction()
                 await view.children[0].callback(click)
+                self.assertEqual(click.response.defer_kwargs, {"ephemeral": False})
                 self.assertEqual(
                     self.database.get_balance(303),
                     expected_balance,
@@ -321,6 +394,27 @@ class TournamentCommandTests(unittest.IsolatedAsyncioTestCase):
             saved = self.database.get_tournament_for_user(303)
             self.assertEqual(saved["status"], "COMPLETED")
             self.assertEqual(len(saved["rounds"]), 3)
+            self.assertGreater(
+                self.database.get_tournament_cooldown_seconds(303),
+                0,
+            )
+
+            cooldown_click = self.make_interaction()
+            await view.children[0].callback(cooldown_click)
+            self.assertEqual(
+                cooldown_click.response.defer_kwargs,
+                {"ephemeral": False},
+            )
+            cooldown_click.followup.send.assert_awaited_once()
+            cooldown_error = cooldown_click.followup.send.await_args
+            self.assertTrue(cooldown_error.args[0].startswith("❌ You must wait "))
+            self.assertFalse(cooldown_error.kwargs["ephemeral"])
+
+            reopen = self.make_interaction()
+            await TournamentCommands.tournament.callback(self.cog, reopen)
+            self.assertEqual(reopen.response.defer_kwargs, {"ephemeral": False})
+            reopen_payload = reopen.response.messages[0]
+            self.assertIn("You must wait", reopen_payload["embed"].description)
 
     async def test_replaying_an_expired_or_stale_round_does_not_pay_twice(self) -> None:
         def player_always_scores(home, away, **_kwargs):
@@ -329,6 +423,7 @@ class TournamentCommandTests(unittest.IsolatedAsyncioTestCase):
         interaction = self.make_interaction()
         with patch("commands.tournament.simulate_match", side_effect=player_always_scores):
             await TournamentCommands.tournament.callback(self.cog, interaction)
+            self.assertEqual(interaction.response.defer_kwargs, {"ephemeral": False})
             first_view = interaction.response.messages[0]["view"]
             self.assertEqual(self.database.get_balance(303), TOURNAMENT_ROUND_REWARD)
 

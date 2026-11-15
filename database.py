@@ -52,6 +52,7 @@ DAILY_REWARD_TOTW_PACKS = 1
 DAILY_REWARD_COOLDOWN_SECONDS = 24 * 60 * 60
 TOURNAMENT_ROUND_REWARD = 200_000
 TOURNAMENT_COMPLETION_BONUS = 1_000_000
+TOURNAMENT_COOLDOWN_SECONDS = 10 * 60
 TOURNAMENT_STAGE_LABELS = {
     1: "Quarterfinals",
     2: "Semifinals",
@@ -3638,7 +3639,7 @@ class Database:
         *,
         now: int | None = None,
         tournament_id: str | None = None,
-        cooldown_seconds: int = 600,
+        cooldown_seconds: int = TOURNAMENT_COOLDOWN_SECONDS,
     ) -> dict[str, Any]:
         """Create one active tournament after validating the owned starting lineup."""
         normalized_id = self._validate_user_id(user_id)
@@ -3965,6 +3966,19 @@ class Database:
                 """,
                 (new_status, next_round, current_time, normalized_tournament_id),
             )
+            if new_status != "ACTIVE":
+                connection.execute(
+                    """
+                    INSERT INTO tournament_cooldowns(user_id, expires_at)
+                    VALUES (?, ?)
+                    ON CONFLICT(user_id) DO UPDATE
+                    SET expires_at = excluded.expires_at
+                    """,
+                    (
+                        normalized_id,
+                        current_time + TOURNAMENT_COOLDOWN_SECONDS,
+                    ),
+                )
             updated_row = connection.execute(
                 "SELECT * FROM tournaments WHERE tournament_id = ?",
                 (normalized_tournament_id,),

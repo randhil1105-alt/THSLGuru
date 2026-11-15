@@ -15,6 +15,7 @@ from database import (
     TOURNAMENT_ROUND_REWARD,
     TOURNAMENT_STAGE_LABELS,
     Database,
+    TournamentCooldownActive,
     TournamentError,
     TournamentInvalidLineup,
     TournamentNotActive,
@@ -48,6 +49,22 @@ def _lineup_lines(lineup: Sequence[dict[str, Any]]) -> str:
         f"**{SLOT_LABELS.get(str(starter['slot']), str(starter['slot']))}** — "
         f"{starter['name']} ({starter['overall']} OVR · {starter['position']})"
         for starter in lineup
+    )
+
+
+def _cooldown_message(remaining_seconds: int) -> str:
+    minutes, seconds = divmod(max(0, int(remaining_seconds)), 60)
+    parts: list[str] = []
+    if minutes:
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+    if seconds or not parts:
+        parts.append(f"{seconds} second{'s' if seconds != 1 else ''}")
+    if len(parts) == 2:
+        duration = f"{parts[0]} and {parts[1]}"
+    else:
+        duration = parts[0]
+    return (
+        f"❌ You must wait {duration} before starting another tournament!"
     )
 
 
@@ -218,13 +235,13 @@ class TournamentView(discord.ui.View):
         if self.expired:
             await interaction.response.send_message(
                 "These tournament buttons expired. Run `/tournament` to reopen your progress.",
-                ephemeral=True,
+                ephemeral=False,
             )
             return False
         if str(interaction.user.id) != self.user_id:
             await interaction.response.send_message(
                 "Only the player who opened this tournament can use these buttons.",
-                ephemeral=True,
+                ephemeral=False,
             )
             return False
         return True
@@ -234,11 +251,11 @@ class TournamentView(discord.ui.View):
             if self.expired:
                 await interaction.response.send_message(
                     "These tournament buttons expired. Run `/tournament` to reopen your progress.",
-                    ephemeral=True,
+                    ephemeral=False,
                 )
                 return
             try:
-                await interaction.response.defer()
+                await interaction.response.defer(ephemeral=False)
             except discord.HTTPException:
                 LOGGER.info("A tournament button interaction expired before processing.")
                 return
@@ -276,7 +293,7 @@ class TournamentCommands(discord_commands.Cog):
     )
     async def tournament(self, interaction: discord.Interaction) -> None:
         try:
-            await interaction.response.defer(ephemeral=True)
+            await interaction.response.defer(ephemeral=False)
         except discord.HTTPException:
             LOGGER.info("A tournament command interaction expired before processing.")
             return
@@ -292,7 +309,12 @@ class TournamentCommands(discord_commands.Cog):
                     expected_round=1,
                 )
             except (TournamentError, TournamentAIUnavailable) as exc:
-                await self._send_action_error(interaction, str(exc))
+                message = (
+                    _cooldown_message(exc.remaining_seconds)
+                    if isinstance(exc, TournamentCooldownActive)
+                    else str(exc)
+                )
+                await self._send_action_error(interaction, message)
                 return
             except Exception:
                 LOGGER.exception("Could not begin a tournament for user %s.", user_id)
@@ -397,7 +419,12 @@ class TournamentCommands(discord_commands.Cog):
             )
             await self._edit_tournament(interaction, tournament)
         except (TournamentError, TournamentAIUnavailable) as exc:
-            await self._send_action_error(interaction, str(exc))
+            message = (
+                _cooldown_message(exc.remaining_seconds)
+                if isinstance(exc, TournamentCooldownActive)
+                else str(exc)
+            )
+            await self._send_action_error(interaction, message)
         except Exception:
             LOGGER.exception(
                 "Could not start a tournament from a button for user %s.",
@@ -446,9 +473,9 @@ class TournamentCommands(discord_commands.Cog):
     ) -> None:
         try:
             if interaction.response.is_done():
-                await interaction.followup.send(message, ephemeral=True)
+                await interaction.followup.send(message, ephemeral=False)
             else:
-                await interaction.response.send_message(message, ephemeral=True)
+                await interaction.response.send_message(message, ephemeral=False)
         except (discord.InteractionResponded, discord.HTTPException):
             LOGGER.info("A tournament response expired before it could be updated.")
 
@@ -469,11 +496,7 @@ class TournamentCommands(discord_commands.Cog):
         embed = _tournament_embed(
             tournament,
             upcoming_lineup=upcoming_lineup,
-            note=(
-                "Finish your owned starting lineup with `/set` before continuing."
-                if not can_play
-                else None
-            ),
+            note=self._tournament_note(interaction.user.id, can_play),
         )
         try:
             await interaction.edit_original_response(embed=embed, view=view)
@@ -482,7 +505,7 @@ class TournamentCommands(discord_commands.Cog):
             await interaction.response.send_message(
                 embed=embed,
                 view=view,
-                ephemeral=True,
+                ephemeral=False,
             )
         except discord.HTTPException:
             LOGGER.info(
@@ -518,18 +541,25 @@ class TournamentCommands(discord_commands.Cog):
         )
         view.bind_message(getattr(interaction, "message", None))
         embed = _tournament_embed(
-                tournament,
-                upcoming_lineup=upcoming_lineup,
-                note=(
-                    "Finish your owned starting lineup with `/set` before continuing."
-                    if not can_play
-                    else None
-                ),
-            )
+            tournament,
+            upcoming_lineup=upcoming_lineup,
+            note=self._tournament_note(interaction.user.id, can_play),
+        )
         try:
             await interaction.edit_original_response(embed=embed, view=view)
         except AttributeError:
             await interaction.response.edit_message(embed=embed, view=view)
+
+    def _tournament_note(self, user_id: int | str, can_play: bool) -> str | None:
+        notes: list[str] = []
+        if not can_play:
+            notes.append(
+                "Finish your owned starting lineup with `/set` before continuing."
+            )
+        remaining = self.database.get_tournament_cooldown_seconds(user_id)
+        if remaining:
+            notes.append(_cooldown_message(remaining))
+        return "\n\n".join(notes) or None
 
 
 async def setup(bot: discord_commands.Bot) -> None:
