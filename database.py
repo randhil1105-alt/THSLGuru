@@ -337,6 +337,14 @@ class TournamentNotActive(TournamentError):
     pass
 
 
+class TournamentCooldownActive(TournamentError):
+    def __init__(self, remaining_seconds: int) -> None:
+        self.remaining_seconds = max(0, int(remaining_seconds))
+        super().__init__(
+            f"A tournament cooldown is active for {self.remaining_seconds} seconds."
+        )
+
+
 class TournamentInvalidLineup(TournamentError):
     pass
 
@@ -819,6 +827,12 @@ class Database:
                     completion_bonus INTEGER NOT NULL DEFAULT 0 CHECK (completion_bonus >= 0),
                     created_at INTEGER NOT NULL,
                     PRIMARY KEY (tournament_id, round_number)
+                );
+
+                CREATE TABLE IF NOT EXISTS tournament_cooldowns (
+                    user_id TEXT PRIMARY KEY
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    expires_at INTEGER NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS draft_cooldowns (
@@ -2706,6 +2720,7 @@ class Database:
                 "team_migration_notices",
                 "draft_cooldowns",
                 "draft_sessions",
+                "tournament_cooldowns",
                 "free_pack_inventory",
                 "free_pack_redemptions",
                 "level_up_coin_rewards",
@@ -3623,10 +3638,12 @@ class Database:
         *,
         now: int | None = None,
         tournament_id: str | None = None,
+        cooldown_seconds: int = 600,
     ) -> dict[str, Any]:
         """Create one active tournament after validating the owned starting lineup."""
         normalized_id = self._validate_user_id(user_id)
         current_time = int(time.time() if now is None else now)
+        normalized_cooldown = self._validate_amount(cooldown_seconds)
         normalized_tournament_id = str(tournament_id or uuid.uuid4().hex).strip()
         if not normalized_tournament_id or len(normalized_tournament_id) > 100:
             raise TournamentError("Tournament ID is invalid.")
@@ -3642,6 +3659,15 @@ class Database:
             ).fetchone()
             if active:
                 return self._tournament_from_connection(connection, active) or {}
+
+            cooldown = connection.execute(
+                "SELECT expires_at FROM tournament_cooldowns WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            if cooldown:
+                remaining = int(cooldown["expires_at"]) - current_time
+                if remaining > 0:
+                    raise TournamentCooldownActive(remaining)
 
             self._tournament_lineup_from_connection(connection, normalized_id)
             connection.execute(
@@ -3662,6 +3688,24 @@ class Database:
                 (normalized_tournament_id,),
             ).fetchone()
             return self._tournament_from_connection(connection, row) or {}
+
+    def get_tournament_cooldown_seconds(
+        self,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> int:
+        """Return a player's remaining tournament cooldown, if any."""
+        normalized_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        with self._read_connection() as connection:
+            row = connection.execute(
+                "SELECT expires_at FROM tournament_cooldowns WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+        if row is None:
+            return 0
+        return max(0, int(row["expires_at"]) - current_time)
 
     def get_tournament_match_context(
         self,
