@@ -33,6 +33,7 @@ from database import (
     NoEligibleCards,
     calculate_pack_odds,
     card_rating_weight,
+    pack_card_rating_weight,
 )
 from main import load_player_seed
 
@@ -1132,12 +1133,14 @@ class DatabaseTests(unittest.TestCase):
         by_name = {card.name: odds_before[card.id] for card in gold_cards}
         self.assertGreater(by_name["Fadi"], by_name["Hala (Gold 90)"])
         self.assertEqual(by_name["Dan"], by_name["Dryboomrun"])
-        self.assertAlmostEqual(by_name["Needy"], 2 / 70 * 100)
-        self.assertAlmostEqual(by_name["Megan"], 4 / 70 * 100)
-        self.assertAlmostEqual(by_name["Hala (Gold 90)"], 1 / 70 * 100)
-        self.assertAlmostEqual(by_name["Chicken"], 4 / 70 * 100)
-        self.assertAlmostEqual(by_name["Sluckz"], 4 / 70 * 100)
-        self.assertAlmostEqual(by_name["Frozend"], 1 / 70 * 100)
+        gold_total_weight = sum(
+            pack_card_rating_weight(card.overall) for card in gold_cards
+        )
+        for card in gold_cards:
+            self.assertAlmostEqual(
+                odds_before[card.id],
+                pack_card_rating_weight(card.overall) / gold_total_weight * 100,
+            )
 
         totw_cards = self.database.get_players(rarity="TOTW")
         totw_odds = calculate_pack_odds(totw_cards)
@@ -1153,11 +1156,13 @@ class DatabaseTests(unittest.TestCase):
             },
         )
         self.assertAlmostEqual(sum(totw_odds.values()), 100.0)
-        total_totw_weight = sum(card_rating_weight(card.overall) for card in totw_cards)
+        total_totw_weight = sum(
+            pack_card_rating_weight(card.overall) for card in totw_cards
+        )
         for card in totw_cards:
             self.assertAlmostEqual(
                 totw_odds[card.id],
-                card_rating_weight(card.overall) / total_totw_weight * 100,
+                pack_card_rating_weight(card.overall) / total_totw_weight * 100,
             )
         s2_tots_cards = self.database.get_players(rarity="S2 TOTS")
         s2_tots_odds = calculate_pack_odds(s2_tots_cards)
@@ -1173,6 +1178,10 @@ class DatabaseTests(unittest.TestCase):
             },
         )
         self.assertAlmostEqual(sum(s2_tots_odds.values()), 100.0)
+        self.assertGreater(
+            s2_tots_odds[self.database.get_player("Licha (S2 TOTS 96)").id],
+            s2_tots_odds[self.database.get_player("EBS (S2 TOTS 99)").id],
+        )
 
         self.database.add_player(
             {
@@ -1198,6 +1207,81 @@ class DatabaseTests(unittest.TestCase):
         self.assertGreater(card_rating_weight(85), card_rating_weight(90))
         self.assertGreater(card_rating_weight(90), card_rating_weight(95))
         self.assertGreater(card_rating_weight(95), 0)
+        self.assertGreater(pack_card_rating_weight(97), pack_card_rating_weight(98))
+        self.assertGreater(pack_card_rating_weight(98), pack_card_rating_weight(99))
+
+    def test_bulk_free_and_granted_packs_use_rating_weighted_draws(self) -> None:
+        class CaptureChoice:
+            def __init__(self) -> None:
+                self.draw_weights: list[list[float]] = []
+                self.draw_candidates = []
+
+            def choices(self, population, weights, k):
+                self.draw_candidates.append(list(population))
+                self.draw_weights.append(list(weights))
+                return [population[0]]
+
+        def assert_weights_match_ratings(chooser: CaptureChoice) -> None:
+            self.assertEqual(len(chooser.draw_candidates), len(chooser.draw_weights))
+            for candidates, weights in zip(
+                chooser.draw_candidates,
+                chooser.draw_weights,
+            ):
+                self.assertEqual(
+                    weights,
+                    [
+                        pack_card_rating_weight(int(candidate["overall"]))
+                        for candidate in candidates
+                    ],
+                )
+
+        bulk_user = "weighted-bulk-pack-user"
+        self.database.set_balance(bulk_user, 2 * GOLD_PACK_COST)
+        bulk_chooser = CaptureChoice()
+        self.database.open_packs(
+            bulk_user,
+            "GOLD",
+            GOLD_PACK_COST,
+            2,
+            rng=bulk_chooser,
+            purchase_id="weighted-bulk-packs",
+        )
+        self.assertEqual(len(bulk_chooser.draw_weights), 2)
+        assert_weights_match_ratings(bulk_chooser)
+
+        free_user = "weighted-free-pack-user"
+        self.database.set_balance(free_user, 0)
+        with self.database._transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO free_pack_inventory(user_id, rarity, quantity)
+                VALUES (?, 'GOLD', 1)
+                """,
+                (free_user,),
+            )
+        free_chooser = CaptureChoice()
+        self.database.open_free_reward_pack(
+            free_user,
+            "GOLD",
+            "weighted-free-pack",
+            rng=free_chooser,
+        )
+        assert_weights_match_ratings(free_chooser)
+
+        granted_user = "weighted-granted-pack-user"
+        self.database.grant_pack(
+            granted_user,
+            "S1 TOTY",
+            grant_id="weighted-granted-pack",
+        )
+        granted_chooser = CaptureChoice()
+        self.database.open_granted_pack(
+            granted_user,
+            "S1 TOTY",
+            "weighted-granted-pack-redemption",
+            rng=granted_chooser,
+        )
+        assert_weights_match_ratings(granted_chooser)
 
     def test_dryboomrun_seed_card_has_exact_data_and_gold_pack_eligibility(self) -> None:
         card = self.database.get_player("Dryboomrun")

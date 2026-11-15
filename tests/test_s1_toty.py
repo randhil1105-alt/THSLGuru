@@ -22,6 +22,7 @@ from database import (
     InvalidLineupPosition,
     calculate_pack_odds,
     card_position_role,
+    pack_card_rating_weight,
 )
 from main import load_player_seed
 from tests.test_commands import FakeFollowup, FakeMessage, FakeResponse
@@ -176,8 +177,16 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
         cards = self.database.get_players(rarity="S1 TOTY")
         odds = calculate_pack_odds(cards)
         self.assertEqual(set(odds), {card.id for card in cards})
-        for probability in odds.values():
-            self.assertAlmostEqual(probability, 100 / 6)
+        total_weight = sum(pack_card_rating_weight(card.overall) for card in cards)
+        for card in cards:
+            self.assertAlmostEqual(
+                odds[card.id],
+                pack_card_rating_weight(card.overall) / total_weight * 100,
+            )
+        self.assertGreater(
+            odds[self.database.get_player("Cam (S1 TOTY 97)").id],
+            odds[self.database.get_player("Hala (S1 TOTY 99)").id],
+        )
         self.assertAlmostEqual(sum(odds.values()), 100)
 
         class CaptureChoice:
@@ -211,7 +220,10 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(card.name, rng.candidates[-1]["name"])
         self.assertEqual(
             rng.weights,
-            [0.25] * 6,
+            [
+                pack_card_rating_weight(int(candidate["overall"]))
+                for candidate in rng.candidates
+            ],
         )
         self.assertEqual(rng.assert_k, 1)
         self.assertEqual(replayed.id, card.id)
@@ -384,13 +396,15 @@ class S1TOTYTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(field_name, menu_fields)
         self.assertIn("Rarity: S1 TOTY.", menu_fields[field_name])
         for name in S1_TOTY_CARDS:
-            self.assertIn(name, menu_fields[field_name])
-        self.assertTrue(
-            all(
-                f"{name} 16.67%" in menu_fields[field_name]
-                for name in S1_TOTY_CARDS
+            card = self.database.get_player(name)
+            assert card is not None
+            expected_odds = calculate_pack_odds(
+                self.database.get_players(rarity="S1 TOTY")
+            )[card.id]
+            self.assertIn(
+                f"{name} {expected_odds:.2f}%",
+                menu_fields[field_name],
             )
-        )
 
         pack_response = FakeResponse()
         pack_cog = PackCommands(self.database)

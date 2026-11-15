@@ -66,6 +66,7 @@ from database import (
     S2_TOTS_PACK_COST,
     SUBSTITUTE_POSITIONS,
     TOTW_PACK_COST,
+    calculate_pack_odds,
     format_card_type,
 )
 from main import create_bot, load_player_seed
@@ -3505,15 +3506,10 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             field_values["S2 TOTS · 80,000,000 coins"],
         )
         s2_odds = field_values["S2 TOTS · 80,000,000 coins"]
-        for name in (
-            "Cryptic",
-            "Hala (S2 TOTS 98)",
-            "Xavier",
-            "EBS (S2 TOTS 99)",
-            "Jaycob (S2 TOTS 96)",
-            "Licha (S2 TOTS 96)",
-        ):
-            self.assertIn(f"{name} 16.67%", s2_odds)
+        s2_cards = self.database.get_players(rarity="S2 TOTS")
+        s2_card_odds = calculate_pack_odds(s2_cards)
+        for card in s2_cards:
+            self.assertIn(f"{card.name} {s2_card_odds[card.id]:.2f}%", s2_odds)
         self.assertIn("Price: 5,000,000 coins.", field_values["GOLD · 5,000,000 coins"])
         self.assertIn("Price: 20,000,000 coins.", field_values["TOTW · 20,000,000 coins"])
         self.assertIn("80,000,000 coins", field_values["S2 TOTS · 80,000,000 coins"])
@@ -3529,15 +3525,13 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Contains one random S1 TOTY player card.", s1_toty_field)
         self.assertIn("Rarity: S1 TOTY.", s1_toty_field)
         self.assertIn("Price: 120,000,000 coins.", s1_toty_field)
-        for name in (
-            "Ebs (S1 TOTY 98)",
-            "Hala (S1 TOTY 99)",
-            "Cam (S1 TOTY 97)",
-            "Road (S1 TOTY 98)",
-            "Matrix (S1 TOTY 97)",
-            "Lauren (S1 TOTY 97)",
-        ):
-            self.assertIn(f"{name} 16.67%", s1_toty_field)
+        s1_toty_cards = self.database.get_players(rarity="S1 TOTY")
+        s1_toty_odds = calculate_pack_odds(s1_toty_cards)
+        for card in s1_toty_cards:
+            self.assertIn(
+                f"{card.name} {s1_toty_odds[card.id]:.2f}%",
+                s1_toty_field,
+            )
         future_stars_field = field_values[
             "S1 FUTURE STARS PACK · 30,000,000 coins"
         ]
@@ -3547,22 +3541,15 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Rarity: S1 FUTURE STARS.", future_stars_field)
         self.assertIn("Price: 30,000,000 coins.", future_stars_field)
-        for name in (
-            "Ebs (S1 FUTURE STARS 94)",
-            "Dan (S1 FUTURE STARS 90)",
-            "Ryuko (S1 FUTURE STARS 91)",
-            "Gamer (S1 FUTURE STARS 93)",
-        ):
-            self.assertIn(f"{name} 7.14%", future_stars_field)
-        self.assertIn(
-            "KaruWRLD (S1 FUTURE STARS 88) 14.29%",
-            future_stars_field,
+        future_stars_cards = self.database.get_players(
+            rarity="S1 FUTURE STARS"
         )
-        self.assertIn("HHH (S1 FUTURE STARS 89) 14.29%", future_stars_field)
-        self.assertIn("Lauren (S1 FUTURE STARS 93) 7.14%", future_stars_field)
-        self.assertIn("Guzzinga (S1 FUTURE STARS 92) 7.14%", future_stars_field)
-        self.assertIn("Zizou (S1 FUTURE STARS 87) 14.29%", future_stars_field)
-        self.assertIn("Fadi (S1 FUTURE STARS 89) 14.29%", future_stars_field)
+        future_stars_odds = calculate_pack_odds(future_stars_cards)
+        for card in future_stars_cards:
+            self.assertIn(
+                f"{card.name} {future_stars_odds[card.id]:.2f}%",
+                future_stars_field,
+            )
         self.assert_pack_menu_shows_odds(menu["embed"])
 
         view = menu["view"]

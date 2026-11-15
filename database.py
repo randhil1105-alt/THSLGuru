@@ -588,6 +588,12 @@ def card_rating_weight(overall: int) -> float:
     return card_rating_band(overall)[1]
 
 
+def pack_card_rating_weight(overall: int) -> float:
+    """Make each five-point OVR increase halve a card's pack weight."""
+    rating = int(overall)
+    return 2.0 ** ((90 - rating) / 5)
+
+
 def calculate_sell_payout(value: int) -> int:
     """Return 80% of a card's catalog value, rounded down to whole coins."""
     return int(value) * SELL_VALUE_PERCENT // 100
@@ -595,7 +601,7 @@ def calculate_sell_payout(value: int) -> int:
 
 def calculate_pack_odds(players: Sequence[Player]) -> dict[int, float]:
     """Calculate normalized per-card odds for one rarity-filtered pack pool."""
-    weights = [card_rating_weight(player.overall) for player in players]
+    weights = [pack_card_rating_weight(player.overall) for player in players]
     total_weight = sum(weights)
     if total_weight <= 0:
         return {}
@@ -5394,7 +5400,7 @@ class Database:
                 )
 
             weights = [
-                card_rating_weight(int(candidate["overall"]))
+                pack_card_rating_weight(int(candidate["overall"]))
                 for candidate in candidates
             ]
             selected = chooser.choices(candidates, weights=weights, k=1)[0]
@@ -5573,7 +5579,7 @@ class Database:
                 )
 
             weights = [
-                card_rating_weight(int(candidate["overall"]))
+                pack_card_rating_weight(int(candidate["overall"]))
                 for candidate in candidates
             ]
             selected_cards = [
@@ -5737,7 +5743,7 @@ class Database:
             if not candidates:
                 raise NoEligibleCards(expected_rarity)
             weights = [
-                card_rating_weight(int(candidate["overall"]))
+                pack_card_rating_weight(int(candidate["overall"]))
                 for candidate in candidates
             ]
             selected = chooser.choices(candidates, weights=weights, k=1)[0]
@@ -5887,7 +5893,7 @@ class Database:
             if not candidates:
                 raise NoEligibleCards(expected_rarity)
             weights = [
-                card_rating_weight(int(candidate["overall"]))
+                pack_card_rating_weight(int(candidate["overall"]))
                 for candidate in candidates
             ]
             selected = chooser.choices(candidates, weights=weights, k=1)[0]

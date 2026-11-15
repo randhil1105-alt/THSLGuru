@@ -21,6 +21,7 @@ from database import (
     Database,
     InsufficientFunds,
     calculate_pack_odds,
+    pack_card_rating_weight,
 )
 from main import load_player_seed
 from tests.test_commands import FakeMessage, FakeResponse
@@ -346,26 +347,16 @@ class S1FutureStarsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(S1_FUTURE_STARS_PACK_COST, 30_000_000)
         odds = calculate_pack_odds(pool)
         self.assertEqual(len(odds), 10)
-        for name in (
-            "Ebs (S1 FUTURE STARS 94)",
-            "Dan (S1 FUTURE STARS 90)",
-            "Ryuko (S1 FUTURE STARS 91)",
-            "Gamer (S1 FUTURE STARS 93)",
-            "Lauren (S1 FUTURE STARS 93)",
-            "Guzzinga (S1 FUTURE STARS 92)",
-        ):
-            card = cards[name]
-            self.assertAlmostEqual(odds[card.id], 100 / 14)
-        self.assertAlmostEqual(
+        total_weight = sum(pack_card_rating_weight(card.overall) for card in pool)
+        for card in pool:
+            self.assertAlmostEqual(
+                odds[card.id],
+                pack_card_rating_weight(card.overall) / total_weight * 100,
+            )
+        self.assertGreater(
             odds[cards["KaruWRLD (S1 FUTURE STARS 88)"].id],
-            200 / 14,
+            odds[cards["Ebs (S1 FUTURE STARS 94)"].id],
         )
-        for name in (
-            "HHH (S1 FUTURE STARS 89)",
-            "Zizou (S1 FUTURE STARS 87)",
-            "Fadi (S1 FUTURE STARS 89)",
-        ):
-            self.assertAlmostEqual(odds[cards[name].id], 200 / 14)
 
         for index, name in enumerate(FUTURE_STARS_CARDS):
             with self.subTest(card=name):
