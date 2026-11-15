@@ -25,10 +25,10 @@ from commands.common import (
 from commands.draft import DraftSessionView
 from commands.xp import xp_level_up_embed, xp_notification_text
 from database import (
-    DRAFT_COOLDOWN_SECONDS,
     Database,
     DraftAlreadyActive,
     DraftCooldownActive,
+    GuessWhoCooldownActive,
     Player,
     format_card_type,
 )
@@ -217,6 +217,7 @@ class IndividualMinigameView(discord.ui.View):
                         result = "reward_error"
                         balance = None
                     else:
+                        self._finish()
                         result = "incorrect"
                 else:
                     try:
@@ -261,6 +262,7 @@ class IndividualMinigameView(discord.ui.View):
                 ephemeral=True,
             )
             await self._disable_prompt_button()
+            await self._send_reveal()
             return
         if result == "reward_error":
             await interaction.response.send_message(
@@ -294,6 +296,13 @@ class IndividualMinigameView(discord.ui.View):
         async with self._lock:
             if self.finished:
                 return
+            try:
+                self.database.finish_guess_who_timeout(
+                    self.owner_id,
+                    self.game_id,
+                )
+            except Exception:
+                LOGGER.exception("Could not save Guess Who timeout cooldown.")
             self._finish()
 
         await self._disable_prompt_button()
@@ -562,6 +571,20 @@ class MinigameCommands(discord_commands.Cog):
             return
         if active_game is not None:
             self._remove_game(active_game)
+
+        try:
+            self.database.check_guess_who_cooldown(owner_id)
+        except GuessWhoCooldownActive as exc:
+            minutes, seconds = divmod(exc.remaining_seconds, 60)
+            minute_label = "minute" if minutes == 1 else "minutes"
+            second_label = "second" if seconds == 1 else "seconds"
+            await interaction.response.send_message(
+                "❌ Guess Who Cooldown Active!\n\n"
+                f"You must wait {minutes} {minute_label} and "
+                f"{seconds} {second_label} before playing Guess Who again.",
+                ephemeral=True,
+            )
+            return
 
         players = self.database.get_players()
         if not players:

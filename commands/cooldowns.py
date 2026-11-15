@@ -44,6 +44,10 @@ class CooldownCommands(discord_commands.Cog):
                 if remaining
                 else "In progress · ending now"
             )
+        elif status.guess_who_remaining_seconds:
+            guess_status = (
+                f"{format_cooldown_time(status.guess_who_remaining_seconds)} remaining"
+            )
         else:
             guess_status = "Ready"
 
@@ -73,8 +77,8 @@ class CooldownCommands(discord_commands.Cog):
         embed.add_field(name="Draft", value=draft_status, inline=False)
         embed.set_footer(
             text=(
-                "Claim and Draft timers are read from SQLite. Guess Who has an "
-                "active-session timer, not a separate cooldown."
+                "All saved cooldowns are read from SQLite. Guess Who starts "
+                "its timer when a game ends."
             )
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)

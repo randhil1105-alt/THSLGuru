@@ -48,6 +48,7 @@ LEVEL_REWARD_PACK_RARITIES = ("GOLD", "TOTW")
 MATCH_REWARD = 5_000_000
 MATCH_INVITATION_SECONDS = 60
 DRAFT_COOLDOWN_SECONDS = 10 * 60
+GUESS_WHO_COOLDOWN_SECONDS = 5 * 60
 DRAFT_WIN_REWARD = 200_000
 DAILY_REWARD_COINS = 5_000_000
 DAILY_REWARD_TOTW_PACKS = 1
@@ -269,6 +270,10 @@ class DraftCooldownActive(CooldownActive):
     """Raised when a player tries to start a Draft before their cooldown ends."""
 
 
+class GuessWhoCooldownActive(CooldownActive):
+    """Raised when a player tries to start Guess Who before their cooldown ends."""
+
+
 class DraftAlreadyActive(EconomyError):
     pass
 
@@ -465,6 +470,8 @@ class CooldownStatus:
     claim_remaining_seconds: int
     draft_remaining_seconds: int
     draft_active: bool
+    guess_who_last_completed_at: int | None
+    guess_who_remaining_seconds: int
 
 
 @dataclass(frozen=True)
@@ -888,6 +895,18 @@ class Database:
                 CREATE TABLE IF NOT EXISTS draft_cooldowns (
                     user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
                     last_started_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS guess_who_cooldowns (
+                    user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+                    last_completed_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS guess_who_completions (
+                    game_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    completed_at INTEGER NOT NULL,
+                    PRIMARY KEY (game_id, user_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS draft_sessions (
@@ -2261,6 +2280,112 @@ class Database:
             is_new=False,
         )
 
+    @staticmethod
+    def _record_guess_who_completion_locked(
+        connection: sqlite3.Connection,
+        *,
+        user_id: str,
+        game_id: str,
+        completed_at: int,
+    ) -> bool:
+        """Persist one finished game and its cooldown in the caller's transaction."""
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO guess_who_completions
+                (game_id, user_id, completed_at)
+            VALUES (?, ?, ?)
+            """,
+            (game_id, user_id, completed_at),
+        )
+        if cursor.rowcount != 1:
+            return False
+        connection.execute(
+            """
+            INSERT INTO guess_who_cooldowns(user_id, last_completed_at)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET last_completed_at = excluded.last_completed_at
+            """,
+            (user_id, completed_at),
+        )
+        return True
+
+    def check_guess_who_cooldown(
+        self,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> None:
+        """Atomically verify a player may start Guess Who."""
+        normalized_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            self._ensure_user(connection, normalized_id)
+            cooldown = connection.execute(
+                """
+                SELECT last_completed_at FROM guess_who_cooldowns
+                WHERE user_id = ?
+                """,
+                (normalized_id,),
+            ).fetchone()
+            if cooldown is None:
+                return
+            remaining = (
+                int(cooldown["last_completed_at"])
+                + GUESS_WHO_COOLDOWN_SECONDS
+                - current_time
+            )
+            if remaining > 0:
+                raise GuessWhoCooldownActive(remaining)
+
+    def get_guess_who_cooldown_seconds(
+        self,
+        user_id: str | int,
+        *,
+        now: int | None = None,
+    ) -> int:
+        """Return a player's remaining Guess Who cooldown without creating them."""
+        normalized_id = self._validate_user_id(user_id)
+        current_time = int(time.time() if now is None else now)
+        with self._read_connection() as connection:
+            cooldown = connection.execute(
+                """
+                SELECT last_completed_at FROM guess_who_cooldowns
+                WHERE user_id = ?
+                """,
+                (normalized_id,),
+            ).fetchone()
+        if cooldown is None:
+            return 0
+        return max(
+            0,
+            int(cooldown["last_completed_at"])
+            + GUESS_WHO_COOLDOWN_SECONDS
+            - current_time,
+        )
+
+    def finish_guess_who_timeout(
+        self,
+        user_id: str | int,
+        game_id: str,
+        *,
+        now: int | None = None,
+    ) -> bool:
+        """Record a timed-out game and begin its cooldown exactly once."""
+        normalized_id = self._validate_user_id(user_id)
+        normalized_game_id = str(game_id).strip()
+        if not normalized_game_id or len(normalized_game_id) > 160:
+            raise InvalidAmount("A valid Guess Who game ID is required.")
+        current_time = int(time.time() if now is None else now)
+        with self._transaction() as connection:
+            self._ensure_user(connection, normalized_id)
+            return self._record_guess_who_completion_locked(
+                connection,
+                user_id=normalized_id,
+                game_id=normalized_game_id,
+                completed_at=current_time,
+            )
+
     def complete_guess_who(
         self,
         user_id: str | int,
@@ -2330,6 +2455,12 @@ class Database:
                 amount=MINIGAME_COMPLETION_XP,
                 reason="minigame_guess_who",
                 now=current_time,
+            )
+            self._record_guess_who_completion_locked(
+                connection,
+                user_id=normalized_id,
+                game_id=normalized_game_id,
+                completed_at=current_time,
             )
             return balance + (reward if correct else 0), grant
 
@@ -2876,6 +3007,8 @@ class Database:
                 "team_settings",
                 "team_settings_v2",
                 "team_migration_notices",
+                "guess_who_completions",
+                "guess_who_cooldowns",
                 "draft_cooldowns",
                 "draft_sessions",
                 "tournament_cooldowns",
@@ -3193,7 +3326,7 @@ class Database:
         *,
         now: int | None = None,
     ) -> CooldownStatus:
-        """Read saved claim and Draft cooldown timestamps without creating a user."""
+        """Read saved claim, Guess Who, and Draft cooldowns without creating a user."""
         normalized_id = self._validate_user_id(user_id)
         current_time = int(time.time() if now is None else now)
         with self._read_connection() as connection:
@@ -3203,6 +3336,13 @@ class Database:
             ).fetchone()
             draft = connection.execute(
                 "SELECT last_started_at FROM draft_cooldowns WHERE user_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            guess_who = connection.execute(
+                """
+                SELECT last_completed_at FROM guess_who_cooldowns
+                WHERE user_id = ?
+                """,
                 (normalized_id,),
             ).fetchone()
             active_draft = connection.execute(
@@ -3224,6 +3364,11 @@ class Database:
             if draft is not None
             else None
         )
+        guess_who_last_completed = (
+            int(guess_who["last_completed_at"])
+            if guess_who is not None
+            else None
+        )
         claim_remaining = (
             max(0, claim_last_used + CLAIM_COOLDOWN_SECONDS - current_time)
             if claim_last_used is not None
@@ -3234,12 +3379,24 @@ class Database:
             if draft_last_started is not None
             else 0
         )
+        guess_who_remaining = (
+            max(
+                0,
+                guess_who_last_completed
+                + GUESS_WHO_COOLDOWN_SECONDS
+                - current_time,
+            )
+            if guess_who_last_completed is not None
+            else 0
+        )
         return CooldownStatus(
             claim_last_used_at=claim_last_used,
             draft_last_started_at=draft_last_started,
             claim_remaining_seconds=claim_remaining,
             draft_remaining_seconds=draft_remaining,
             draft_active=active_draft is not None,
+            guess_who_last_completed_at=guess_who_last_completed,
+            guess_who_remaining_seconds=guess_who_remaining,
         )
 
     # Atomic auction settlement and bid operations.

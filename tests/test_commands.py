@@ -4827,12 +4827,17 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
             username="RetryPlayer",
         )
         owner = self.make_user(1301, "RetryPlayer")
-        incorrect = await self.submit_answer(view, owner, "not the answer")
+        with patch("database.time.time", return_value=1_800):
+            incorrect = await self.submit_answer(view, owner, "not the answer")
         self.assertTrue(incorrect.messages[0]["ephemeral"])
         self.assertIn("incorrect", incorrect.messages[0]["content"].lower())
-        self.assertFalse(view.finished)
+        self.assertTrue(view.finished)
         self.assertEqual(self.database.get_balance(1301), 0)
-        self.assertEqual(channel.messages, [])
+        self.assertEqual(len(channel.messages), 1)
+        self.assertEqual(
+            self.database.get_guess_who_cooldown_seconds(1301, now=1_800),
+            300,
+        )
 
         response = FakeResponse()
         await view.answer_button.callback(
@@ -4851,9 +4856,14 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         modal = await self.open_answer_modal(view, owner)
         modal.player_name._value = player.name
         response = FakeResponse()
-        await modal.on_submit(SimpleNamespace(user=owner, response=response))
+        with patch("database.time.time", return_value=1_900):
+            await modal.on_submit(SimpleNamespace(user=owner, response=response))
 
         self.assertTrue(view.finished)
+        self.assertEqual(
+            self.database.get_guess_who_cooldown_seconds(1401, now=1_900),
+            300,
+        )
         self.assertTrue(response.messages[0]["ephemeral"])
         self.assertEqual(
             Database(self.database.path).get_balance(1401),
@@ -4905,10 +4915,15 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(view.timeout, 0.01)
         assert view._deadline_task is not None
-        await asyncio.wait_for(view._deadline_task, timeout=1)
+        with patch("database.time.time", return_value=2_000):
+            await asyncio.wait_for(view._deadline_task, timeout=1)
 
         self.assertTrue(view.finished)
         self.assertTrue(view.answer_button.disabled)
+        self.assertEqual(
+            self.database.get_guess_who_cooldown_seconds(1601, now=2_000),
+            300,
+        )
         self.assertEqual(self.database.get_balance(1601), 0)
         self.assertEqual(self.database.get_xp_profile(1601).total_xp, 0)
         self.assertEqual(len(channel.messages), 1)
@@ -4919,6 +4934,36 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         upload = reveal["file"]
         self.assertEqual(upload.filename, Path(player.image_path).name)
         upload.close()
+
+    async def test_cooldown_blocks_only_guess_who_and_formats_remaining_time(self) -> None:
+        self.database.finish_guess_who_timeout(
+            1702,
+            "prior-game",
+            now=1_000,
+        )
+        blocked_interaction = self.make_interaction(user_id=1702, guild_id=702)
+        with patch("database.time.time", return_value=1_028):
+            await MinigameCommands.minigame.callback(self.cog, blocked_interaction)
+
+        self.assertEqual(
+            blocked_interaction.response.messages[0]["content"],
+            "❌ Guess Who Cooldown Active!\n\n"
+            "You must wait 4 minutes and 32 seconds before playing Guess Who again.",
+        )
+        self.assertTrue(blocked_interaction.response.messages[0]["ephemeral"])
+
+        with patch("database.time.time", return_value=1_028):
+            _, _, _, another_player_game = await self.start_game(
+                user_id=1703,
+                guild_id=703,
+            )
+        with patch("database.time.time", return_value=1_300):
+            _, _, _, expired_cooldown_game = await self.start_game(
+                user_id=1702,
+                guild_id=702,
+            )
+        self.assertFalse(another_player_game.finished)
+        self.assertFalse(expired_cooldown_game.finished)
 
     async def test_empty_catalog_is_handled_without_starting_a_game(self) -> None:
         empty_database = Database(Path(self.temp_dir.name) / "empty.sqlite3")

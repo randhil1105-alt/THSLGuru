@@ -431,6 +431,18 @@ class DraftCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(view.selected), 0)
         self.assertIn(view.owner_id, self.cog._active_drafts_by_owner)
 
+    async def test_guess_who_cooldown_does_not_block_draft(self) -> None:
+        self.database.finish_guess_who_timeout(
+            1001,
+            "finished-guess",
+            now=1_000,
+        )
+
+        interaction, view = await self.start_draft()
+
+        self.assertFalse(interaction.response.messages[0]["ephemeral"])
+        self.assertEqual(view.owner_id, 1001)
+
     async def test_other_users_cannot_control_an_individual_draft(self) -> None:
         _, view = await self.start_draft()
         response = FakeResponse()
