@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import discord
 
-from commands.shop import ShopCommands
+from commands.shop import ShopCommands, _format_reset_countdown
 from database import (
     DAILY_SHOP_CARD_COUNT,
     FORMATION_STARTERS,
@@ -78,6 +78,16 @@ class DailyShopDatabaseTests(unittest.TestCase):
         )
         self.assertEqual(first["player_ids"], saved["player_ids"])
         self.assertEqual(reopened.get_daily_shop(now=next_day)["player_ids"], second["player_ids"])
+
+    def test_countdown_matches_the_utc_midnight_rotation_without_negative_values(self) -> None:
+        before_midnight = 1_704_067_199
+        midnight = before_midnight + 1
+        after_midnight = midnight + 10
+
+        self.assertEqual(_format_reset_countdown(before_midnight), "0h 0m 1s")
+        self.assertEqual(_format_reset_countdown(midnight), "24h 0m 0s")
+        self.assertEqual(_format_reset_countdown(after_midnight), "23h 59m 50s")
+        self.assertNotIn("-", _format_reset_countdown(after_midnight))
 
     def test_buy_charges_exact_catalog_value_and_duplicate_receipt_is_idempotent(self) -> None:
         now = 1_704_067_199
@@ -330,12 +340,14 @@ class FakeResponse:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
         self.deferred = False
+        self.defer_kwargs: dict[str, Any] = {}
 
     async def send_message(self, content=None, **kwargs) -> None:
         self.messages.append({"content": content, **kwargs})
 
-    async def defer(self, **_kwargs) -> None:
+    async def defer(self, **kwargs) -> None:
         self.deferred = True
+        self.defer_kwargs = kwargs
 
     def is_done(self) -> bool:
         return self.deferred or bool(self.messages)
@@ -401,6 +413,8 @@ class DailyShopCommandTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_shop_command_displays_five_illustrated_listings_shared_by_all_users(self) -> None:
+        self.database.set_balance(501, 25_000_000)
+        self.database.set_balance(502, 123_456)
         first = self.make_slash_interaction(501)
         second = self.make_slash_interaction(502)
         await ShopCommands.shop.callback(self.cog, first)
@@ -408,28 +422,59 @@ class DailyShopCommandTests(unittest.IsolatedAsyncioTestCase):
 
         first_payload = first.response.messages[0]
         second_payload = second.response.messages[0]
-        self.assertEqual(len(first_payload["embeds"]), DAILY_SHOP_CARD_COUNT)
-        self.assertEqual(len(first_payload["files"]), DAILY_SHOP_CARD_COUNT)
+        self.assertFalse(first_payload["ephemeral"])
+        self.assertFalse(second_payload["ephemeral"])
         self.assertEqual(
-            [embed.title for embed in first_payload["embeds"]],
-            [embed.title for embed in second_payload["embeds"]],
+            first_payload["embeds"][0].title,
+            "🛒 DAILY SHOP",
         )
+        self.assertEqual(
+            len(first_payload["embeds"]),
+            DAILY_SHOP_CARD_COUNT + 1,
+        )
+        self.assertEqual(len(first_payload["files"]), DAILY_SHOP_CARD_COUNT)
         self.assertEqual(len(first_payload["view"].children), DAILY_SHOP_CARD_COUNT)
         self.assertEqual(len({button.player_id for button in first_payload["view"].children}), 5)
-        for embed in first_payload["embeds"]:
-            player_name = embed.title.split(" · ", 2)[-1]
-            player = self.database.get_player(player_name)
-            self.assertIsNotNone(player)
-            assert player is not None
-            self.assertIsNotNone(embed.image.url)
-            self.assertIn("OVR", embed.description)
-            self.assertIn("coins", embed.description)
-            self.assertIn("Position:", embed.description)
-            self.assertIn("Price:", embed.description)
-            self.assertIn("UTC", embed.footer.text)
-            self.assertIn(player.name, embed.title)
-            self.assertIn(format_card_type(player.rarity), embed.description)
-            self.assertIn(format_coins(player.value), embed.description)
+        self.assertIn("**🌐 Time till reset:**", first_payload["embeds"][0].description)
+        self.assertIn("**💼 Balance:** 25,000,000", first_payload["embeds"][0].description)
+        self.assertIn("**💼 Balance:** 123,456", second_payload["embeds"][0].description)
+        self.assertRegex(
+            first_payload["embeds"][0].description,
+            r"\*\*🌐 Time till reset:\*\* \d+h \d+m \d+s",
+        )
+        self.assertIn("UTC", first_payload["embeds"][0].footer.text)
+
+        expected_players = self.database.get_daily_shop()["players"]
+        description_lines = first_payload["embeds"][0].description.splitlines()
+        self.assertEqual(
+            description_lines[:DAILY_SHOP_CARD_COUNT],
+            second_payload["embeds"][0].description.splitlines()[
+                :DAILY_SHOP_CARD_COUNT
+            ],
+        )
+        self.assertEqual(
+            description_lines[:DAILY_SHOP_CARD_COUNT],
+            [
+                f"**{player.overall} {player.name}** "
+                f"({format_card_type(player.rarity)}) - "
+                f"**{format_coins(player.value)}**"
+                for player in expected_players
+            ],
+        )
+        self.assertTrue(
+            all(embed.image.url for embed in first_payload["embeds"][1:])
+        )
+        self.assertEqual(
+            [embed.description for embed in first_payload["embeds"][1:]],
+            [
+                f"**{player.name}** · Position: **{player.position}**"
+                for player in expected_players
+            ],
+        )
+        self.assertEqual(
+            [button.player_id for button in first_payload["view"].children],
+            [player.id for player in expected_players],
+        )
 
         for payload in (first_payload, second_payload):
             for artwork in payload["files"]:
@@ -459,8 +504,14 @@ class DailyShopCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_inventory(601)[0].quantity, 1)
         self.assertIn("Purchased", first_click.followup.messages[0]["content"])
         self.assertIn(player.name, first_click.followup.messages[0]["content"])
-        self.assertEqual(len(message.edits[-1]["embeds"]), DAILY_SHOP_CARD_COUNT)
-        self.assertIn("10 coins", message.edits[-1]["embeds"][0].footer.text)
+        self.assertEqual(
+            len(message.edits[-1]["embeds"]),
+            DAILY_SHOP_CARD_COUNT + 1,
+        )
+        self.assertIn(
+            "**💼 Balance:** 10",
+            message.edits[-1]["embeds"][0].description,
+        )
         self.assertEqual(
             message.edits[-1]["attachments"],
             ["existing-shop-images"],
@@ -476,6 +527,42 @@ class DailyShopCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_inventory(601)[0].quantity, 1)
         self.assertIn("already processed", retry.followup.messages[0]["content"])
 
+        for artwork in payload["files"]:
+            artwork.close()
+
+    async def test_any_player_can_buy_publicly_listed_cards_without_replacing_opener_balance(self) -> None:
+        opener_id = 650
+        buyer_id = 651
+        self.database.set_balance(opener_id, 99_000)
+        slash = self.make_slash_interaction(opener_id)
+        await ShopCommands.shop.callback(self.cog, slash)
+        payload = slash.response.messages[0]
+        button = payload["view"].children[0]
+        player = next(
+            card
+            for card in self.database.get_daily_shop()["players"]
+            if card.id == button.player_id
+        )
+        self.database.set_balance(buyer_id, player.value + 77)
+        message = FakeMessage(attachments=["shared-shop-images"])
+        click = self.make_component_interaction(
+            user_id=buyer_id,
+            interaction_id="public-shop-buy",
+            message=message,
+        )
+
+        await payload["view"].buy(click, player.id)
+
+        self.assertEqual(click.response.defer_kwargs, {"ephemeral": True, "thinking": True})
+        self.assertEqual(self.database.get_balance(buyer_id), 77)
+        self.assertEqual(self.database.get_inventory(buyer_id)[0].player.id, player.id)
+        self.assertEqual(self.database.get_balance(opener_id), 99_000)
+        self.assertEqual(message.edits, [])
+        self.assertTrue(click.followup.messages[0]["ephemeral"])
+        self.assertIn(
+            "Your balance is now **77 coins**",
+            click.followup.messages[0]["content"],
+        )
         for artwork in payload["files"]:
             artwork.close()
 
@@ -502,8 +589,8 @@ class DailyShopCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_balance(701), player.value - 1)
         self.assertEqual(self.database.get_inventory(701), [])
         self.assertIn(
-            f"{player.value - 1:,} coins",
-            message.edits[-1]["embeds"][0].footer.text,
+            f"**💼 Balance:** {player.value - 1:,}",
+            message.edits[-1]["embeds"][0].description,
         )
         for artwork in payload["files"]:
             artwork.close()

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from datetime import datetime, timedelta, timezone
+from math import ceil
 from typing import Any, Sequence
 
 import discord
@@ -19,11 +22,29 @@ from database import (
     Player,
     ShopError,
     ShopInsufficientFunds,
+    format_card_type,
 )
-from database import format_card_type
 
 LOGGER = logging.getLogger("thsl_guru.shop")
 SHOP_VIEW_TIMEOUT_SECONDS = 300
+
+
+def _format_reset_countdown(now: float | None = None) -> str:
+    current = (
+        datetime.now(timezone.utc)
+        if now is None
+        else datetime.fromtimestamp(float(now), tz=timezone.utc)
+    )
+    next_reset = (current + timedelta(days=1)).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    seconds_left = max(0, ceil((next_reset - current).total_seconds()))
+    hours, remaining = divmod(seconds_left, 3600)
+    minutes, seconds = divmod(remaining, 60)
+    return f"{hours}h {minutes}m {seconds}s"
 
 
 def _shop_embeds(
@@ -32,32 +53,44 @@ def _shop_embeds(
     shop_day: str,
     balance: int,
     attach_images: bool,
+    now: float | None = None,
 ) -> tuple[list[discord.Embed], list[discord.File]]:
-    embeds: list[discord.Embed] = []
+    if len(players) != DAILY_SHOP_CARD_COUNT:
+        raise NoEligibleCards("The daily shop must contain exactly five cards.")
+
+    listing_lines = [
+        f"**{player.overall} {player.name}** "
+        f"({format_card_type(player.rarity)}) - "
+        f"**{format_coins(player.value)}**"
+        for player in players
+    ]
+    listing_lines.extend(
+        [
+            "",
+            f"**🌐 Time till reset:** {_format_reset_countdown(now)}",
+            f"**💼 Balance:** {format_coins(balance)}",
+        ]
+    )
+    summary = discord.Embed(
+        title="🛒 DAILY SHOP",
+        description="\n".join(listing_lines),
+        color=discord.Color.blurple(),
+    )
+    summary.set_footer(text=f"Shared selection · {shop_day} UTC")
+    embeds = [summary]
     files: list[discord.File] = []
-    for index, player in enumerate(players, start=1):
-        embed = discord.Embed(
-            title=f"Daily Shop · {index}/{DAILY_SHOP_CARD_COUNT} · {player.name}",
-            description=(
-                f"**{player.overall} OVR** · {format_card_type(player.rarity)}\n"
-                f"Position: **{player.position}**\n"
-                f"Price: **{format_coins(player.value)}**"
-            ),
-            color=RARITY_COLORS.get(player.rarity, discord.Color.blurple()),
-        )
+    for player in players:
         image_path = resolve_card_image(player)
         if image_path is None:
             raise NoEligibleCards(
                 f"The shop card **{player.name}** does not have available artwork."
             )
         filename = f"daily-shop-{player.id}{image_path.suffix.lower()}"
-        embed.set_image(url=f"attachment://{filename}")
-        embed.set_footer(
-            text=(
-                f"Shared shop · {shop_day} UTC · "
-                f"Your balance: {format_coins(balance)}"
-            )
+        embed = discord.Embed(
+            description=f"**{player.name}** · Position: **{player.position}**",
+            color=RARITY_COLORS.get(player.rarity, discord.Color.blurple()),
         )
+        embed.set_image(url=f"attachment://{filename}")
         embeds.append(embed)
         if attach_images:
             files.append(discord.File(image_path, filename=filename))
@@ -87,7 +120,7 @@ class DailyShopBuyButton(discord.ui.Button["DailyShopView"]):
 
 
 class DailyShopView(discord.ui.View):
-    """A user's view of the shared daily listings."""
+    """A player's public view of the shared daily listings."""
 
     def __init__(
         self,
@@ -110,23 +143,18 @@ class DailyShopView(discord.ui.View):
         for player in self.players:
             self.add_item(DailyShopBuyButton(player))
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if str(interaction.user.id) != self.user_id:
-            await interaction.response.send_message(
-                "Only the player who opened this shop can buy from it.",
-                ephemeral=True,
-            )
-            return False
-        return True
-
     async def buy(
         self,
         interaction: discord.Interaction,
         player_id: int,
     ) -> None:
         async with self._purchase_lock:
+            is_command_user = str(interaction.user.id) == self.user_id
             try:
-                await interaction.response.defer()
+                if is_command_user:
+                    await interaction.response.defer()
+                else:
+                    await interaction.response.defer(ephemeral=True, thinking=True)
             except discord.HTTPException:
                 LOGGER.info("A shop button interaction expired before processing.")
                 return
@@ -139,8 +167,9 @@ class DailyShopView(discord.ui.View):
                     self.shop_day,
                 )
             except ShopInsufficientFunds as exc:
-                self.balance = exc.balance
-                await self._refresh_after_purchase(interaction)
+                if is_command_user:
+                    self.balance = exc.balance
+                    await self._refresh_after_purchase(interaction)
                 await self._followup(interaction, str(exc))
                 return
             except (ShopError, EconomyError) as exc:
@@ -160,8 +189,10 @@ class DailyShopView(discord.ui.View):
                 return
 
             player = purchase["player"]
-            self.balance = int(purchase["balance_after"])
-            await self._refresh_after_purchase(interaction)
+            buyer_balance = int(purchase["balance_after"])
+            if is_command_user:
+                self.balance = buyer_balance
+                await self._refresh_after_purchase(interaction)
             if purchase["already_processed"]:
                 confirmation = (
                     f"Your purchase of **{player.name}** was already processed; "
@@ -170,7 +201,7 @@ class DailyShopView(discord.ui.View):
             else:
                 confirmation = f"Purchased **{player.name}** for "
                 confirmation += f"**{format_coins(int(purchase['price']))}**. "
-            confirmation += f"Your balance is now **{format_coins(self.balance)}**."
+            confirmation += f"Your balance is now **{format_coins(buyer_balance)}**."
             await self._followup(interaction, confirmation)
 
     async def _refresh_after_purchase(
@@ -182,6 +213,7 @@ class DailyShopView(discord.ui.View):
             shop_day=self.shop_day,
             balance=self.balance,
             attach_images=False,
+            now=time.time(),
         )
         refreshed = DailyShopView(
             self.command,
@@ -249,7 +281,9 @@ class ShopCommands(discord_commands.Cog):
                 for player in catalog
                 if resolve_card_image(player) is not None
             ]
+            shop_now = time.time()
             daily_shop = self.database.get_daily_shop(
+                now=shop_now,
                 eligible_player_ids=illustrated_ids,
             )
             balance = self.database.get_balance(interaction.user.id)
@@ -258,9 +292,10 @@ class ShopCommands(discord_commands.Cog):
                 shop_day=daily_shop["shop_day"],
                 balance=balance,
                 attach_images=True,
+                now=shop_now,
             )
         except NoEligibleCards as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.response.send_message(str(exc), ephemeral=False)
             return
 
         view = DailyShopView(
@@ -274,7 +309,7 @@ class ShopCommands(discord_commands.Cog):
             embeds=embeds,
             files=files,
             view=view,
-            ephemeral=True,
+            ephemeral=False,
         )
         try:
             view.bind_message(await interaction.original_response())
