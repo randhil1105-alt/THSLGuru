@@ -1125,5 +1125,62 @@
     },
     "image_path": "cards/fadi_s1_future_stars_89.png",
     "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Flying",
+    "overall": 76,
+    "position": "WI",
+    "country": "Germany 🇩🇪",
+    "team": "Toronto Maple Leafs",
+    "rarity": "SILVER",
+    "value": 250000,
+    "stats": {
+      "SHO": 80,
+      "DRI": 74,
+      "SAV": 76,
+      "PAS": 73,
+      "DEF": 72,
+      "ACT": 76
+    },
+    "image_path": "cards/flying_silver_76.png",
+    "allowed_lineup_positions": ["WING1", "WING2"]
+  },
+  {
+    "name": "Nomb",
+    "overall": 85,
+    "position": "GK",
+    "country": "Mexico 🇲🇽",
+    "team": "Dallas Stars",
+    "rarity": "GOLD",
+    "value": 600000,
+    "stats": {
+      "SAV": 87,
+      "DIV": 85,
+      "PAS": 83,
+      "CLE": 83,
+      "SWE": 85,
+      "ACT": 87
+    },
+    "image_path": "cards/nomb_gold_85.png",
+    "allowed_lineup_positions": ["GK"]
+  },
+  {
+    "name": "Erick",
+    "overall": 77,
+    "position": "GK",
+    "country": "Mexico 🇲🇽",
+    "team": "Dallas Stars",
+    "rarity": "SILVER",
+    "value": 350000,
+    "stats": {
+      "SAV": 83,
+      "DIV": 75,
+      "PAS": 74,
+      "CLE": 74,
+      "SWE": 76,
+      "ACT": 80
+    },
+    "image_path": "cards/erick_silver_77.png",
+    "allowed_lineup_positions": ["GK"]
   }
 ]

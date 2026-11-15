@@ -44,6 +44,12 @@ class ProfileCommands(discord_commands.Cog):
             free_pack_lines = "\n".join(
                 f"- {format_card_type(rarity)} Packs: "
                 f"**{free_packs.get(rarity, 0)}**"
+                for rarity in ("GOLD", "TOTW")
+            )
+            granted_packs = self.database.get_granted_pack_inventory(user_id)
+            granted_pack_lines = "\n".join(
+                f"- {format_card_type(rarity)} Packs: "
+                f"**{granted_packs.get(rarity, 0)}**"
                 for rarity in PACK_COST_BY_RARITY
             )
         except EconomyError as exc:
@@ -80,6 +86,11 @@ class ProfileCommands(discord_commands.Cog):
         embed.add_field(
             name="🎁 Available Free Packs",
             value=free_pack_lines,
+            inline=False,
+        )
+        embed.add_field(
+            name="🎁 Available Granted Packs",
+            value=granted_pack_lines,
             inline=False,
         )
         embed.add_field(

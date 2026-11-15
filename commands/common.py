@@ -20,6 +20,7 @@ CARDS_DIR = (PROJECT_ROOT / "cards").resolve()
 
 RARITY_COLORS = {
     "GOLD": discord.Color.gold(),
+    "SILVER": discord.Color.light_grey(),
     "TOTW": discord.Color.dark_purple(),
     "S2 TOTS": discord.Color.blue(),
     "S1 TOTS": discord.Color.blue(),

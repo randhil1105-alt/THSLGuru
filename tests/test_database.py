@@ -18,6 +18,7 @@ from database import (
     S1_TOTS_PACK_COST,
     S1_TOTY_PACK_COST,
     S2_TOTS_PACK_COST,
+    SILVER_PACK_COST,
     SUBSTITUTE_POSITIONS,
     TEAM_FORMATIONS,
     TOTW_PACK_COST,
@@ -137,6 +138,11 @@ class DatabaseTests(unittest.TestCase):
             GOLD_PACK_COST,
             purchase_id="reset-pack-purchase",
         )
+        self.database.grant_pack(
+            first_user,
+            "SILVER",
+            grant_id="reset-silver-pack",
+        )
 
         catalog_before = self.database.get_players()
         reset_count = self.database.reset_all_player_progress(
@@ -156,6 +162,10 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(
             self.database.get_free_pack_inventory(first_user),
             {"GOLD": 0, "TOTW": 0},
+        )
+        self.assertEqual(
+            self.database.get_granted_pack_inventory(first_user)["SILVER"],
+            0,
         )
         cooldowns = self.database.get_cooldown_status(first_user, now=5_000_000)
         self.assertIsNone(cooldowns.claim_last_used_at)
@@ -1737,6 +1747,7 @@ class DatabaseTests(unittest.TestCase):
             ).fetchone()[0]
             self.assertIn("'S1 TOTS'", table_sql)
             self.assertIn("'S1 FUTURE STARS'", table_sql)
+            self.assertIn("'SILVER'", table_sql)
             receipt_count = connection.execute(
                 "SELECT COUNT(*) FROM pack_purchases"
             ).fetchone()[0]

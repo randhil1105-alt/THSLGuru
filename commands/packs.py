@@ -20,6 +20,7 @@ from commands.xp import mark_successful_command
 from database import (
     GOLD_PACK_COST,
     MAX_PACK_QUANTITY,
+    SILVER_PACK_COST,
     S1_TOTS_PACK_COST,
     S1_TOTY_PACK_COST,
     S1_FUTURE_STARS_PACK_COST,
@@ -39,6 +40,7 @@ LOGGER = logging.getLogger("thsl_guru.packs")
 
 PACKS = (
     ("GOLD", GOLD_PACK_COST),
+    ("SILVER", SILVER_PACK_COST),
     ("TOTW", TOTW_PACK_COST),
     ("S2 TOTS", S2_TOTS_PACK_COST),
     ("S1 TOTS", S1_TOTS_PACK_COST),
@@ -46,6 +48,7 @@ PACKS = (
     ("S1 FUTURE STARS", S1_FUTURE_STARS_PACK_COST),
 )
 PACK_DISPLAY_NAMES = {
+    "SILVER": "🥈 SILVER PACK",
     "S1 TOTY": "S1 TOTY PACK",
     "S1 FUTURE STARS": "S1 FUTURE STARS PACK",
 }
@@ -107,6 +110,29 @@ class FreePackOpenButton(discord.ui.Button["PackPurchaseView"]):
         await self.view.open_free_pack(interaction, rarity=self.rarity)
 
 
+class GrantedPackOpenButton(discord.ui.Button["PackPurchaseView"]):
+    def __init__(self, rarity: str, quantity: int) -> None:
+        label = (
+            f"Open Granted {format_card_type(rarity)} Pack · "
+            f"{quantity} available"
+        )
+        super().__init__(
+            label=label[:80],
+            style=discord.ButtonStyle.success,
+        )
+        self.rarity = rarity
+        self.quantity = quantity
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if self.view is None:
+            await interaction.response.send_message(
+                "This pack menu is no longer available.",
+                ephemeral=False,
+            )
+            return
+        await self.view.open_granted_pack(interaction, rarity=self.rarity)
+
+
 class PackPurchaseView(discord.ui.View):
     """A user-bound, single-use menu with an idempotent pack purchase."""
 
@@ -120,6 +146,7 @@ class PackPurchaseView(discord.ui.View):
         quantity: int = 1,
         balance: int = 0,
         free_pack_counts: dict[str, int] | None = None,
+        granted_pack_counts: dict[str, int] | None = None,
     ) -> None:
         super().__init__(timeout=180)
         self.command = command
@@ -127,6 +154,7 @@ class PackPurchaseView(discord.ui.View):
         self.cards_by_rarity = cards_by_rarity
         self.quantity = quantity
         self.free_pack_counts = free_pack_counts or {}
+        self.granted_pack_counts = granted_pack_counts or {}
         self._purchase_lock = asyncio.Lock()
         self._used = False
 
@@ -147,6 +175,9 @@ class PackPurchaseView(discord.ui.View):
             free_count = self.free_pack_counts.get(rarity, 0)
             if rarity in {"GOLD", "TOTW"} and free_count > 0:
                 self.add_item(FreePackOpenButton(rarity, free_count))
+            granted_count = self.granted_pack_counts.get(rarity, 0)
+            if granted_count > 0:
+                self.add_item(GrantedPackOpenButton(rarity, granted_count))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if str(interaction.user.id) != self.user_id:
@@ -201,6 +232,30 @@ class PackPurchaseView(discord.ui.View):
             self._used = True
             try:
                 await self.command._open_free_reward(
+                    interaction,
+                    rarity=rarity,
+                    redemption_id=interaction.id,
+                )
+            finally:
+                await self._disable_completed_menu(interaction)
+
+    async def open_granted_pack(
+        self,
+        interaction: discord.Interaction,
+        *,
+        rarity: str,
+    ) -> None:
+        async with self._purchase_lock:
+            if self._used:
+                await interaction.response.send_message(
+                    "This pack menu has already been used. Run `/packs` to open a new one.",
+                    ephemeral=False,
+                )
+                return
+
+            self._used = True
+            try:
+                await self.command._open_granted_pack(
                     interaction,
                     rarity=rarity,
                     redemption_id=interaction.id,
@@ -387,6 +442,52 @@ class PackCommands(discord_commands.Cog):
             ),
         )
 
+    async def _open_granted_pack(
+        self,
+        interaction: discord.Interaction,
+        *,
+        rarity: str,
+        redemption_id: str | int,
+    ) -> None:
+        try:
+            player, remaining = self.database.open_granted_pack(
+                interaction.user.id,
+                rarity,
+                redemption_id,
+            )
+        except NoGrantedPacks as exc:
+            await interaction.response.send_message(str(exc), ephemeral=False)
+            return
+        except NoEligibleCards:
+            await interaction.response.send_message(
+                f"No **{rarity}** cards are available. Your granted pack was not used.",
+                ephemeral=False,
+            )
+            return
+        except InvalidAmount as exc:
+            await interaction.response.send_message(str(exc), ephemeral=False)
+            return
+
+        pack_name = PACK_DISPLAY_NAMES.get(
+            rarity,
+            f"{format_card_type(rarity)} Pack",
+        )
+        await send_player_card(
+            interaction,
+            player,
+            ephemeral=False,
+            content=(
+                f"You opened a granted **{pack_name}**. "
+                f"Remaining granted {format_card_type(rarity)} packs: "
+                f"**{remaining}**."
+            ),
+            view=QuickSellView(
+                self.database,
+                interaction.user.id,
+                [player],
+            ),
+        )
+
     def _pack_cards(self) -> dict[str, list[Player]]:
         return {
             rarity: self.database.get_players(rarity=rarity)
@@ -405,9 +506,17 @@ class PackCommands(discord_commands.Cog):
         free_pack_counts = self.database.get_free_pack_inventory(
             interaction.user.id
         )
+        granted_pack_counts = self.database.get_granted_pack_inventory(
+            interaction.user.id
+        )
         free_pack_lines = "\n".join(
             f"- {format_card_type(rarity)} Packs: "
             f"{free_pack_counts.get(rarity, 0)}"
+            for rarity, _cost in PACKS
+        )
+        granted_pack_lines = "\n".join(
+            f"- {format_card_type(rarity)} Packs: "
+            f"{granted_pack_counts.get(rarity, 0)}"
             for rarity, _cost in PACKS
         )
         visible_packs = [
@@ -428,9 +537,18 @@ class PackCommands(discord_commands.Cog):
                 "Each pack contains one random player card of its listed rarity.\n\n"
                 "🎁 **Your Available Free Packs**\n"
                 f"{free_pack_lines}\n"
-                "A free-pack button opens exactly one pack."
+                "A free-pack button opens exactly one pack.\n\n"
+                "🎁 **Your Available Granted Packs**\n"
+                f"{granted_pack_lines}\n"
+                "A granted-pack button opens exactly one pack."
             ),
-            color=discord.Color.gold() if only_rarity == "GOLD" else discord.Color.dark_purple(),
+            color=(
+                discord.Color.gold()
+                if only_rarity == "GOLD"
+                else discord.Color.light_grey()
+                if only_rarity == "SILVER"
+                else discord.Color.dark_purple()
+            ),
         )
 
         for rarity, cost in visible_packs:
@@ -484,6 +602,7 @@ class PackCommands(discord_commands.Cog):
             quantity=quantity,
             balance=balance,
             free_pack_counts=free_pack_counts,
+            granted_pack_counts=granted_pack_counts,
         )
         await interaction.response.send_message(
             embed=embed,
@@ -512,13 +631,14 @@ class PackCommands(discord_commands.Cog):
     )
     @app_commands.describe(
         pack_type=(
-            "Choose a GOLD, TOTW, S2 TOTS, S1 TOTS, S1 TOTY, "
+            "Choose a GOLD, SILVER, TOTW, S2 TOTS, S1 TOTS, S1 TOTY, "
             "or S1 FUTURE STARS pack"
         )
     )
     @app_commands.choices(
         pack_type=[
             app_commands.Choice(name="GOLD Pack", value="GOLD"),
+            app_commands.Choice(name="🥈 SILVER PACK", value="SILVER"),
             app_commands.Choice(name="TOTW Pack", value="TOTW"),
             app_commands.Choice(name="S2 TOTS Pack", value="S2 TOTS"),
             app_commands.Choice(name="S1 TOTS Pack", value="S1 TOTS"),

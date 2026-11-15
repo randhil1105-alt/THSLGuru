@@ -41,7 +41,12 @@ from commands.minigame import (
     IndividualMinigameView,
     MinigameCommands,
 )
-from commands.packs import FreePackOpenButton, PackBuyButton, PackCommands
+from commands.packs import (
+    FreePackOpenButton,
+    GrantedPackOpenButton,
+    PackBuyButton,
+    PackCommands,
+)
 from commands.player import PlayerCommands
 from commands.profile import ProfileCommands
 from commands.team import TeamCommands, lineup_card_label
@@ -52,6 +57,7 @@ from database import (
     Database,
     FORMATION_STARTERS,
     GOLD_PACK_COST,
+    SILVER_PACK_COST,
     InventoryEntry,
     InvalidLineupPosition,
     LINEUP_POSITIONS,
@@ -126,6 +132,17 @@ class FakeResponse:
 
     async def send_modal(self, modal: discord.ui.Modal) -> None:
         self.modals.append(modal)
+
+
+def make_admin_interaction(response: FakeResponse) -> SimpleNamespace:
+    return SimpleNamespace(
+        response=response,
+        user=SimpleNamespace(
+            id=999,
+            guild_permissions=SimpleNamespace(administrator=True),
+        ),
+        guild=SimpleNamespace(id=888),
+    )
 
 
 class FakeFollowup:
@@ -299,6 +316,25 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             [choice.value for choice in pack_parameters["pack_type"].choices],
             [
                 "GOLD",
+                "SILVER",
+                "TOTW",
+                "S2 TOTS",
+                "S1 TOTS",
+                "S1 TOTY",
+                "S1 FUTURE STARS",
+            ],
+        )
+        grantcard_parameters = {
+            parameter.name: parameter
+            for parameter in commands["grantcard"].parameters
+        }
+        self.assertIn("user", grantcard_parameters)
+        self.assertIn("pack", grantcard_parameters)
+        self.assertEqual(
+            [choice.value for choice in grantcard_parameters["pack"].choices],
+            [
+                "GOLD",
+                "SILVER",
                 "TOTW",
                 "S2 TOTS",
                 "S1 TOTS",
@@ -1552,7 +1588,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 grant_response = FakeResponse()
                 await AdminCommands.grantcard.callback(
                     AdminCommands(self.database),
-                    SimpleNamespace(response=grant_response),
+                    make_admin_interaction(grant_response),
                     SimpleNamespace(
                         id=user_id,
                         mention="<@ebs-cam-gold-licha-flow-user>",
@@ -1789,7 +1825,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 grant_response = FakeResponse()
                 await AdminCommands.grantcard.callback(
                     AdminCommands(self.database),
-                    SimpleNamespace(response=grant_response),
+                    make_admin_interaction(grant_response),
                     SimpleNamespace(
                         id=user_id,
                         mention="<@mr-p-dark-road-flow-user>",
@@ -2184,7 +2220,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             response = FakeResponse()
             await AdminCommands.grantcard.callback(
                 AdminCommands(self.database),
-                SimpleNamespace(response=response),
+                make_admin_interaction(response),
                 member,
                 str(card.id),
                 1,
@@ -2578,7 +2614,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         grant_response = FakeResponse()
         await AdminCommands.grantcard.callback(
             AdminCommands(self.database),
-            SimpleNamespace(response=grant_response),
+            make_admin_interaction(grant_response),
             SimpleNamespace(id=user_id, mention="<@dryboomrun-display-user>"),
             "Dryboomrun",
             1,
@@ -2908,7 +2944,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         grant_response = FakeResponse()
         await AdminCommands.grantcard.callback(
             AdminCommands(self.database),
-            SimpleNamespace(response=grant_response),
+            make_admin_interaction(grant_response),
             SimpleNamespace(id=user_id, mention="<@needy-card-flow-user>"),
             "Needy",
             1,
@@ -3050,7 +3086,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         user_id = "gamer-card-command-user"
         await AdminCommands.grantcard.callback(
             AdminCommands(self.database),
-            SimpleNamespace(response=FakeResponse()),
+            make_admin_interaction(FakeResponse()),
             SimpleNamespace(id=user_id, mention="<@gamer-card-command-user>"),
             "Gamer",
             1,
@@ -3166,7 +3202,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         user_id = "hala-gold-card-user"
         await AdminCommands.grantcard.callback(
             AdminCommands(self.database),
-            SimpleNamespace(response=FakeResponse()),
+            make_admin_interaction(FakeResponse()),
             SimpleNamespace(id=user_id, mention="<@hala-gold-card-user>"),
             "Hala (Gold 90)",
             1,
@@ -3295,7 +3331,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
         member = SimpleNamespace(id=user_id, mention="<@xavier-card-command-user>")
         await AdminCommands.grantcard.callback(
             AdminCommands(self.database),
-            SimpleNamespace(response=admin_response),
+            make_admin_interaction(admin_response),
             member,
             "XavierCapone9",
             1,
@@ -3443,6 +3479,7 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             set(field_values),
             {
                 "GOLD · 5,000,000 coins",
+                "🥈 SILVER PACK · 2,000,000 coins",
                 "TOTW · 20,000,000 coins",
                 "S2 TOTS · 50,000,000 coins",
                 "S1 TOTS · 35,000,000 coins",
@@ -3454,6 +3491,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
             "Contains one random Gold player card.",
             field_values["GOLD · 5,000,000 coins"],
         )
+        silver_field = field_values["🥈 SILVER PACK · 2,000,000 coins"]
+        self.assertIn("Contains one random Silver player card.", silver_field)
+        self.assertIn("Price: 2,000,000 coins.", silver_field)
+        self.assertIn("Flying", silver_field)
+        self.assertIn("Erick", silver_field)
         self.assertIn(
             "Contains one random TOTW player card.",
             field_values["TOTW · 20,000,000 coins"],
@@ -3574,6 +3616,11 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
     async def test_pack_command_selects_and_purchases_each_pack_type(self) -> None:
         pack_cases = (
             ("GOLD", GOLD_PACK_COST, "Contains one random Gold player card."),
+            (
+                "SILVER",
+                SILVER_PACK_COST,
+                "Contains one random Silver player card.",
+            ),
             ("TOTW", TOTW_PACK_COST, "Contains one random TOTW player card."),
             ("S2 TOTS", S2_TOTS_PACK_COST, "Contains one random S2 TOTS player card."),
             ("S1 TOTS", S1_TOTS_PACK_COST, "Contains one random S1 TOTS player card."),
@@ -3598,6 +3645,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                         name=(
                             "S1 FUTURE STARS PACK"
                             if rarity == "S1 FUTURE STARS"
+                            else "🥈 SILVER PACK"
+                            if rarity == "SILVER"
                             else f"{rarity} Pack"
                         ),
                         value=rarity,
@@ -3610,6 +3659,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 pack_name = (
                     "S1 FUTURE STARS PACK"
                     if rarity == "S1 FUTURE STARS"
+                    else "🥈 SILVER PACK"
+                    if rarity == "SILVER"
                     else rarity
                 )
                 pack_field = f"{pack_name} · {cost:,} coins"
@@ -3634,6 +3685,8 @@ class SlashCommandLoadingTests(unittest.IsolatedAsyncioTestCase):
                 expected_purchase_label = (
                     "**S1 FUTURE STARS PACK**"
                     if rarity == "S1 FUTURE STARS"
+                    else "**🥈 SILVER PACK**"
+                    if rarity == "SILVER"
                     else f"**{rarity} pack**"
                 )
                 self.assertIn(

@@ -17,9 +17,11 @@ from database import (
     Database,
     EconomyError,
     InvalidPlayer,
+    PACK_COST_BY_RARITY,
     PlayerAlreadyExists,
     PlayerNotFound,
     SUPPORTED_STATS,
+    format_card_type,
 )
 
 LOGGER = logging.getLogger("thsl_guru.admin")
@@ -346,26 +348,104 @@ class AdminCommands(discord_commands.Cog):
         )
         mark_successful_command(interaction)
 
-    @app_commands.command(name="grantcard", description="Grant a player card to a member.")
+    @app_commands.command(
+        name="grantcard",
+        description="Grant a player card or pack to a member.",
+    )
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
-        member="Member to receive the card",
-        player="Player card name",
-        quantity="Number of copies to grant",
+        member="Legacy recipient option for card grants",
+        player="Player card name to grant",
+        quantity="Number of card copies to grant",
+        user="Discord user to receive the pack",
+        pack="Pack type to grant instead of a card",
+    )
+    @app_commands.choices(
+        pack=[
+            app_commands.Choice(
+                name=(
+                    "🥈 SILVER PACK"
+                    if rarity == "SILVER"
+                    else f"{format_card_type(rarity)} Pack"
+                ),
+                value=rarity,
+            )
+            for rarity in PACK_COST_BY_RARITY
+        ]
     )
     async def grantcard(
         self,
         interaction: discord.Interaction,
-        member: discord.Member,
-        player: str,
+        member: discord.Member | None = None,
+        player: str | None = None,
         quantity: app_commands.Range[int, 1, 1000] = 1,
+        user: discord.Member | None = None,
+        pack: str | None = None,
     ) -> None:
+        if not _is_server_administrator(interaction):
+            await interaction.response.send_message(
+                "You need server administrator permission to use this command.",
+                ephemeral=True,
+            )
+            return
+        if member is not None and user is not None:
+            await interaction.response.send_message(
+                "Choose one recipient option: `user` or `member`.",
+                ephemeral=True,
+            )
+            return
+        recipient = user or member
+        if recipient is None:
+            await interaction.response.send_message(
+                "Choose a recipient with the `user` option.",
+                ephemeral=True,
+            )
+            return
+
+        if pack is not None:
+            if player is not None:
+                await interaction.response.send_message(
+                    "Choose either a `pack` or a `player` card to grant, not both.",
+                    ephemeral=True,
+                )
+                return
+            if int(quantity) != 1:
+                await interaction.response.send_message(
+                    "Pack grants are limited to one pack per command.",
+                    ephemeral=True,
+                )
+                return
+            rarity = str(pack).strip().upper()
+            try:
+                self.database.grant_pack(
+                    recipient.id,
+                    rarity,
+                    grant_id=interaction.id,
+                )
+            except EconomyError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+            await interaction.response.send_message(
+                f"✅ Successfully granted 1 {rarity} PACK to {recipient.mention}!",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            mark_successful_command(interaction)
+            return
+
+        if player is None:
+            await interaction.response.send_message(
+                "Choose a `player` card or a `pack` to grant.",
+                ephemeral=True,
+            )
+            return
+
         lookup = player.strip()
         card_identifier: str | int = int(lookup) if lookup.isdecimal() else lookup
         try:
             total = self.database.add_inventory(
-                member.id,
+                recipient.id,
                 card_identifier,
                 int(quantity),
             )
@@ -380,7 +460,7 @@ class AdminCommands(discord_commands.Cog):
         if card is None:
             raise RuntimeError("Granted card was not found in the player catalog.")
         await interaction.response.send_message(
-            f"Granted **{quantity}× {player_card_label(card)}** to {member.mention}. "
+            f"Granted **{quantity}× {player_card_label(card)}** to {recipient.mention}. "
             f"They now own {total} copy/copies.",
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),

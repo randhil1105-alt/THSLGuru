@@ -27,6 +27,7 @@ from quest_system import DAILY_QUEST_POOL, QUESTS_PER_DAY, utc_day
 
 CLAIM_COOLDOWN_SECONDS = 30 * 60
 GOLD_PACK_COST = 5_000_000
+SILVER_PACK_COST = 2_000_000
 TOTW_PACK_COST = 20_000_000
 S2_TOTS_PACK_COST = 50_000_000
 S1_TOTS_PACK_COST = 35_000_000
@@ -34,6 +35,7 @@ S1_TOTY_PACK_COST = 60_000_000
 S1_FUTURE_STARS_PACK_COST = 30_000_000
 PACK_COST_BY_RARITY = {
     "GOLD": GOLD_PACK_COST,
+    "SILVER": SILVER_PACK_COST,
     "TOTW": TOTW_PACK_COST,
     "S2 TOTS": S2_TOTS_PACK_COST,
     "S1 TOTS": S1_TOTS_PACK_COST,
@@ -202,6 +204,10 @@ class NoEligibleCards(EconomyError):
 
 
 class NoFreeRewardPacks(EconomyError):
+    pass
+
+
+class NoGrantedPacks(EconomyError):
     pass
 
 
@@ -528,6 +534,8 @@ def format_card_type(rarity: str) -> str:
     normalized = raw_type.upper()
     if normalized == "GOLD":
         return "Gold"
+    if normalized == "SILVER":
+        return "Silver"
     if normalized == "TOTW":
         return "TOTW"
     if normalized == "S2 TOTS":
@@ -674,12 +682,53 @@ class Database:
                     player_id INTEGER NOT NULL REFERENCES players(id),
                     rarity TEXT NOT NULL CHECK (
                         rarity IN (
-                            'GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS', 'S1 TOTY',
-                            'S1 FUTURE STARS'
+                            'GOLD', 'SILVER', 'TOTW', 'S2 TOTS', 'S1 TOTS',
+                            'S1 TOTY', 'S1 FUTURE STARS'
                         )
                     ),
                     cost INTEGER NOT NULL CHECK (cost > 0),
                     balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS granted_pack_inventory (
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    rarity TEXT NOT NULL CHECK (
+                        rarity IN (
+                            'GOLD', 'SILVER', 'TOTW', 'S2 TOTS', 'S1 TOTS',
+                            'S1 TOTY', 'S1 FUTURE STARS'
+                        )
+                    ),
+                    quantity INTEGER NOT NULL CHECK (quantity > 0),
+                    PRIMARY KEY (user_id, rarity)
+                );
+
+                CREATE TABLE IF NOT EXISTS granted_pack_grants (
+                    interaction_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    rarity TEXT NOT NULL CHECK (
+                        rarity IN (
+                            'GOLD', 'SILVER', 'TOTW', 'S2 TOTS', 'S1 TOTS',
+                            'S1 TOTY', 'S1 FUTURE STARS'
+                        )
+                    ),
+                    quantity INTEGER NOT NULL CHECK (quantity > 0),
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS granted_pack_redemptions (
+                    interaction_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL
+                        REFERENCES users(user_id) ON DELETE CASCADE,
+                    rarity TEXT NOT NULL CHECK (
+                        rarity IN (
+                            'GOLD', 'SILVER', 'TOTW', 'S2 TOTS', 'S1 TOTS',
+                            'S1 TOTY', 'S1 FUTURE STARS'
+                        )
+                    ),
+                    player_id INTEGER NOT NULL REFERENCES players(id),
                     created_at INTEGER NOT NULL
                 );
 
@@ -1015,6 +1064,7 @@ class Database:
             table_sql = str(table["sql"] or "").casefold()
             supported_rarities = (
                 "GOLD",
+                "SILVER",
                 "TOTW",
                 "S2 TOTS",
                 "S1 TOTS",
@@ -1035,8 +1085,8 @@ class Database:
                     player_id INTEGER NOT NULL REFERENCES players(id),
                     rarity TEXT NOT NULL CHECK (
                         rarity IN (
-                            'GOLD', 'TOTW', 'S2 TOTS', 'S1 TOTS', 'S1 TOTY',
-                            'S1 FUTURE STARS'
+                            'GOLD', 'SILVER', 'TOTW', 'S2 TOTS', 'S1 TOTS',
+                            'S1 TOTY', 'S1 FUTURE STARS'
                         )
                     ),
                     cost INTEGER NOT NULL CHECK (cost > 0),
@@ -2640,6 +2690,113 @@ class Database:
         )
         return counts
 
+    def get_granted_pack_inventory(self, user_id: str | int) -> dict[str, int]:
+        """Return saved administrator-granted pack counts without creating a user."""
+        normalized_id = self._validate_user_id(user_id)
+        counts = {rarity: 0 for rarity in PACK_COST_BY_RARITY}
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT rarity, quantity FROM granted_pack_inventory
+                WHERE user_id = ?
+                """,
+                (normalized_id,),
+            ).fetchall()
+        counts.update(
+            {
+                str(row["rarity"]): int(row["quantity"])
+                for row in rows
+            }
+        )
+        return counts
+
+    def grant_pack(
+        self,
+        user_id: str | int,
+        rarity: str,
+        quantity: int = 1,
+        *,
+        grant_id: str | int | None = None,
+        now: int | None = None,
+    ) -> int:
+        """Add packs without charging coins and make a grant retry-safe."""
+        normalized_id = self._validate_user_id(user_id)
+        expected_rarity = str(rarity).strip().upper()
+        if expected_rarity not in PACK_COST_BY_RARITY:
+            raise InvalidPlayer("That pack rarity is not supported.")
+        normalized_quantity = self._validate_amount(quantity)
+        normalized_grant_id: str | None = None
+        if grant_id is not None:
+            normalized_grant_id = str(grant_id).strip()
+            if not normalized_grant_id or len(normalized_grant_id) > 128:
+                raise InvalidAmount("A valid pack grant ID is required.")
+        current_time = int(time.time() if now is None else now)
+
+        with self._transaction() as connection:
+            if normalized_grant_id is not None:
+                previous = connection.execute(
+                    """
+                    SELECT user_id, rarity, quantity
+                    FROM granted_pack_grants
+                    WHERE interaction_id = ?
+                    """,
+                    (normalized_grant_id,),
+                ).fetchone()
+                if previous is not None:
+                    if (
+                        str(previous["user_id"]) != normalized_id
+                        or str(previous["rarity"]) != expected_rarity
+                        or int(previous["quantity"]) != normalized_quantity
+                    ):
+                        raise InvalidAmount("That pack grant ID has already been used.")
+                    inventory = connection.execute(
+                        """
+                        SELECT quantity FROM granted_pack_inventory
+                        WHERE user_id = ? AND rarity = ?
+                        """,
+                        (normalized_id, expected_rarity),
+                    ).fetchone()
+                    return int(inventory["quantity"]) if inventory else 0
+
+            self._ensure_user(connection, normalized_id)
+            existing = connection.execute(
+                """
+                SELECT quantity FROM granted_pack_inventory
+                WHERE user_id = ? AND rarity = ?
+                """,
+                (normalized_id, expected_rarity),
+            ).fetchone()
+            current_quantity = int(existing["quantity"]) if existing else 0
+            if current_quantity + normalized_quantity > SQLITE_INT_MAX:
+                raise InvalidAmount("That granted pack inventory is full.")
+            connection.execute(
+                """
+                INSERT INTO granted_pack_inventory(user_id, rarity, quantity)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, rarity)
+                DO UPDATE SET quantity =
+                    granted_pack_inventory.quantity + excluded.quantity
+                """,
+                (normalized_id, expected_rarity, normalized_quantity),
+            )
+            total = current_quantity + normalized_quantity
+            if normalized_grant_id is not None:
+                connection.execute(
+                    """
+                    INSERT INTO granted_pack_grants(
+                        interaction_id, user_id, rarity, quantity, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_grant_id,
+                        normalized_id,
+                        expected_rarity,
+                        normalized_quantity,
+                        current_time,
+                    ),
+                )
+            return total
+
     def set_balance(self, user_id: str | int, amount: int) -> int:
         normalized_id = self._validate_user_id(user_id)
         amount = self._validate_amount(amount, allow_zero=True)
@@ -2724,6 +2881,9 @@ class Database:
                 "tournament_cooldowns",
                 "free_pack_inventory",
                 "free_pack_redemptions",
+                "granted_pack_redemptions",
+                "granted_pack_grants",
+                "granted_pack_inventory",
                 "level_up_coin_rewards",
                 "xp_level_rewards",
                 "xp_transactions",
@@ -5461,6 +5621,155 @@ class Database:
                 ),
             )
             quest_event_id = f"free-pack:{normalized_redemption_id}"
+            self._record_quest_event_locked(
+                connection,
+                user_id=normalized_id,
+                event_id=quest_event_id,
+                metric="pack_open",
+                amount=1,
+                now=current_time,
+            )
+            if expected_rarity == "GOLD":
+                self._record_quest_event_locked(
+                    connection,
+                    user_id=normalized_id,
+                    event_id=f"{quest_event_id}:gold",
+                    metric="gold_card",
+                    amount=1,
+                    now=current_time,
+                )
+            return self._player_from_row(selected), remaining_count
+
+    def open_granted_pack(
+        self,
+        user_id: str | int,
+        rarity: str,
+        redemption_id: str | int,
+        rng: Any | None = None,
+        now: int | None = None,
+    ) -> tuple[Player, int]:
+        """Open one granted pack without coins, awarding once per interaction."""
+        normalized_id = self._validate_user_id(user_id)
+        expected_rarity = str(rarity).strip().upper()
+        if expected_rarity not in PACK_COST_BY_RARITY:
+            raise InvalidPlayer("That pack rarity is not supported.")
+        normalized_redemption_id = str(redemption_id).strip()
+        if not normalized_redemption_id or len(normalized_redemption_id) > 128:
+            raise InvalidAmount("A valid granted pack redemption ID is required.")
+        chooser = rng if rng is not None else random.SystemRandom()
+        current_time = int(time.time() if now is None else now)
+
+        with self._transaction() as connection:
+            previous = connection.execute(
+                """
+                SELECT redemptions.user_id, redemptions.rarity, players.*
+                FROM granted_pack_redemptions AS redemptions
+                JOIN players ON players.id = redemptions.player_id
+                WHERE redemptions.interaction_id = ?
+                """,
+                (normalized_redemption_id,),
+            ).fetchone()
+            if previous is not None:
+                if (
+                    str(previous["user_id"]) != normalized_id
+                    or str(previous["rarity"]) != expected_rarity
+                ):
+                    raise InvalidAmount(
+                        "That granted pack redemption ID has already been used."
+                    )
+                remaining = connection.execute(
+                    """
+                    SELECT quantity FROM granted_pack_inventory
+                    WHERE user_id = ? AND rarity = ?
+                    """,
+                    (normalized_id, expected_rarity),
+                ).fetchone()
+                return (
+                    self._player_from_row(previous),
+                    int(remaining["quantity"]) if remaining else 0,
+                )
+
+            available = connection.execute(
+                """
+                SELECT quantity FROM granted_pack_inventory
+                WHERE user_id = ? AND rarity = ?
+                """,
+                (normalized_id, expected_rarity),
+            ).fetchone()
+            if available is None or int(available["quantity"]) <= 0:
+                raise NoGrantedPacks(f"No granted {expected_rarity} packs are available.")
+
+            candidates = connection.execute(
+                "SELECT * FROM players WHERE rarity = ? ORDER BY id",
+                (expected_rarity,),
+            ).fetchall()
+            if not candidates:
+                raise NoEligibleCards(expected_rarity)
+            weights = [
+                card_rating_weight(int(candidate["overall"]))
+                for candidate in candidates
+            ]
+            selected = chooser.choices(candidates, weights=weights, k=1)[0]
+            player_id = int(selected["id"])
+            owned = connection.execute(
+                """
+                SELECT quantity FROM inventory
+                WHERE user_id = ? AND player_id = ?
+                """,
+                (normalized_id, player_id),
+            ).fetchone()
+            if owned is not None and int(owned["quantity"]) >= SQLITE_INT_MAX:
+                raise InvalidAmount("That card inventory quantity is too large.")
+
+            if int(available["quantity"]) == 1:
+                connection.execute(
+                    """
+                    DELETE FROM granted_pack_inventory
+                    WHERE user_id = ? AND rarity = ? AND quantity = 1
+                    """,
+                    (normalized_id, expected_rarity),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE granted_pack_inventory
+                    SET quantity = quantity - 1
+                    WHERE user_id = ? AND rarity = ? AND quantity > 1
+                    """,
+                    (normalized_id, expected_rarity),
+                )
+            remaining = connection.execute(
+                """
+                SELECT quantity FROM granted_pack_inventory
+                WHERE user_id = ? AND rarity = ?
+                """,
+                (normalized_id, expected_rarity),
+            ).fetchone()
+            remaining_count = int(remaining["quantity"]) if remaining else 0
+            connection.execute(
+                """
+                INSERT INTO inventory(user_id, player_id, quantity)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, player_id)
+                DO UPDATE SET quantity = inventory.quantity + 1
+                """,
+                (normalized_id, player_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO granted_pack_redemptions
+                    (interaction_id, user_id, rarity, player_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_redemption_id,
+                    normalized_id,
+                    expected_rarity,
+                    player_id,
+                    current_time,
+                ),
+            )
+            quest_event_id = f"granted-pack:{normalized_redemption_id}"
             self._record_quest_event_locked(
                 connection,
                 user_id=normalized_id,
