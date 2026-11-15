@@ -41,6 +41,7 @@ PACK_COST_BY_RARITY = {
     "S1 FUTURE STARS": S1_FUTURE_STARS_PACK_COST,
 }
 MAX_PACK_QUANTITY = 10
+DAILY_SHOP_CARD_COUNT = 5
 LEVEL_REWARD_PACK_RARITIES = ("GOLD", "TOTW")
 MATCH_REWARD = 5_000_000
 MATCH_INVITATION_SECONDS = 60
@@ -125,6 +126,28 @@ class PlayerAlreadyExists(EconomyError):
 
 class InsufficientFunds(EconomyError):
     pass
+
+
+class ShopError(EconomyError):
+    """Base class for shop selection and purchase errors."""
+
+
+class ShopSelectionExpired(ShopError):
+    pass
+
+
+class ShopPurchaseAlreadyProcessed(ShopError):
+    pass
+
+
+class ShopInsufficientFunds(InsufficientFunds):
+    def __init__(self, required: int, balance: int) -> None:
+        self.required = int(required)
+        self.balance = int(balance)
+        super().__init__(
+            f"This card costs {self.required:,} coins; your balance is "
+            f"{self.balance:,} coins."
+        )
 
 
 class InsufficientCards(EconomyError):
@@ -657,6 +680,22 @@ class Database:
                     sold_items_json TEXT NOT NULL,
                     card_count INTEGER NOT NULL CHECK (card_count > 0),
                     total_earned INTEGER NOT NULL CHECK (total_earned >= 0),
+                    balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS daily_shop_selections (
+                    day_utc TEXT PRIMARY KEY,
+                    player_ids_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS daily_shop_purchase_receipts (
+                    interaction_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    player_id INTEGER NOT NULL REFERENCES players(id),
+                    shop_day_utc TEXT NOT NULL,
+                    price INTEGER NOT NULL CHECK (price >= 0),
                     balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
                     created_at INTEGER NOT NULL
                 );
@@ -2297,6 +2336,267 @@ class Database:
                 ).fetchall()
         return [self._player_from_row(row) for row in rows]
 
+    def get_daily_shop(
+        self,
+        *,
+        now: int | float | None = None,
+        rng: random.Random | None = None,
+        eligible_player_ids: Sequence[int] | None = None,
+    ) -> dict[str, Any]:
+        """Return the five saved, shared catalog listings for the current UTC day."""
+        current_time = time.time() if now is None else float(now)
+        shop_day = utc_day(current_time)
+        eligible_ids: set[int] | None = None
+        if eligible_player_ids is not None:
+            try:
+                eligible_ids = {
+                    int(player_id) for player_id in eligible_player_ids
+                }
+            except (TypeError, ValueError) as exc:
+                raise NoEligibleCards("The daily shop image list is invalid.") from exc
+
+        with self._transaction() as connection:
+            selection = connection.execute(
+                """
+                SELECT player_ids_json FROM daily_shop_selections
+                WHERE day_utc = ?
+                """,
+                (shop_day,),
+            ).fetchone()
+            if selection is None:
+                catalog_rows = connection.execute(
+                    "SELECT * FROM players ORDER BY id"
+                ).fetchall()
+                catalog = [
+                    self._player_from_row(row)
+                    for row in catalog_rows
+                    if eligible_ids is None or int(row["id"]) in eligible_ids
+                ]
+                if len(catalog) < DAILY_SHOP_CARD_COUNT:
+                    raise NoEligibleCards(
+                        "The daily shop needs five cards with available artwork."
+                    )
+                chooser = rng or random.SystemRandom()
+                players = chooser.sample(catalog, DAILY_SHOP_CARD_COUNT)
+                player_ids = [player.id for player in players]
+                connection.execute(
+                    """
+                    INSERT INTO daily_shop_selections(
+                        day_utc, player_ids_json, created_at
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (
+                        shop_day,
+                        json.dumps(player_ids, separators=(",", ":")),
+                        int(current_time),
+                    ),
+                )
+            else:
+                try:
+                    player_ids = [
+                        int(player_id)
+                        for player_id in json.loads(selection["player_ids_json"])
+                    ]
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise NoEligibleCards(
+                        "The saved daily shop selection is invalid."
+                    ) from exc
+                if (
+                    len(player_ids) != DAILY_SHOP_CARD_COUNT
+                    or len(set(player_ids)) != DAILY_SHOP_CARD_COUNT
+                    or any(player_id < 1 for player_id in player_ids)
+                ):
+                    raise NoEligibleCards(
+                        "The saved daily shop selection is invalid."
+                    )
+                placeholders = ", ".join("?" for _ in player_ids)
+                rows = connection.execute(
+                    f"SELECT * FROM players WHERE id IN ({placeholders})",
+                    player_ids,
+                ).fetchall()
+                by_id = {
+                    int(row["id"]): self._player_from_row(row)
+                    for row in rows
+                }
+                if set(by_id) != set(player_ids):
+                    raise NoEligibleCards(
+                        "A card in today's saved shop is no longer in the catalog."
+                    )
+                if eligible_ids is not None and not set(player_ids) <= eligible_ids:
+                    raise NoEligibleCards(
+                        "A card in today's saved shop no longer has available artwork."
+                    )
+                players = [by_id[player_id] for player_id in player_ids]
+
+            return {
+                "shop_day": shop_day,
+                "player_ids": list(player_ids),
+                "players": list(players),
+            }
+
+    def buy_daily_shop_card(
+        self,
+        user_id: str | int,
+        player_id: int,
+        interaction_id: str | int,
+        shop_day: str,
+        *,
+        now: int | float | None = None,
+    ) -> dict[str, Any]:
+        """Charge the current catalog value and grant one card in one transaction."""
+        normalized_user_id = self._validate_user_id(user_id)
+        if isinstance(player_id, bool):
+            raise PlayerNotFound(player_id)
+        try:
+            normalized_player_id = int(player_id)
+        except (TypeError, ValueError) as exc:
+            raise PlayerNotFound(player_id) from exc
+        if normalized_player_id < 1:
+            raise PlayerNotFound(player_id)
+        normalized_interaction_id = str(interaction_id).strip()
+        normalized_shop_day = str(shop_day).strip()
+        if (
+            not normalized_interaction_id
+            or len(normalized_interaction_id) > 128
+            or not normalized_shop_day
+        ):
+            raise ShopError("The shop purchase request is invalid.")
+
+        current_time = time.time() if now is None else float(now)
+        current_day = utc_day(current_time)
+        with self._transaction() as connection:
+            previous = connection.execute(
+                """
+                SELECT * FROM daily_shop_purchase_receipts
+                WHERE interaction_id = ?
+                """,
+                (normalized_interaction_id,),
+            ).fetchone()
+            if previous is not None:
+                if (
+                    str(previous["user_id"]) != normalized_user_id
+                    or int(previous["player_id"]) != normalized_player_id
+                ):
+                    raise ShopPurchaseAlreadyProcessed(
+                        "This purchase interaction was already used."
+                    )
+                player_row = connection.execute(
+                    "SELECT * FROM players WHERE id = ?",
+                    (normalized_player_id,),
+                ).fetchone()
+                balance_row = connection.execute(
+                    "SELECT balance FROM users WHERE user_id = ?",
+                    (normalized_user_id,),
+                ).fetchone()
+                if player_row is None or balance_row is None:
+                    raise ShopPurchaseAlreadyProcessed(
+                        "This purchase was already processed."
+                    )
+                return {
+                    "player": self._player_from_row(player_row),
+                    "price": int(previous["price"]),
+                    "balance_after": int(balance_row["balance"]),
+                    "shop_day": str(previous["shop_day_utc"]),
+                    "already_processed": True,
+                }
+
+            if normalized_shop_day != current_day:
+                raise ShopSelectionExpired(
+                    "The daily shop refreshed. Run `/shop` to see today's cards."
+                )
+            selection = connection.execute(
+                """
+                SELECT player_ids_json FROM daily_shop_selections
+                WHERE day_utc = ?
+                """,
+                (normalized_shop_day,),
+            ).fetchone()
+            if selection is None:
+                raise ShopSelectionExpired(
+                    "The daily shop refreshed. Run `/shop` to see today's cards."
+                )
+            try:
+                listed_ids = {
+                    int(value)
+                    for value in json.loads(selection["player_ids_json"])
+                }
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ShopSelectionExpired(
+                    "Today's saved shop selection is unavailable."
+                ) from exc
+            if normalized_player_id not in listed_ids:
+                raise ShopSelectionExpired(
+                    "That card is no longer in today's shop. Run `/shop` to refresh."
+                )
+
+            player_row = connection.execute(
+                "SELECT * FROM players WHERE id = ?",
+                (normalized_player_id,),
+            ).fetchone()
+            if player_row is None:
+                raise ShopSelectionExpired(
+                    "That card is no longer in the catalog."
+                )
+            player = self._player_from_row(player_row)
+            price = player.value
+            self._ensure_user(connection, normalized_user_id)
+            balance_row = connection.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (normalized_user_id,),
+            ).fetchone()
+            balance = int(balance_row["balance"])
+            if balance < price:
+                raise ShopInsufficientFunds(price, balance)
+
+            inventory_row = connection.execute(
+                """
+                SELECT quantity FROM inventory
+                WHERE user_id = ? AND player_id = ?
+                """,
+                (normalized_user_id, normalized_player_id),
+            ).fetchone()
+            quantity = int(inventory_row["quantity"]) if inventory_row else 0
+            if quantity >= SQLITE_INT_MAX:
+                raise InvalidAmount("That inventory quantity is too large.")
+            balance_after = balance - price
+            connection.execute(
+                "UPDATE users SET balance = ? WHERE user_id = ?",
+                (balance_after, normalized_user_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO inventory(user_id, player_id, quantity)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, player_id)
+                DO UPDATE SET quantity = inventory.quantity + 1
+                """,
+                (normalized_user_id, normalized_player_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO daily_shop_purchase_receipts(
+                    interaction_id, user_id, player_id, shop_day_utc,
+                    price, balance_after, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_interaction_id,
+                    normalized_user_id,
+                    normalized_player_id,
+                    normalized_shop_day,
+                    price,
+                    balance_after,
+                    int(current_time),
+                ),
+            )
+            return {
+                "player": player,
+                "price": price,
+                "balance_after": balance_after,
+                "shop_day": normalized_shop_day,
+                "already_processed": False,
+            }
+
     def get_balance(self, user_id: str | int) -> int:
         normalized_id = self._validate_user_id(user_id)
         with self._read_connection() as connection:
@@ -2417,6 +2717,7 @@ class Database:
                 "quest_event_receipts",
                 "pack_purchases",
                 "duplicate_sale_receipts",
+                "daily_shop_purchase_receipts",
                 "tournaments",
             ):
                 connection.execute(f"DELETE FROM {table}")
