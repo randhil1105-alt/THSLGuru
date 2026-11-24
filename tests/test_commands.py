@@ -4854,13 +4854,13 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response.messages[0]["ephemeral"])
         self.assertEqual(
             Database(self.database.path).get_balance(1401),
-            500_000,
+            200_000,
         )
         self.assertEqual(len(channel.messages), 1)
         reveal = channel.messages[0]
         embed = reveal["embed"]
         self.assertIn("Winner", embed.description)
-        self.assertIn("500,000 coins", embed.description)
+        self.assertIn("200,000 coins", embed.description)
         self.assertIn(player.name, embed.title)
         self.assertIn("attachment://", embed.image.url)
         self.assertTrue({"Position", "Country", "Team", "Card Type", "Stats"} <= {
@@ -4888,7 +4888,7 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
                 player.name,
             ),
         )
-        self.assertEqual(self.database.get_balance(1501), 500_000)
+        self.assertEqual(self.database.get_balance(1501), 200_000)
         self.assertEqual(len(channel.messages), 1)
         self.assertTrue(view.finished)
         self.assertTrue(all(response.messages[0]["ephemeral"] for response in responses))
@@ -4963,8 +4963,8 @@ class MinigameBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("no player cards", response["content"].lower())
         self.assertNotIn("view", response)
 
-    def test_reward_is_fixed_at_500000(self) -> None:
-        self.assertEqual(MINIGAME_REWARD, 500_000)
+    def test_reward_is_fixed_at_200000(self) -> None:
+        self.assertEqual(MINIGAME_REWARD, 200_000)
 
 
 if __name__ == "__main__":
