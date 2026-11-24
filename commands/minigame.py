@@ -36,7 +36,7 @@ from draft_simulation import InsufficientDraftCatalog, generate_draft_groups
 
 LOGGER = logging.getLogger("thsl_guru.minigame")
 
-MINIGAME_REWARD = 500_000
+MINIGAME_REWARD = 200_000
 MINIGAME_DURATION_SECONDS = 180
 
 SPECIAL_PLAYER_ALIASES = {
