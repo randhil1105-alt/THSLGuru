@@ -2200,7 +2200,7 @@ class Database:
                     normalized_id,
                     current_time,
                     DAILY_REWARD_COINS,
-                    DAILY_REWARD_TOTW_PACKS,
+                    DAILY_REWARD_GOLD_PACKS,
                 ),
             )
             connection.execute(
