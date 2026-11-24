@@ -521,8 +521,8 @@ class ProgressionCommandResponseTests(unittest.IsolatedAsyncioTestCase):
         success = first.response.messages[0]
         self.assertFalse(success["ephemeral"])
         self.assertEqual(success["embed"].title, "🎁 DAILY REWARDS CLAIMED!")
-        self.assertIn("5,000,000 coins", success["embed"].description)
-        self.assertIn("1x TOTW Pack", success["embed"].description)
+        self.assertIn("1,000,000 coins", success["embed"].description)
+        self.assertIn("1x Gold Pack", success["embed"].description)
 
         second = SimpleNamespace(
             id=10_002,
@@ -573,7 +573,7 @@ class ProgressionCommandResponseTests(unittest.IsolatedAsyncioTestCase):
         updated = claim_interaction.response.messages[0]
         self.assertIn("claimed!", updated["embed"].description)
         self.assertEqual(updated["view"], None)
-        self.assertEqual(self.database.get_balance(user.id), 5_000_000)
+        self.assertEqual(self.database.get_balance(user.id), 1_250_000)
 
 
 if __name__ == "__main__":
