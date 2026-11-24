@@ -1,4 +1,4 @@
-"""Public, once-per-day coin and TOTW pack rewards."""
+"""Public, once-per-day coin and Gold pack rewards."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from discord.ext import commands as discord_commands
 
 from database import (
     DAILY_REWARD_COINS,
-    DAILY_REWARD_TOTW_PACKS,
+    DAILY_REWARD_GOLD_PACKS,
     DailyCooldownActive,
     Database,
 )
@@ -30,7 +30,7 @@ class DailyCommands(discord_commands.Cog):
 
     @app_commands.command(
         name="daily",
-        description="Claim your daily coins and free TOTW pack.",
+        description="Claim your daily coins and free Gold pack.",
     )
     async def daily(self, interaction: discord.Interaction) -> None:
         try:
@@ -60,7 +60,7 @@ class DailyCommands(discord_commands.Cog):
             description=(
                 f"Player: {player}\n\n"
                 "Rewards:\n"
-                f"- {DAILY_REWARD_TOTW_PACKS}x TOTW Pack\n"
+                f"- {DAILY_REWARD_GOLD_PACKS}x Gold Pack\n"
                 f"- {DAILY_REWARD_COINS:,} coins\n\n"
                 "Come back in 24 hours for your next reward!"
             ),

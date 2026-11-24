@@ -51,8 +51,8 @@ MATCH_INVITATION_SECONDS = 60
 DRAFT_COOLDOWN_SECONDS = 10 * 60
 GUESS_WHO_COOLDOWN_SECONDS = 5 * 60
 DRAFT_WIN_REWARD = 200_000
-DAILY_REWARD_COINS = 5_000_000
-DAILY_REWARD_TOTW_PACKS = 1
+DAILY_REWARD_COINS = 1_000_000
+DAILY_REWARD_GOLD_PACKS = 1
 DAILY_REWARD_COOLDOWN_SECONDS = 24 * 60 * 60
 TOURNAMENT_ROUND_REWARD = 200_000
 TOURNAMENT_COMPLETION_BONUS = 1_000_000
@@ -2124,7 +2124,10 @@ class Database:
         *,
         now: int | None = None,
     ) -> dict[str, Any]:
-        """Award the daily coins and one TOTW pack as a single-use transaction."""
+        """Award the daily coins and one Gold pack as a single-use transaction.
+
+        The legacy ``totw_packs_awarded`` column stores the free pack count.
+        """
         normalized_id = self._validate_user_id(user_id)
         normalized_claim_id = str(claim_id).strip()
         if not normalized_claim_id or len(normalized_claim_id) > 128:
@@ -2152,7 +2155,7 @@ class Database:
                     "duplicate": True,
                     "balance": balance,
                     "coins": int(previous["coins_awarded"]),
-                    "totw_packs": int(previous["totw_packs_awarded"]),
+                    "gold_packs": int(previous["totw_packs_awarded"]),
                     "claimed_at": int(previous["claimed_at"]),
                 }
 
@@ -2175,15 +2178,15 @@ class Database:
             free_pack_row = connection.execute(
                 """
                 SELECT quantity FROM free_pack_inventory
-                WHERE user_id = ? AND rarity = 'TOTW'
+                WHERE user_id = ? AND rarity = 'GOLD'
                 """,
                 (normalized_id,),
             ).fetchone()
             current_packs = (
                 int(free_pack_row["quantity"]) if free_pack_row is not None else 0
             )
-            if current_packs + DAILY_REWARD_TOTW_PACKS > SQLITE_INT_MAX:
-                raise InvalidAmount("Your free TOTW pack inventory is full.")
+            if current_packs + DAILY_REWARD_GOLD_PACKS > SQLITE_INT_MAX:
+                raise InvalidAmount("Your free Gold pack inventory is full.")
 
             connection.execute(
                 """
@@ -2207,18 +2210,18 @@ class Database:
             connection.execute(
                 """
                 INSERT INTO free_pack_inventory(user_id, rarity, quantity)
-                VALUES (?, 'TOTW', ?)
+                VALUES (?, 'GOLD', ?)
                 ON CONFLICT(user_id, rarity)
                 DO UPDATE SET quantity = free_pack_inventory.quantity + excluded.quantity
                 """,
-                (normalized_id, DAILY_REWARD_TOTW_PACKS),
+                (normalized_id, DAILY_REWARD_GOLD_PACKS),
             )
             return {
                 "awarded": True,
                 "duplicate": False,
                 "balance": balance + DAILY_REWARD_COINS,
                 "coins": DAILY_REWARD_COINS,
-                "totw_packs": DAILY_REWARD_TOTW_PACKS,
+                "gold_packs": DAILY_REWARD_GOLD_PACKS,
                 "claimed_at": current_time,
             }
 
