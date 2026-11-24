@@ -130,18 +130,18 @@ class ProgressionDatabaseTests(unittest.TestCase):
                 12_000_000,
             )
 
-    def test_daily_claim_awards_coins_and_totw_with_independent_cooldowns(self) -> None:
+    def test_daily_claim_awards_coins_and_gold_pack_with_independent_cooldowns(self) -> None:
         now = 1_700_000_000
         self.database.set_balance("daily-a", 25)
         first = self.database.claim_daily_reward("daily-a", "daily-a-1", now=now)
         other = self.database.claim_daily_reward("daily-b", "daily-b-1", now=now + 1)
         self.assertTrue(first["awarded"])
         self.assertEqual(first["coins"], DAILY_REWARD_COINS)
-        self.assertEqual(first["totw_packs"], 1)
+        self.assertEqual(first["gold_packs"], 1)
         self.assertEqual(self.database.get_balance("daily-a"), 25 + DAILY_REWARD_COINS)
         self.assertEqual(
             self.database.get_free_pack_inventory("daily-a"),
-            {"GOLD": 0, "TOTW": 1},
+            {"GOLD": 1, "TOTW": 0},
         )
         self.assertTrue(other["awarded"])
         with self.assertRaises(DailyCooldownActive) as cooldown:
@@ -171,7 +171,7 @@ class ProgressionDatabaseTests(unittest.TestCase):
         )
         self.assertEqual(
             self.database.get_free_pack_inventory("daily-a"),
-            {"GOLD": 0, "TOTW": 2},
+            {"GOLD": 2, "TOTW": 0},
         )
 
     def test_concurrent_daily_claims_award_only_once(self) -> None:
@@ -193,7 +193,7 @@ class ProgressionDatabaseTests(unittest.TestCase):
         self.assertEqual(self.database.get_balance("daily-race"), DAILY_REWARD_COINS)
         self.assertEqual(
             self.database.get_free_pack_inventory("daily-race"),
-            {"GOLD": 0, "TOTW": 1},
+            {"GOLD": 1, "TOTW": 0},
         )
 
     def test_random_quest_set_persists_through_reopen_and_resets_at_utc_midnight(self) -> None:
@@ -263,8 +263,8 @@ class ProgressionDatabaseTests(unittest.TestCase):
             "match_win_1",
             now=86_399,
         )
-        self.assertEqual(result["reward"], 5_000_000)
-        self.assertEqual(self.database.get_balance(user_id), 5_000_000)
+        self.assertEqual(result["reward"], 1_250_000)
+        self.assertEqual(self.database.get_balance(user_id), 1_250_000)
         with self.assertRaises(DailyQuestAlreadyClaimed):
             self.database.claim_daily_quest(
                 user_id,
@@ -450,8 +450,8 @@ class ProgressionDatabaseTests(unittest.TestCase):
             "trade_1",
             now=now + 4,
         )
-        self.assertEqual(claimed["reward"], 5_000_000)
-        self.assertEqual(self.database.get_balance("trader-one"), 5_000_000)
+        self.assertEqual(claimed["reward"], 1_250_000)
+        self.assertEqual(self.database.get_balance("trader-one"), 1_250_000)
         with self.assertRaises(DailyQuestAlreadyClaimed):
             self.database.claim_daily_quest(
                 "trader-one",
